@@ -22,7 +22,7 @@
 void DebugLog(const char* format, ...) {
     static FILE* logFile = nullptr;
     if (!logFile) {
-        logFile = fopen("/Users/C5370280/SAPDevelop/far2l/_build/install/far2l.app/Contents/MacOS/Plugins/adb/plug/adb_plugin_debug.log", "a");
+        logFile = fopen("/tmp/adb_plugin_debug.log", "a");
     }
     if (logFile) {
         va_list args;

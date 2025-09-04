@@ -1,16 +1,6 @@
-cmake_minimum_required(VERSION 3.10)
-project(ADB_Basic)
+# ADB Plugin for far2l
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# Include directories
-include_directories(src)
-include_directories(../far2l/far2sdk)
-include_directories(../utils/include)
-include_directories(../WinPort)
-
-# Basic source files - only what we need
+# Basic source files
 set(SOURCES
     src/FARPlugin.cpp
     src/ADBPlugin.cpp
@@ -18,33 +8,41 @@ set(SOURCES
     src/ADBDevice.cpp
 )
 
-# Create the basic plugin
-add_library(adb SHARED ${SOURCES})
+# Create the plugin
+add_library(adb MODULE ${SOURCES})
 
 # Link with required libraries
-target_link_libraries(adb WinPort)
+target_link_libraries(adb utils far2l)
 
 # Add compile definitions
 target_compile_definitions(adb PRIVATE
-    UNICODE
-    _UNICODE
-    FAR2L_PLUGIN
+    -DWINPORT_DIRECT
+    -DUNICODE
+    -D_UNICODE
+    -DFAR_DONT_USE_INTERNALS
 )
 
-# Set output name
+# Add include directories
+target_include_directories(adb PRIVATE .)
+target_include_directories(adb PRIVATE ../far2l/far2sdk)
+target_include_directories(adb PRIVATE ../WinPort)
+
+# Set output properties
 set_target_properties(adb PROPERTIES
-    OUTPUT_NAME "adb"
-    SUFFIX ".far-plug-wide"
+    LIBRARY_OUTPUT_DIRECTORY "${INSTALL_DIR}/Plugins/adb/plug"
     PREFIX ""
+    SUFFIX ".far-plug-wide"
 )
 
-# Install the plugin to the far2l plugins directory
-install(TARGETS adb
-    DESTINATION ${CMAKE_SOURCE_DIR}/_build/install/far2l.app/Contents/MacOS/Plugins/adb/plug
+# Copy resource files
+set(CURRENT_TARGET "adb")
+file(GLOB_RECURSE RESOURCE_FILES
+    RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/configs
+    "${CMAKE_CURRENT_SOURCE_DIR}/configs/*"
 )
-
-# Make the adb target also install the plugin
-add_custom_command(TARGET adb POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:adb> ${CMAKE_SOURCE_DIR}/_build/install/far2l.app/Contents/MacOS/Plugins/adb/plug/
-    COMMENT "Installing ADB plugin to far2l"
+setup_target_auxiliary_files(${CURRENT_TARGET}
+    RESOURCE_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/configs
+    "${INSTALL_DIR}/Plugins/${CURRENT_TARGET}/"
 )
+add_dependencies(${CURRENT_TARGET} copy_aux_files_for_${CURRENT_TARGET})
