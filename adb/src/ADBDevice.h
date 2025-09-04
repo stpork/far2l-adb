@@ -43,17 +43,17 @@ public:
     bool SetDirectory(const std::string &path);
     
     // File transfer operations
-    bool PullFile(const std::string &devicePath, const std::string &localPath);
-    bool PushFile(const std::string &localPath, const std::string &devicePath);
-    bool PullDirectory(const std::string &devicePath, const std::string &localPath);
-    bool PushDirectory(const std::string &localPath, const std::string &devicePath);
+    int PullFile(const std::string &devicePath, const std::string &localPath);
+    int PushFile(const std::string &localPath, const std::string &devicePath);
+    int PullDirectory(const std::string &devicePath, const std::string &localPath);
+    int PushDirectory(const std::string &localPath, const std::string &devicePath);
     
     // File deletion operations
-    bool DeleteFile(const std::string &devicePath);
-    bool DeleteDirectory(const std::string &devicePath);
+    int DeleteFile(const std::string &devicePath);
+    int DeleteDirectory(const std::string &devicePath);
     
     // Directory creation operations
-    bool CreateDirectory(const std::string &devicePath);
+    int CreateDirectory(const std::string &devicePath);
 
     // Connection management
     bool Connect();
@@ -62,4 +62,7 @@ public:
     
     // Utility functions
     std::string WStringToString(const std::wstring &wstr);
+    
+    // Error mapping
+    static int Str2Errno(const std::string &adbError);
 };

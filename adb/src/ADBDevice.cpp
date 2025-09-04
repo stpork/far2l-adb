@@ -36,21 +36,14 @@ bool ADBDevice::Connect()
     }
     
     try {
-        // Create new AdbShell instance
         _adb_shell = std::make_unique<ADBShell>(_device_serial);
-        
-        // Start the shell
         if (!_adb_shell->start()) {
             return false;
         }
-        
-        // Test connection with pwd command
-        		std::string pwd_response = _adb_shell->shellCommand("pwd");
+        std::string pwd_response = _adb_shell->shellCommand("pwd");
         if (pwd_response.empty()) {
             return false;
         }
-        
-        // Extract the path from pwd response
         _current_path = ExtractPathFromPwd(pwd_response);
         _connected = true;
         return true;
@@ -78,13 +71,11 @@ void ADBDevice::EnsureConnection()
     }
 }
 
-
 std::string ADBDevice::RunAdbCommand(const std::string &command) {
     if (!_adb_shell) {
         return "";
     }
-    
-    // Construct command with device serial to target specific device
+
     std::string full_command;
     if (!_device_serial.empty()) {
         full_command = "-s " + _device_serial + " " + command;
@@ -94,7 +85,6 @@ std::string ADBDevice::RunAdbCommand(const std::string &command) {
     
     return ADBShell::adbExec(full_command);
 }
-
 
 std::string ADBDevice::RunShellCommand(const std::string &command)
 {
@@ -331,10 +321,10 @@ bool ADBDevice::SetDirectory(const std::string &path) {
     return true;
 }
 
-bool ADBDevice::PullFile(const std::string &devicePath, const std::string &localPath) {
+int ADBDevice::PullFile(const std::string &devicePath, const std::string &localPath) {
     EnsureConnection();
     if (!_connected) {
-        return false;
+        return EIO; // Input/output error for device not connected
     }
     
     // Use adb pull with absolute paths for efficiency
@@ -352,20 +342,20 @@ bool ADBDevice::PullFile(const std::string &devicePath, const std::string &local
         result.find("skipped") != std::string::npos ||
         result.empty()) {
         DebugLog("ADB Pull: SUCCESS\n");
-        
-        
-        return true;
+        return 0; // Success
     } else {
         // Log the error for debugging
         DebugLog("ADB Pull failed: %s\n", result.c_str());
-        return false;
+      
+        // Use common error mapping method
+        return Str2Errno(result);
     }
 }
 
-bool ADBDevice::PushFile(const std::string &localPath, const std::string &devicePath) {
+int ADBDevice::PushFile(const std::string &localPath, const std::string &devicePath) {
     EnsureConnection();
     if (!_connected) {
-        return false;
+        return EIO; // Input/output error for device not connected
     }
     
     // Use adb push with absolute paths for efficiency
@@ -374,16 +364,17 @@ bool ADBDevice::PushFile(const std::string &localPath, const std::string &device
     
     // Check if push was successful (adb push returns empty output on success)
     if (result.empty()) {
-        return true;
+        return 0; // Success
     } else {
-        return false;
+        // Use common error mapping method
+        return Str2Errno(result);
     }
 }
 
-bool ADBDevice::PullDirectory(const std::string &devicePath, const std::string &localPath) {
+int ADBDevice::PullDirectory(const std::string &devicePath, const std::string &localPath) {
     EnsureConnection();
     if (!_connected) {
-        return false;
+        return EIO; // Input/output error for device not connected
     }
     
     // Use adb pull for directory transfer (ADB automatically handles recursion)
@@ -402,18 +393,20 @@ bool ADBDevice::PullDirectory(const std::string &devicePath, const std::string &
         result.find("files pulled") != std::string::npos ||
         result.empty()) {
         DebugLog("ADB Directory Pull: SUCCESS\n");
-        return true;
+        return 0; // Success
     } else {
         // Log the error for debugging
         DebugLog("ADB Directory Pull failed: %s\n", result.c_str());
-        return false;
+        
+        // Use common error mapping method
+        return Str2Errno(result);
     }
 }
 
-bool ADBDevice::PushDirectory(const std::string &localPath, const std::string &devicePath) {
+int ADBDevice::PushDirectory(const std::string &localPath, const std::string &devicePath) {
     EnsureConnection();
     if (!_connected) {
-        return false;
+        return EIO; // Input/output error for device not connected
     }
     
     // Use adb push for directory transfer (ADB automatically handles recursion)
@@ -432,71 +425,122 @@ bool ADBDevice::PushDirectory(const std::string &localPath, const std::string &d
         result.find("files pushed") != std::string::npos ||
         result.empty()) {
         DebugLog("ADB Directory Push: SUCCESS\n");
-        return true;
+        return 0; // Success
     } else {
         // Log the error for debugging
         DebugLog("ADB Directory Push failed: %s\n", result.c_str());
-        return false;
+        
+        // Use common error mapping method
+        return Str2Errno(result);
     }
 }
 
 
-bool ADBDevice::DeleteFile(const std::string &devicePath) {
+int ADBDevice::DeleteFile(const std::string &devicePath) {
     EnsureConnection();
     if (!_connected) {
-        return false;
+        return EIO; // Input/output error for device not connected
     }
     
     // Use rm command to delete file
     std::string command = "rm \"" + devicePath + "\"";
     std::string result = RunShellCommand(command);
     
+    // Log the actual command output for debugging
+    DebugLog("ADB File Delete command: %s\n", command.c_str());
+    DebugLog("ADB File Delete result: '%s'\n", result.c_str());
+    
     // Check if deletion was successful (rm returns empty output on success)
     if (result.empty()) {
-        return true;
+        DebugLog("ADB File Delete: SUCCESS\n");
+        return 0; // Success
     } else {
         // Log the error for debugging
         DebugLog("ADB File Delete failed: %s\n", result.c_str());
-        return false;
+        
+        // Use common error mapping method
+        return Str2Errno(result);
     }
 }
 
-bool ADBDevice::DeleteDirectory(const std::string &devicePath) {
+int ADBDevice::DeleteDirectory(const std::string &devicePath) {
     EnsureConnection();
     if (!_connected) {
-        return false;
+        return EIO; // Input/output error for device not connected
     }
     
     // Use rm -rf command to delete directory recursively
     std::string command = "rm -rf \"" + devicePath + "\"";
     std::string result = RunShellCommand(command);
     
+    // Log the actual command output for debugging
+    DebugLog("ADB Directory Delete command: %s\n", command.c_str());
+    DebugLog("ADB Directory Delete result: '%s'\n", result.c_str());
+    
     // Check if deletion was successful (rm returns empty output on success)
     if (result.empty()) {
-        return true;
+        DebugLog("ADB Directory Delete: SUCCESS\n");
+        return 0; // Success
     } else {
         // Log the error for debugging
         DebugLog("ADB Directory Delete failed: %s\n", result.c_str());
-        return false;
+        
+        // Use common error mapping method
+        return Str2Errno(result);
     }
 }
 
-bool ADBDevice::CreateDirectory(const std::string &devicePath) {
+int ADBDevice::CreateDirectory(const std::string &devicePath) {
     EnsureConnection();
     if (!_connected) {
-        return false;
+        return EIO; // Input/output error for device not connected
     }
     
     // Use mkdir -p command to create directory (with parent directories if needed)
     std::string command = "mkdir -p \"" + devicePath + "\"";
     std::string result = RunShellCommand(command);
     
+    // Log the actual command output for debugging
+    DebugLog("ADB Directory Create command: %s\n", command.c_str());
+    DebugLog("ADB Directory Create result: '%s'\n", result.c_str());
+    
     // Check if creation was successful (mkdir returns empty output on success)
     if (result.empty()) {
-        return true;
+        DebugLog("ADB Directory Create: SUCCESS\n");
+        return 0; // Success
     } else {
         // Log the error for debugging
         DebugLog("ADB Directory Create failed: %s\n", result.c_str());
-        return false;
+        
+        // Use common error mapping method
+        return Str2Errno(result);
     }
+}
+
+int ADBDevice::Str2Errno(const std::string &adbError) {
+    static const std::vector<std::pair<const char*, int>> errorMap = {
+        {"remote object", ENOENT},
+        {"does not exist", ENOENT},
+        {"No such file or directory", ENOENT},
+        {"File exists", EEXIST},
+        {"Permission denied", EACCES},
+        {"insufficient permissions for device", EACCES},
+        {"No space left on device", ENOSPC},
+        {"Read-only file system", EROFS},
+        {"Broken pipe", EPIPE},
+        {"error: closed", EPIPE},
+        {"Operation not permitted", EPERM},
+        {"Directory not empty", ENOTEMPTY},
+        {"Device not found", ENODEV},
+        {"no devices/emulators found", ENODEV},
+        {"more than one device/emulator", EINVAL}
+    };
+
+    for (const auto& [key, code] : errorMap) {
+        if (adbError.find(key) != std::string::npos) {
+            return code;
+        }
+    }
+
+    return EIO; // default: Input/output error
 }

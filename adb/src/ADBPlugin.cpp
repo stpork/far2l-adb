@@ -2,6 +2,7 @@
 #include "ADBPlugin.h"
 #include "ADBDevice.h"
 #include "ADBShell.h"
+#include "ADBDialogs.h"
 
 // Standard library includes
 #include <sstream>
@@ -525,11 +526,7 @@ void ADBPlugin::SetupFileBrowsingMode() {
 
 int ADBPlugin::SetDirectory(const wchar_t *Dir, int OpMode)
 {
-	if (!_isConnected || !_adbDevice) {
-		return FALSE;
-	}
-	
-	if (!Dir || wcslen(Dir) == 0) {
+	if (!_isConnected || !_adbDevice || !Dir || wcslen(Dir) == 0) {
 		return FALSE;
 	}
 	
@@ -589,22 +586,21 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 		DebugLog("  DestPath: %ls\n", DestPath[0]);
 	}
 	
-	if (ItemsNumber <= 0) {
-		return FALSE;
-	}
-	
-	if (!_isConnected || !_adbDevice) {
-		DebugLog("  Not connected or no ADB device\n");
-		return FALSE;
-	}
-	
-	if (!PanelItem || !DestPath || !DestPath[0]) {
-		DebugLog("  Invalid parameters\n");
+	if (ItemsNumber <= 0 || !_isConnected || !_adbDevice || !PanelItem || !DestPath || !DestPath[0]) {
 		return FALSE;
 	}
 	
 	std::string destPath = StrWide2MB(DestPath[0]);
 	DebugLog("  destPath (converted): '%s'\n", destPath.c_str());
+	
+	// Show copy/move confirmation dialog unless in silent mode
+	if (!(OpMode & OPM_SILENT)) {
+		if (!ADBDialogs::AskCopyMove(Move != 0, false, destPath)) { // false = download (GetFiles)
+			DebugLog("GetFiles: User cancelled copy/move dialog\n");
+			return -1;  // Return -1 for user cancellation (like NetRocks)
+		}
+		DebugLog("GetFiles: User confirmed, destination: '%s'\n", destPath.c_str());
+	}
 	
 	// Handle View operations (F3 View and F3 QuickView) - only process the first selected file
 	if (OpMode & OPM_VIEW) {
@@ -633,15 +629,16 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 			DebugLog("ADB View: devicePath='%s', localPath='%s'\n", devicePath.c_str(), localPath.c_str());
 			
 			// Use ADB pull to transfer file for View operations
-			bool result = _adbDevice->PullFile(devicePath, localPath);
+			int result = _adbDevice->PullFile(devicePath, localPath);
 			DebugLog("ADB Pull result: %s\n", result ? "SUCCESS" : "FAILED");
 			return result ? TRUE : FALSE;
 		}
 		return FALSE;
 	}
 	
-	// Handle regular file operations (F5 copy, etc.)
+			// Handle regular file operations (F5 copy, etc.)
 	int successCount = 0;
+	int lastErrorCode = 0;
 	
 	for (int i = 0; i < ItemsNumber; i++) {
 		std::string fileName = StrWide2MB(PanelItem[i].FindData.lpwszFileName);
@@ -663,18 +660,21 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 		bool success = false;
 		
 		// Handle directories and files differently
+		int result = 0;
 		if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
 			// Use ADB pull directory transfer
 			DebugLog("GetFiles: Starting directory transfer '%s' -> '%s'\n", 
 				devicePath.c_str(), localPath.c_str());
-			success = _adbDevice->PullDirectory(devicePath, localPath);
+			result = _adbDevice->PullDirectory(devicePath, localPath);
+			success = (result == 0);
 			DebugLog("GetFiles: Directory transfer '%s' -> '%s': %s\n", 
 				devicePath.c_str(), localPath.c_str(), success ? "SUCCESS" : "FAILED");
 		} else {
 			// Use ADB pull file transfer
 			DebugLog("GetFiles: Starting file transfer '%s' -> '%s'\n", 
 				devicePath.c_str(), localPath.c_str());
-			success = _adbDevice->PullFile(devicePath, localPath);
+			result = _adbDevice->PullFile(devicePath, localPath);
+			success = (result == 0);
 			DebugLog("GetFiles: File transfer '%s' -> '%s': %s\n", 
 				devicePath.c_str(), localPath.c_str(), success ? "SUCCESS" : "FAILED");
 		}
@@ -693,7 +693,15 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 		
 		if (success) {
 			successCount++;
+		} else {
+			// Keep track of the last error code for proper error reporting
+			lastErrorCode = result;
 		}
+	}
+	
+	// Set appropriate error code if no files were transferred
+	if (successCount == 0) {
+		WINPORT(SetLastError)(lastErrorCode); // Use the actual error code from ADB
 	}
 	
 	return (successCount > 0) ? TRUE : FALSE;
@@ -701,21 +709,33 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 
 int ADBPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, const wchar_t *SrcPath, int OpMode) {
 	
-	if (ItemsNumber <= 0) {
-		return FALSE;
-	}
-	
-	if (!_isConnected || !_adbDevice) {
-		return FALSE;
-	}
-	
-	if (!PanelItem || !SrcPath) {
+	if (ItemsNumber <= 0 || !_isConnected || !_adbDevice || !PanelItem || !SrcPath) {
 		return FALSE;
 	}
 	
 	std::string srcPath = StrWide2MB(SrcPath);
 	
+	// Show copy/move confirmation dialog unless in silent mode
+	if (!(OpMode & OPM_SILENT)) {
+		std::string destPath = _devicePath;
+		if (!destPath.empty() && destPath.back() != '/') {
+			destPath += "/";
+		}
+		
+		if (!ADBDialogs::AskCopyMove(Move != 0, true, destPath)) { // true = upload (PutFiles)
+			DebugLog("PutFiles: User cancelled copy/move dialog\n");
+			return -1;  // Return -1 for user cancellation (like NetRocks)
+		}
+		DebugLog("PutFiles: User confirmed, destination: '%s'\n", destPath.c_str());
+		
+		// Update the device path if user specified a different destination
+		if (destPath != _devicePath) {
+			_devicePath = destPath;
+		}
+	}
+	
 	int successCount = 0;
+	int lastErrorCode = 0;
 	
 	for (int i = 0; i < ItemsNumber; i++) {
 		std::string fileName = StrWide2MB(PanelItem[i].FindData.lpwszFileName);
@@ -737,21 +757,32 @@ int ADBPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 		bool success = false;
 		
 		// Handle directories and files differently
+		int result = 0;
 		if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
 			// Use ADB push directory transfer
-			success = _adbDevice->PushDirectory(localPath, devicePath);
+			result = _adbDevice->PushDirectory(localPath, devicePath);
+			success = (result == 0);
 			DebugLog("PutFiles: Directory transfer '%s' -> '%s': %s\n", 
 				localPath.c_str(), devicePath.c_str(), success ? "SUCCESS" : "FAILED");
 		} else {
 			// Use ADB push file transfer
-			success = _adbDevice->PushFile(localPath, devicePath);
+			result = _adbDevice->PushFile(localPath, devicePath);
+			success = (result == 0);
 			DebugLog("PutFiles: File transfer '%s' -> '%s': %s\n", 
 				localPath.c_str(), devicePath.c_str(), success ? "SUCCESS" : "FAILED");
 		}
 		
 		if (success) {
 			successCount++;
+		} else {
+			// Keep track of the last error code for proper error reporting
+			lastErrorCode = result;
 		}
+	}
+	
+	// Set appropriate error code if no files were transferred
+	if (successCount == 0) {
+		WINPORT(SetLastError)(lastErrorCode); // Use the actual error code from ADB
 	}
 	
 	return (successCount > 0) ? TRUE : FALSE;
@@ -765,17 +796,7 @@ int ADBPlugin::ProcessHostFile(PluginPanelItem *PanelItem, int ItemsNumber, int 
 int ADBPlugin::DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMode) {
 	DebugLog("DeleteFiles called with ItemsNumber=%d, OpMode=0x%x\n", ItemsNumber, OpMode);
 	
-	if (ItemsNumber <= 0) {
-		return FALSE;
-	}
-	
-	if (!_isConnected || !_adbDevice) {
-		DebugLog("DeleteFiles: Not connected or no ADB device\n");
-		return FALSE;
-	}
-	
-	if (!PanelItem) {
-		DebugLog("DeleteFiles: Invalid PanelItem\n");
+	if (ItemsNumber <= 0 || !_isConnected || !_adbDevice || !PanelItem) {
 		return FALSE;
 	}
 	
@@ -798,31 +819,24 @@ int ADBPlugin::DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMo
 			itemType = L""; // For multiple items, assume files
 		}
 		
-		// Use Info API to show confirmation dialog with separate array elements
-		const wchar_t *msgItems[4];
-		int msgCount = 0;
-		
-		// Store temporary strings to avoid scope issues
-		static std::wstring tempItemType, tempItemName;
-		tempItemType = itemType;
-		tempItemName = itemName;
-		
-		msgItems[0] = L"Delete";
-		msgItems[1] = L"Do you wish to delete";
+		// Use the new variadic template Message function
+		int result;
 		if (!itemType.empty()) {
-			msgItems[2] = tempItemType.c_str();
-			msgItems[3] = tempItemName.c_str();
-			msgCount = 4;
+			result = ADBDialogs::Message(FMSG_MB_YESNO,
+				L"Delete",
+				L"Do you wish to delete",
+				itemType,
+				itemName);
 		} else {
-			msgItems[2] = tempItemName.c_str();
-			msgCount = 3;
+			result = ADBDialogs::Message(FMSG_MB_YESNO,
+				L"Delete",
+				L"Do you wish to delete",
+				itemName);
 		}
-		int result = g_Info.Message(g_Info.ModuleNumber, FMSG_MB_YESNO, 
-			NULL, msgItems, msgCount, 0);
 		
 		if (result != 0) { // 0 = Yes, 1 = No
 			DebugLog("DeleteFiles: User cancelled at stage 1\n");
-			return FALSE;
+			return -1;  // Return -1 for user cancellation (like NetRocks)
 		}
 		
 		// Stage 2: Check if we need RED confirmation dialog
@@ -845,10 +859,6 @@ int ADBPlugin::DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMo
 		}
 		
 		if (needsRedDialog) {
-			// RED confirmation dialog
-			const wchar_t *redMsgItems[5]; // Maximum 5 lines
-			int redMsgCount = 0;
-			
 			// Count files and folders separately
 			int fileCount = 0;
 			int folderCount = 0;
@@ -860,57 +870,48 @@ int ADBPlugin::DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMo
 				}
 			}
 			
-			// Store temporary strings to avoid scope issues
-			static std::wstring tempStr1, tempStr2, tempStr3, tempStr4;
-			
+			// Use the new variadic template Message function for RED dialog
+			int redResult = 0; // Initialize to avoid warning
 			if (hasMultipleItems && !hasNonEmptyDirs) {
 				// Multiple files only
-				redMsgItems[0] = L"Delete files";
-				redMsgItems[1] = L"Do you wish to delete";
-				tempStr1 = std::to_wstring(ItemsNumber) + L" items";
-				redMsgItems[2] = tempStr1.c_str();
-				redMsgCount = 3;
+				redResult = ADBDialogs::Message(FMSG_WARNING | FMSG_MB_YESNO,
+					L"Delete files",
+					L"Do you wish to delete",
+					std::to_wstring(ItemsNumber) + L" items");
 			} else if (hasNonEmptyDirs && ItemsNumber == 1) {
 				// Single non-empty directory
-				redMsgItems[0] = L"Delete folder";
-				redMsgItems[1] = L"The following folder will be deleted:";
-				tempStr1 = L"/" + std::wstring(PanelItem[0].FindData.lpwszFileName);
-				redMsgItems[2] = tempStr1.c_str();
-				redMsgCount = 3;
+				redResult = ADBDialogs::Message(FMSG_WARNING | FMSG_MB_YESNO,
+					L"Delete folder",
+					L"The following folder will be deleted:",
+					L"/" + std::wstring(PanelItem[0].FindData.lpwszFileName));
 			} else if (hasNonEmptyDirs && ItemsNumber > 1) {
 				// Multiple items with folders (could be mix of files and folders)
 				if (fileCount > 0 && folderCount > 0) {
 					// Mixed files and folders
-					redMsgItems[0] = L"Delete items";
-					redMsgItems[1] = L"The following items will be deleted:";
-					tempStr1 = std::to_wstring(folderCount) + L" folders";
-					tempStr2 = std::to_wstring(fileCount) + L" files";
-					redMsgItems[2] = tempStr1.c_str();
-					redMsgItems[3] = tempStr2.c_str();
-					redMsgCount = 4;
+					redResult = ADBDialogs::Message(FMSG_WARNING | FMSG_MB_YESNO,
+						L"Delete items",
+						L"The following items will be deleted:",
+						std::to_wstring(folderCount) + L" folders",
+						std::to_wstring(fileCount) + L" files");
 				} else {
 					// Multiple folders only
-					redMsgItems[0] = L"Delete folders";
-					redMsgItems[1] = L"The following folders will be deleted:";
-					tempStr1 = std::to_wstring(ItemsNumber) + L" folders";
-					redMsgItems[2] = tempStr1.c_str();
-					redMsgCount = 3;
+					redResult = ADBDialogs::Message(FMSG_WARNING | FMSG_MB_YESNO,
+						L"Delete folders",
+						L"The following folders will be deleted:",
+						std::to_wstring(ItemsNumber) + L" folders");
 				}
 			}
 			
-			// Use RED dialog (FMSG_WARNING for red color)
-			int redResult = g_Info.Message(g_Info.ModuleNumber, FMSG_WARNING | FMSG_MB_YESNO, 
-				NULL, redMsgItems, redMsgCount, 0);
-			
 			if (redResult != 0) { // 0 = All/Delete, 1 = Cancel
 				DebugLog("DeleteFiles: User cancelled at stage 2 (RED dialog)\n");
-				return FALSE;
+				return -1;  // Return -1 for user cancellation (like NetRocks)
 			}
 		}
 	}
 	
 	// Process each selected item
 	int successCount = 0;
+	int lastErrorCode = 0;
 	
 	for (int i = 0; i < ItemsNumber; i++) {
 		std::string fileName = StrWide2MB(PanelItem[i].FindData.lpwszFileName);
@@ -924,24 +925,32 @@ int ADBPlugin::DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMo
 		
 		DebugLog("DeleteFiles: Attempting to delete '%s'\n", devicePath.c_str());
 		
-		bool success = false;
+		int result = 0;
 		
 		// Check if it's a directory or file
 		if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-			success = _adbDevice->DeleteDirectory(devicePath);
+			result = _adbDevice->DeleteDirectory(devicePath);
 		} else {
-			success = _adbDevice->DeleteFile(devicePath);
+			result = _adbDevice->DeleteFile(devicePath);
 		}
 		
-		if (success) {
+		if (result == 0) {
 			successCount++;
 			DebugLog("DeleteFiles: Successfully deleted '%s'\n", devicePath.c_str());
 		} else {
 			DebugLog("DeleteFiles: Failed to delete '%s'\n", devicePath.c_str());
+			lastErrorCode = result; // Keep the last error code for display
 		}
 	}
 	
 	DebugLog("DeleteFiles: Successfully deleted %d/%d items\n", successCount, ItemsNumber);
+	
+	// Set appropriate error code if no items were deleted
+	if (successCount == 0) {
+		WINPORT(SetLastError)(lastErrorCode);
+	}
+	
+	// Return FALSE if no items were deleted, TRUE if some were deleted
 	return (successCount > 0) ? TRUE : FALSE;
 }
 
@@ -961,28 +970,10 @@ int ADBPlugin::MakeDirectory(const wchar_t **Name, int OpMode)
 	
 	// Show input dialog unless in silent mode
 	if (!(OpMode & OPM_SILENT)) {
-		// Create simple input dialog using Far Manager's InputBox
-		wchar_t input_buffer[1024] = {0};
-		if (!dir_name.empty()) {
-			wcscpy(input_buffer, StrMB2Wide(dir_name).c_str());
-		}
-		
-		// Use Far Manager's InputBox for simple input
-		if (!g_Info.InputBox(L"Create directory", L"Enter name of directory to create:", 
-			L"ADB_MakeDir", L"", input_buffer, ARRAYSIZE(input_buffer) - 1, nullptr, 
-			FIB_BUTTONS | FIB_NOUSELASTHISTORY)) {
+		if (!ADBDialogs::AskCreateDirectory(dir_name)) {
 			DebugLog("MakeDirectory: User cancelled (ESC pressed)\n");
-			return FALSE;
+			return -1;  // Return -1 for user cancellation (like NetRocks)
 		}
-		
-		// Check if user entered anything (not just pressed OK with empty input)
-		std::wstring input_str(input_buffer);
-		if (input_str.empty()) {
-			DebugLog("MakeDirectory: User entered empty name\n");
-			return FALSE;
-		}
-		
-		dir_name = StrWide2MB(input_buffer);
 	}
 	
 	if (dir_name.empty()) {
@@ -999,8 +990,8 @@ int ADBPlugin::MakeDirectory(const wchar_t **Name, int OpMode)
 	
 	DebugLog("MakeDirectory: Creating directory '%s'\n", devicePath.c_str());
 	
-	bool success = _adbDevice->CreateDirectory(devicePath);
-	if (success) {
+	int result = _adbDevice->CreateDirectory(devicePath);
+	if (result == 0) {
 		DebugLog("MakeDirectory: Successfully created directory '%s'\n", devicePath.c_str());
 		
 		// Update the name parameter if provided
@@ -1012,6 +1003,10 @@ int ADBPlugin::MakeDirectory(const wchar_t **Name, int OpMode)
 		return TRUE;
 	} else {
 		DebugLog("MakeDirectory: Failed to create directory '%s'\n", devicePath.c_str());
-		return FALSE;
+		
+		// Set the error code returned by ADBDevice
+		WINPORT(SetLastError)(result);
+		
+		return FALSE; // Return FALSE to indicate operation failed (consistent with NetRocks/farftp)
 	}
 }
