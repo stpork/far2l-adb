@@ -1,21 +1,14 @@
-// Local includes
 #include "ADBDevice.h"
 #include "ADBShell.h"
-
-// Standard library includes
 #include <sstream>
 #include <cstring>
 #include <stdexcept>
 #include <cstdlib>
-
-// System includes
 #include <unistd.h>
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <wchar.h>
 #include <errno.h>
-
-// far2l utilities
 #include <utils.h>
 
 ADBDevice::ADBDevice(const std::string &device_serial)
@@ -322,33 +315,27 @@ bool ADBDevice::SetDirectory(const std::string &path) {
 }
 
 int ADBDevice::PullFile(const std::string &devicePath, const std::string &localPath) {
+    DebugLog("PullFile: devicePath='%s', localPath='%s'\n", devicePath.c_str(), localPath.c_str());
     EnsureConnection();
     if (!_connected) {
+        DebugLog("PullFile: Not connected, returning EIO\n");
         return EIO; // Input/output error for device not connected
     }
     
-    // Use adb pull with absolute paths for efficiency
     std::string command = "pull \"" + devicePath + "\" \"" + localPath + "\"";
+    DebugLog("PullFile: command='%s'\n", command.c_str());
     std::string result = RunAdbCommand(command);
+    DebugLog("PullFile: result='%s'\n", result.c_str());
     
-    // Log the actual ADB command output for debugging
-    DebugLog("ADB Pull command: %s\n", command.c_str());
-    DebugLog("ADB Pull result: '%s'\n", result.c_str());
-    
-    // Check if pull was successful
-    // adb pull returns status like "1 file pulled. 0 skipped." on success
-    // or error messages on failure
     if (result.find("file pulled") != std::string::npos || 
         result.find("skipped") != std::string::npos ||
         result.empty()) {
-        DebugLog("ADB Pull: SUCCESS\n");
-        return 0; // Success
+        DebugLog("PullFile: Success\n");
+        return 0;
     } else {
-        // Log the error for debugging
-        DebugLog("ADB Pull failed: %s\n", result.c_str());
-      
-        // Use common error mapping method
-        return Str2Errno(result);
+        int err = Str2Errno(result);
+        DebugLog("PullFile: Error %d\n", err);
+        return err;
     }
 }
 
@@ -358,15 +345,12 @@ int ADBDevice::PushFile(const std::string &localPath, const std::string &deviceP
         return EIO; // Input/output error for device not connected
     }
     
-    // Use adb push with absolute paths for efficiency
     std::string command = "push \"" + localPath + "\" \"" + devicePath + "\"";
     std::string result = RunAdbCommand(command);
     
-    // Check if push was successful (adb push returns empty output on success)
     if (result.empty()) {
-        return 0; // Success
+        return 0;
     } else {
-        // Use common error mapping method
         return Str2Errno(result);
     }
 }
@@ -377,28 +361,15 @@ int ADBDevice::PullDirectory(const std::string &devicePath, const std::string &l
         return EIO; // Input/output error for device not connected
     }
     
-    // Use adb pull for directory transfer (ADB automatically handles recursion)
     std::string command = "pull \"" + devicePath + "\" \"" + localPath + "\"";
     std::string result = RunAdbCommand(command);
     
-    // Log the actual ADB command output for debugging
-    DebugLog("ADB Directory Pull command: %s\n", command.c_str());
-    DebugLog("ADB Directory Pull result: '%s'\n", result.c_str());
-    
-    // Check if pull was successful
-    // adb pull returns status like "X files pulled. Y skipped." on success
-    // or error messages on failure
     if (result.find("file pulled") != std::string::npos || 
         result.find("skipped") != std::string::npos ||
         result.find("files pulled") != std::string::npos ||
         result.empty()) {
-        DebugLog("ADB Directory Pull: SUCCESS\n");
-        return 0; // Success
+        return 0;
     } else {
-        // Log the error for debugging
-        DebugLog("ADB Directory Pull failed: %s\n", result.c_str());
-        
-        // Use common error mapping method
         return Str2Errno(result);
     }
 }
@@ -409,28 +380,15 @@ int ADBDevice::PushDirectory(const std::string &localPath, const std::string &de
         return EIO; // Input/output error for device not connected
     }
     
-    // Use adb push for directory transfer (ADB automatically handles recursion)
     std::string command = "push \"" + localPath + "\" \"" + devicePath + "\"";
     std::string result = RunAdbCommand(command);
     
-    // Log the actual ADB command output for debugging
-    DebugLog("ADB Directory Push command: %s\n", command.c_str());
-    DebugLog("ADB Directory Push result: '%s'\n", result.c_str());
-    
-    // Check if push was successful
-    // adb push returns status like "X files pushed. Y skipped." on success
-    // or error messages on failure
     if (result.find("file pushed") != std::string::npos || 
         result.find("skipped") != std::string::npos ||
         result.find("files pushed") != std::string::npos ||
         result.empty()) {
-        DebugLog("ADB Directory Push: SUCCESS\n");
-        return 0; // Success
+        return 0;
     } else {
-        // Log the error for debugging
-        DebugLog("ADB Directory Push failed: %s\n", result.c_str());
-        
-        // Use common error mapping method
         return Str2Errno(result);
     }
 }
@@ -442,23 +400,12 @@ int ADBDevice::DeleteFile(const std::string &devicePath) {
         return EIO; // Input/output error for device not connected
     }
     
-    // Use rm command to delete file
     std::string command = "rm \"" + devicePath + "\"";
     std::string result = RunShellCommand(command);
     
-    // Log the actual command output for debugging
-    DebugLog("ADB File Delete command: %s\n", command.c_str());
-    DebugLog("ADB File Delete result: '%s'\n", result.c_str());
-    
-    // Check if deletion was successful (rm returns empty output on success)
     if (result.empty()) {
-        DebugLog("ADB File Delete: SUCCESS\n");
-        return 0; // Success
+        return 0;
     } else {
-        // Log the error for debugging
-        DebugLog("ADB File Delete failed: %s\n", result.c_str());
-        
-        // Use common error mapping method
         return Str2Errno(result);
     }
 }
@@ -469,23 +416,12 @@ int ADBDevice::DeleteDirectory(const std::string &devicePath) {
         return EIO; // Input/output error for device not connected
     }
     
-    // Use rm -rf command to delete directory recursively
     std::string command = "rm -rf \"" + devicePath + "\"";
     std::string result = RunShellCommand(command);
     
-    // Log the actual command output for debugging
-    DebugLog("ADB Directory Delete command: %s\n", command.c_str());
-    DebugLog("ADB Directory Delete result: '%s'\n", result.c_str());
-    
-    // Check if deletion was successful (rm returns empty output on success)
     if (result.empty()) {
-        DebugLog("ADB Directory Delete: SUCCESS\n");
-        return 0; // Success
+        return 0;
     } else {
-        // Log the error for debugging
-        DebugLog("ADB Directory Delete failed: %s\n", result.c_str());
-        
-        // Use common error mapping method
         return Str2Errno(result);
     }
 }
@@ -496,23 +432,12 @@ int ADBDevice::CreateDirectory(const std::string &devicePath) {
         return EIO; // Input/output error for device not connected
     }
     
-    // Use mkdir -p command to create directory (with parent directories if needed)
     std::string command = "mkdir -p \"" + devicePath + "\"";
     std::string result = RunShellCommand(command);
     
-    // Log the actual command output for debugging
-    DebugLog("ADB Directory Create command: %s\n", command.c_str());
-    DebugLog("ADB Directory Create result: '%s'\n", result.c_str());
-    
-    // Check if creation was successful (mkdir returns empty output on success)
     if (result.empty()) {
-        DebugLog("ADB Directory Create: SUCCESS\n");
-        return 0; // Success
+        return 0;
     } else {
-        // Log the error for debugging
-        DebugLog("ADB Directory Create failed: %s\n", result.c_str());
-        
-        // Use common error mapping method
         return Str2Errno(result);
     }
 }
@@ -542,5 +467,5 @@ int ADBDevice::Str2Errno(const std::string &adbError) {
         }
     }
 
-    return EIO; // default: Input/output error
+    return EIO;
 }

@@ -2,79 +2,78 @@
 #include "farplug-wide.h"
 #include <utils.h>
 
-// Forward declarations
 extern PluginStartupInfo g_Info;
 extern void DebugLog(const char* format, ...);
 
 bool ADBDialogs::AskCopyMove(bool is_move, bool is_upload, std::string& destination)
 {
-    // Determine dialog title and prompt based on operation type
+    if (is_upload) {
+        return true;
+    }
+    
     const wchar_t* title;
     const wchar_t* prompt;
     
     if (is_move) {
-        if (is_upload) {
-            title = L"Move to device";
-            prompt = L"Enter destination path on device:";
-        } else {
-            title = L"Move from device";
-            prompt = L"Enter destination path on local system:";
-        }
+        title = L"Move from device";
+        prompt = L"Enter destination path on local system:";
     } else {
-        if (is_upload) {
-            title = L"Copy to device";
-            prompt = L"Enter destination path on device:";
-        } else {
-            title = L"Copy from device";
-            prompt = L"Enter destination path on local system:";
-        }
+        title = L"Copy from device";
+        prompt = L"Enter destination path on local system:";
     }
     
-    return AskInput(title, prompt, L"ADB_CopyMove", destination, destination);
+    std::string other_panel_path;
+    
+    PanelInfo panelInfo = {};
+    g_Info.Control(PANEL_PASSIVE, FCTL_GETPANELINFO, 0, (LONG_PTR)&panelInfo);
+    
+    int size = g_Info.Control(PANEL_PASSIVE, FCTL_GETPANELDIR, 0, (LONG_PTR)0);
+    
+    if (size > 0) {
+        wchar_t* buffer = new wchar_t[size];
+        int result = g_Info.Control(PANEL_PASSIVE, FCTL_GETPANELDIR, size, (LONG_PTR)buffer);
+        if (result) {
+            other_panel_path = StrWide2MB(buffer);
+        } else {
+            other_panel_path = destination;
+        }
+        delete[] buffer;
+    } else {
+        other_panel_path = destination;
+    }
+    
+    return AskInput(title, prompt, L"ADB_CopyMove", destination, other_panel_path);
 }
 
 bool ADBDialogs::AskCreateDirectory(std::string& dir_name)
 {
-    DebugLog("ADBDialogs::AskCreateDirectory: Starting dialog\n");
-    bool result = AskInput(L"Create directory", L"Enter name of directory to create:", 
-                          L"ADB_MakeDir", dir_name, dir_name);
-    DebugLog("ADBDialogs::AskCreateDirectory: Dialog result = %s\n", result ? "true" : "false");
-    return result;
+    return AskInput(L"Create directory", L"Enter name of directory to create:", 
+                    L"ADB_MakeDir", dir_name, dir_name);
 }
 
 bool ADBDialogs::AskInput(const wchar_t* title, const wchar_t* prompt, 
                          const wchar_t* history_name, std::string& input, 
                          const std::string& default_value)
 {
-    DebugLog("ADBDialogs::AskInput: Starting InputBox\n");
-    DebugLog("ADBDialogs::AskInput: title='%ls', prompt='%ls'\n", title, prompt);
-    
-    // Use the new variadic template InputBox function
     if (!InputBox(FIB_BUTTONS | FIB_NOUSELASTHISTORY, title, prompt, history_name, input, default_value)) {
-        DebugLog("ADBDialogs::AskInput: InputBox returned false (user cancelled)\n");
-        return false; // User cancelled
+        return false;
     }
     
-    DebugLog("ADBDialogs::AskInput: InputBox returned true, input='%s'\n", input.c_str());
-    
-    // Check if user entered anything
     if (input.empty()) {
-        DebugLog("ADBDialogs::AskInput: Empty input\n");
-        return false; // Empty input
+        return false;
     }
     
-    DebugLog("ADBDialogs::AskInput: Success, returning true\n");
     return true;
 }
 
 bool ADBDialogs::AskConfirmation(const wchar_t* title, const wchar_t* message)
 {
     int result = Message(FMSG_MB_YESNO, title, message, L"OK", L"Cancel");
-    return (result == 0); // 0 = Yes, 1 = No
+    return (result == 0);
 }
 
 bool ADBDialogs::AskWarning(const wchar_t* title, const wchar_t* message)
 {
     int result = Message(FMSG_WARNING | FMSG_MB_YESNO, title, message, L"OK", L"Cancel");
-    return (result == 0); // 0 = Yes, 1 = No
+    return (result == 0);
 }

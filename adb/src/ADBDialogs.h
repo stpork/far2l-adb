@@ -5,8 +5,9 @@
 #include "farplug-wide.h"
 #include <utils.h>
 
-// Forward declaration of global Info instance
+// Forward declarations
 extern PluginStartupInfo g_Info;
+extern void DebugLog(const char* format, ...);
 
 // General dialog utility class for ADB plugin
 class ADBDialogs
@@ -54,7 +55,9 @@ public:
             wcscpy(input_buffer, StrMB2Wide(default_value).c_str());
         }
 
-        bool result = g_Info.InputBox(title, prompt, history_name, L"", input_buffer, 
+        std::wstring src_text_wstr = default_value.empty() ? L"" : StrMB2Wide(default_value);
+        const wchar_t* src_text = src_text_wstr.empty() ? L"" : src_text_wstr.c_str();
+        bool result = g_Info.InputBox(title, prompt, history_name, src_text, input_buffer, 
                                      ARRAYSIZE(input_buffer) - 1, nullptr, flags);
         
         // Copy the result back to input parameter
@@ -68,14 +71,16 @@ public:
     // Overload for InputBox without additional lines
     static bool InputBox(unsigned int flags, const wchar_t* title, const wchar_t* prompt, 
                         const wchar_t* history_name, std::string& input,
-                        const std::string& default_value = "") {
+                        const std::string& default_value) {
         // Create input buffer
         wchar_t input_buffer[1024] = {0};
         if (!default_value.empty()) {
             wcscpy(input_buffer, StrMB2Wide(default_value).c_str());
         }
         
-        bool result = g_Info.InputBox(title, prompt, history_name, L"", input_buffer, 
+        std::wstring src_text_wstr = default_value.empty() ? L"" : StrMB2Wide(default_value);
+        const wchar_t* src_text = src_text_wstr.empty() ? nullptr : src_text_wstr.c_str();
+        bool result = g_Info.InputBox(title, prompt, history_name, src_text, input_buffer, 
                                      ARRAYSIZE(input_buffer) - 1, nullptr, flags);
         
         // Copy the result back to input parameter
