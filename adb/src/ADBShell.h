@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <atomic>
 
-void DebugLog(const char* format, ...);
 
 class ADBShell {
 public:

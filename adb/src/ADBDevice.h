@@ -59,6 +59,8 @@ public:
     bool Connect();
     void Disconnect();
     bool IsConnected() const { return _connected; }
+    std::string GetDeviceSerial() const { return _device_serial; }
+    std::string GetCurrentPath() const { return _current_path; }
     
     // Utility functions
     std::string WStringToString(const std::wstring &wstr);

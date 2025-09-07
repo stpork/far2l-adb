@@ -7,7 +7,6 @@
 
 // Forward declarations
 extern PluginStartupInfo g_Info;
-extern void DebugLog(const char* format, ...);
 
 // General dialog utility class for ADB plugin
 class ADBDialogs

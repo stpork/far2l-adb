@@ -1,5 +1,6 @@
 #include "ADBDevice.h"
 #include "ADBShell.h"
+#include "ADBLog.h"
 #include <sstream>
 #include <cstring>
 #include <stdexcept>
@@ -315,26 +316,26 @@ bool ADBDevice::SetDirectory(const std::string &path) {
 }
 
 int ADBDevice::PullFile(const std::string &devicePath, const std::string &localPath) {
-    DebugLog("PullFile: devicePath='%s', localPath='%s'\n", devicePath.c_str(), localPath.c_str());
+    DBG("devicePath='%s', localPath='%s'\n", devicePath.c_str(), localPath.c_str());
     EnsureConnection();
     if (!_connected) {
-        DebugLog("PullFile: Not connected, returning EIO\n");
+        DBG("Not connected, returning EIO\n");
         return EIO; // Input/output error for device not connected
     }
     
     std::string command = "pull \"" + devicePath + "\" \"" + localPath + "\"";
-    DebugLog("PullFile: command='%s'\n", command.c_str());
+    DBG("command='%s'\n", command.c_str());
     std::string result = RunAdbCommand(command);
-    DebugLog("PullFile: result='%s'\n", result.c_str());
+    DBG("result='%s'\n", result.c_str());
     
     if (result.find("file pulled") != std::string::npos || 
         result.find("skipped") != std::string::npos ||
         result.empty()) {
-        DebugLog("PullFile: Success\n");
+        DBG("Success\n");
         return 0;
     } else {
         int err = Str2Errno(result);
-        DebugLog("PullFile: Error %d\n", err);
+        DBG("Error %d\n", err);
         return err;
     }
 }

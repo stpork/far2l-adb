@@ -1,5 +1,6 @@
 // Local includes
 #include "ADBShell.h"
+#include "ADBLog.h"
 
 // Standard library includes
 #include <cstring>

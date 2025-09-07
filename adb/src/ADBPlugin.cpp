@@ -2,7 +2,9 @@
 #include "ADBDevice.h"
 #include "ADBShell.h"
 #include "ADBDialogs.h"
+#include "ADBLog.h"
 #include <sstream>
+#include <string>
 #include <vector>
 #include <cstring>
 #include <cstdarg>
@@ -11,36 +13,49 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include <utils.h>
-void DebugLog(const char* format, ...) {
-    static FILE* logFile = nullptr;
-    if (!logFile) {
-        logFile = fopen("/tmp/adb_plugin_debug.log", "a");
-    }
-    if (logFile) {
-        va_list args;
-        va_start(args, format);
-        vfprintf(logFile, format, args);
-        fflush(logFile);
-        va_end(args);
-    }
-}
+#include <farplug-wide.h>
+
 
 PluginStartupInfo g_Info = {};
+FarStandardFunctions g_FSF = {};
+
 
 ADBPlugin::ADBPlugin(const wchar_t *path, bool path_is_standalone_config, int OpMode)
 	: _allow_remember_location_dir(false)
-	, _isFileMode(true)
 	, _isConnected(false)
 	, _deviceSerial("")
-	, _devicePath("/")
+	, _CurrentDir("/")
+	, _lastEnteredDir("")
 {
-	wcscpy(_panel_title, L"ADB Plugin");
-	wcscpy(_cur_dir, L"/");
+	wcscpy(_PanelTitle, L"ADB");
 	wcscpy(_mk_dir, L"");
-	wcscpy(_format, L"ADB");
 	
 	if (path && path_is_standalone_config) {
 		_standalone_config = path;
+	}
+	
+	// Auto-connect logic: if only one device available, connect immediately
+	int deviceCount = GetAvailableDeviceCount();
+	
+	if (deviceCount == 1) {
+		std::string deviceSerial = GetFirstAvailableDevice();
+		if (!deviceSerial.empty()) {
+			if (ConnectToDevice(deviceSerial)) {
+				_isConnected = true;
+				_deviceSerial = deviceSerial;
+				// Update panel title
+				std::wstring panel_title = StrMB2Wide(GetCurrentDevicePath());
+				if (panel_title.size() >= ARRAYSIZE(_PanelTitle)) {
+					size_t rmlen = 4 + (panel_title.size() - ARRAYSIZE(_PanelTitle));
+					panel_title.replace((panel_title.size() - rmlen) / 2, rmlen, L"...");
+				}
+				wcscpy(_PanelTitle, panel_title.c_str());
+			}
+		}
+	} else if (deviceCount > 1) {
+		// Multiple devices available, show device selection mode
+		_isConnected = false;
+		wcscpy(_PanelTitle, L"ADB - Select Device");
 	}
 }
 
@@ -50,49 +65,10 @@ ADBPlugin::~ADBPlugin()
 
 int ADBPlugin::GetFindData(PluginPanelItem **pPanelItem, int *pItemsNumber, int OpMode)
 {
-	if (_isConnected) {
-		return GetDeviceFileData(pPanelItem, pItemsNumber, OpMode);
-	}
+	if (_isConnected && _adbDevice) 
+		return GetFileData(pPanelItem, pItemsNumber);
 	
-	std::string deviceSerial = GetFirstAvailableDevice();
-	
-	if (deviceSerial.empty()) {
-		*pItemsNumber = 1;
-		*pPanelItem = new PluginPanelItem[1];
-		
-		PluginPanelItem &item = (*pPanelItem)[0];
-		memset(&item, 0, sizeof(PluginPanelItem));
-		
-		item.FindData.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
-		item.FindData.dwUnixMode = 0644;
-		item.FindData.lpwszFileName = const_cast<wchar_t*>(L"No ADB devices found");
-		
-		return 1;
-	}
-	
-	if (ConnectToDevice(deviceSerial)) {
-		_isConnected = true;
-		_isFileMode = true;
-		_deviceSerial = deviceSerial;
-		_devicePath = "/";
-		
-		swprintf(_panel_title, sizeof(_panel_title)/sizeof(wchar_t), L"%s", 
-			StrMB2Wide(_devicePath).c_str());
-		
-		return GetDeviceFileData(pPanelItem, pItemsNumber, OpMode);
-	} else {
-		*pItemsNumber = 1;
-		*pPanelItem = new PluginPanelItem[1];
-		
-		PluginPanelItem &item = (*pPanelItem)[0];
-		memset(&item, 0, sizeof(PluginPanelItem));
-		
-		item.FindData.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
-		item.FindData.dwUnixMode = 0644;
-		item.FindData.lpwszFileName = const_cast<wchar_t*>(L"Failed to connect to ADB device");
-		
-		return 1;
-	}
+	return GetDeviceData(pPanelItem, pItemsNumber);
 }
 
 void ADBPlugin::FreeFindData(PluginPanelItem *PanelItem, int ItemsNumber)
@@ -111,6 +87,15 @@ void ADBPlugin::FreeFindData(PluginPanelItem *PanelItem, int ItemsNumber)
 			if (PanelItem[i].Group) {
 				free((void*)PanelItem[i].Group);
 			}
+			// Free custom column data for device selection
+			if (PanelItem[i].CustomColumnData) {
+				for (int j = 0; j < PanelItem[i].CustomColumnNumber; j++) {
+					if (PanelItem[i].CustomColumnData[j]) {
+						free((void*)PanelItem[i].CustomColumnData[j]);
+					}
+				}
+				delete[] PanelItem[i].CustomColumnData;
+			}
 		}
 		delete[] PanelItem;
 	}
@@ -118,65 +103,101 @@ void ADBPlugin::FreeFindData(PluginPanelItem *PanelItem, int ItemsNumber)
 
 void ADBPlugin::GetOpenPluginInfo(OpenPluginInfo *Info)
 {
-	if (!Info) {
-		return;
-	}
-	
-	Info->StructSize = sizeof(*Info);
-	Info->Flags = OPIF_SHOWPRESERVECASE | OPIF_USEHIGHLIGHTING | OPIF_ADDDOTS;
-	Info->HostFile = nullptr;
-	Info->CurDir = _cur_dir;
-	Info->PanelTitle = _panel_title;
-	Info->InfoLines = nullptr;
-	Info->InfoLinesNumber = 0;
-	Info->DescrFiles = nullptr;
+	if (!Info) return;
+
+	Info->StructSize       = sizeof(*Info);
+	Info->HostFile         = nullptr;
+	Info->InfoLines        = nullptr;
+	Info->InfoLinesNumber  = 0;
+	Info->DescrFiles       = nullptr;
 	Info->DescrFilesNumber = 0;
-	
-	if (_isFileMode) {
-		Info->PanelModesArray = nullptr;
-		Info->PanelModesNumber = 0;
-		Info->StartPanelMode = 0;
-		Info->StartSortMode = SM_NAME;
-		Info->Format = _format;
+	Info->KeyBar           = nullptr;
+	Info->ShortcutData     = nullptr;
+
+	// Panel mode storage
+	static PanelMode connectedMode = {
+		.ColumnTypes        = L"N,C0",
+		.ColumnWidths       = L"0,0",
+		.ColumnTitles       = nullptr, // set later
+		.FullScreen         = 0,
+		.DetailedStatus     = 1,
+		.AlignExtensions    = 0,
+		.CaseConversion     = 0,
+		.StatusColumnTypes  = L"N,C0",
+		.StatusColumnWidths = L"0,0",
+		.Reserved           = {0, 0}
+	};
+
+	static const wchar_t* connectedTitles[] = { L"Name", L"Size" };
+
+	static PanelMode deviceMode = {
+		.ColumnTypes        = L"N,C0,C1,C2",
+		.ColumnWidths       = L"0,30,0,8",
+		.ColumnTitles       = nullptr, // set later
+		.FullScreen         = 0,
+		.DetailedStatus     = 1,
+		.AlignExtensions    = 0,
+		.CaseConversion     = 0,
+		.StatusColumnTypes  = L"N,C0,C1,C2",
+		.StatusColumnWidths = L"0,30,0,8",
+		.Reserved           = {0, 0}
+	};
+
+	static const wchar_t* deviceTitles[] = { L"Serial Number", L"Device Name", L"Model", L"Port" };
+
+	if (_isConnected) {
+		connectedMode.ColumnTitles = connectedTitles;
+		Info->PanelModesArray      = &connectedMode;
+		Info->Flags                = OPIF_SHOWPRESERVECASE | OPIF_USEHIGHLIGHTING;
+		Info->StartSortMode        = SM_NAME;
+
+		static std::wstring curDir;
+		static std::wstring format;
+		curDir  = StrMB2Wide(_CurrentDir);
+		format  = L"adb:" + curDir;
+
+		Info->CurDir  = curDir.c_str();
+		Info->Format  = format.c_str();
 	} else {
-		SetupDeviceSelectionMode();
-		Info->PanelModesArray = &_panel_mode;
-		Info->PanelModesNumber = 1;
-		Info->StartPanelMode = '0';
-		Info->StartSortMode = 0;
+		deviceMode.ColumnTitles = deviceTitles;
+		Info->PanelModesArray   = &deviceMode;
+		Info->Flags             = OPIF_SHOWPRESERVECASE | OPIF_USEHIGHLIGHTING | OPIF_SHOWNAMESONLY;
+		Info->StartSortMode     = 0;
+
+		Info->CurDir = L"";
 		Info->Format = L"ADB";
 	}
-	
-	Info->StartSortOrder = 0;
-	Info->KeyBar = nullptr;
-	Info->ShortcutData = nullptr;
+
+	Info->StartPanelMode = '4';
+	Info->PanelModesNumber  = 0;
+	Info->PanelTitle     = _PanelTitle;
 }
+
 
 int ADBPlugin::ProcessKey(int Key, unsigned int ControlState)
 {
-	if (Key == VK_RETURN && ControlState == 0 && !_isConnected) {
+	// Handle ENTER in device selection mode (when not connected)
+	if (!_isConnected && Key == VK_RETURN && ControlState == 0) {
 		return ByKey_TryEnterSelectedDevice() ? TRUE : FALSE;
 	}
-	return 0;
+	return FALSE;
 }
 
-int ADBPlugin::GetDeviceFileData(PluginPanelItem **pPanelItem, int *pItemsNumber, int OpMode)
+
+int ADBPlugin::GetFileData(PluginPanelItem **pPanelItem, int *pItemsNumber)
 {
-	if (!_adbDevice) {
-		return 0;
-	}
-	
 	try {
 		std::vector<PluginPanelItem> files;
-		std::string current_path = _adbDevice->DirectoryEnum(_devicePath, files);
-		
-		_devicePath = current_path;
+		std::string current_path = _adbDevice->DirectoryEnum(GetCurrentDevicePath(), files);
 		
 		PluginPanelItem parentDir{};
 		parentDir.FindData.lpwszFileName = wcsdup(L"..");
 		parentDir.FindData.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
 		parentDir.FindData.dwUnixMode = S_IFDIR | 0755;
 		files.insert(files.begin(), parentDir);
+		
+		DBG("Created '..' entry with attributes: 0x%x, mode: 0%o\n", 
+			parentDir.FindData.dwFileAttributes, parentDir.FindData.dwUnixMode);
 		
 		*pItemsNumber = files.size();
 		*pPanelItem = new PluginPanelItem[files.size()];
@@ -193,12 +214,170 @@ int ADBPlugin::GetDeviceFileData(PluginPanelItem **pPanelItem, int *pItemsNumber
 		
 		PluginPanelItem &item = (*pPanelItem)[0];
 		memset(&item, 0, sizeof(PluginPanelItem));
-		item.FindData.lpwszFileName = wcsdup(L"..");
-		item.FindData.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
-		item.FindData.dwUnixMode = S_IFDIR | 0755;
+		
+		item.FindData.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
+		item.FindData.dwUnixMode = 0644;
+		item.FindData.lpwszFileName = const_cast<wchar_t*>(L"Error accessing device");
 		
 		return 1;
 	}
+}
+
+int ADBPlugin::GetDeviceData(PluginPanelItem **pPanelItem, int *pItemsNumber)
+{
+	ADBShell tempShell;
+	std::string output = ADBShell::adbExec("devices -l");
+	DBG("ADB devices output: %s\n", output.c_str());
+	
+	if (output.empty()) {
+		DBG("No ADB devices found\n");
+		*pItemsNumber = 1;
+		*pPanelItem = new PluginPanelItem[1];
+		
+		PluginPanelItem &item = (*pPanelItem)[0];
+		memset(&item, 0, sizeof(PluginPanelItem));
+		
+		item.FindData.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
+		//item.FindData.dwUnixMode = 0644;
+		item.FindData.lpwszFileName = const_cast<wchar_t*>(L"No ADB devices found");
+		
+		return 1;
+	}
+	
+	std::vector<PluginPanelItem> devices;
+	std::istringstream stream(output);
+	std::string line;
+	
+	// Skip header line
+	if (std::getline(stream, line)) {
+	}
+	
+	while (std::getline(stream, line)) {
+		if (line.empty()) continue;
+		
+		// Parse device line: "serial    device product:model model:name device:name transport_id:1"
+		std::istringstream lineStream(line);
+		std::string serial, status, model, deviceName, usbPort;
+		
+		if (lineStream >> serial >> status) {
+			if (serial != "List" && serial != "daemon" && serial != "starting" && serial != "adb" && status == "device") {
+				// Parse additional fields
+				std::string field;
+				while (lineStream >> field) {
+					if (field.find("model:") == 0) {
+						model = field.substr(6); // Remove "model:" prefix
+					} else if (field.find("usb:") == 0) {
+						usbPort = field; // Keep "usb:" prefix
+					}
+				}
+				
+				// Get friendly device name using ADB settings commands
+				deviceName = GetDeviceFriendlyName(serial);
+				
+				// Use model as fallback if no friendly name found
+				if (deviceName.empty() && !model.empty()) {
+					deviceName = model;
+				}
+				
+				// Use serial as final fallback
+				if (deviceName.empty()) {
+					deviceName = serial;
+				}
+				
+				PluginPanelItem device{};
+				device.FindData.lpwszFileName = wcsdup(StrMB2Wide(serial).c_str());
+				device.FindData.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY; // Make it look like a directory
+				//device.FindData.dwUnixMode = S_IFDIR | 0755;
+				
+				// Store additional data in custom fields
+				// C0=Serial Number, C1=Device Name, C2=Model, C3=Port
+				wchar_t **customData = new wchar_t*[3];
+				customData[0] = wcsdup(StrMB2Wide(deviceName).c_str()); // C1: Device Name
+				customData[1] = wcsdup(StrMB2Wide(model).c_str());     // C2: Model
+				customData[2] = wcsdup(StrMB2Wide(usbPort).c_str());   // C3: Port
+				
+				device.CustomColumnData = customData;
+				device.CustomColumnNumber = 3;
+				
+				devices.push_back(device);
+			}
+		}
+	}
+	
+	*pItemsNumber = devices.size();
+	*pPanelItem = new PluginPanelItem[devices.size()];
+	
+	for (size_t i = 0; i < devices.size(); i++) {
+		(*pPanelItem)[i] = devices[i];
+	}
+	
+	return devices.size();
+}
+
+std::string ADBPlugin::GetDeviceFriendlyName(const std::string& serial)
+{
+	// Try to get device name from global settings first
+	std::string cmd = "-s " + serial + " shell settings get global device_name";
+	std::string output = ADBShell::adbExec(cmd);
+	
+	// Remove trailing newline if present
+	if (!output.empty() && output.back() == '\n') {
+		output.pop_back();
+	}
+	
+	if (output.empty() || output == "null") {
+		return "";
+	}
+	
+	return output;
+}
+
+bool ADBPlugin::ByKey_TryEnterSelectedDevice()
+{
+	// Get the currently selected device from the panel
+	std::string deviceSerial = GetCurrentPanelItemDeviceName();
+	if (deviceSerial.empty()) {
+		DBG("No device selected\n");
+		return false;
+	}
+	
+	DBG("Connecting to selected device: %s\n", deviceSerial.c_str());
+	
+	if (!ConnectToDevice(deviceSerial)) {
+		DBG("Failed to connect to device: %s\n", deviceSerial.c_str());
+		return false;
+	}
+	
+	// Set up the connection state
+	_isConnected = true;
+	_deviceSerial = deviceSerial;
+	// No need to update _devicePath - using GetCurrentDevicePath() directly
+	
+	// Update panel title with device serial and path
+	std::wstring panel_title = StrMB2Wide(_deviceSerial) + L":" + StrMB2Wide(GetCurrentDevicePath());
+	if (panel_title.size() >= ARRAYSIZE(_PanelTitle)) {
+		size_t rmlen = 4 + (panel_title.size() - ARRAYSIZE(_PanelTitle));
+		panel_title.replace((panel_title.size() - rmlen) / 2, rmlen, L"...");
+	}
+	wcscpy(_PanelTitle, panel_title.c_str());
+	
+	// Refresh the panel to show the new directory contents
+	g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
+	
+	// Reset cursor position to top of the panel
+	PanelRedrawInfo ri = {};
+	ri.CurrentItem = ri.TopPanelItem = 0;
+	g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, (LONG_PTR)&ri);
+	
+	DBG("Successfully connected to device: %s\n", deviceSerial.c_str());
+	return true;
+}
+
+int ADBPlugin::GetHighlightedDeviceIndex()
+{
+	// For now, return 0 (first device)
+	// In a full implementation, this would get the currently highlighted item
+	return 0;
 }
 
 int ADBPlugin::ExitDeviceFilePanel()
@@ -210,15 +389,42 @@ int ADBPlugin::ExitDeviceFilePanel()
 	
 	_isConnected = false;
 	_deviceSerial.clear();
-	_devicePath = "/";
-	wcscpy(_panel_title, L"ADB Plugin");
+	// No need to update _devicePath - using GetCurrentDevicePath() directly
+	wcscpy(_PanelTitle, L"ADB Plugin");
 	
 	return 1;
 }
 
 std::string ADBPlugin::GetCurrentPanelItemDeviceName()
 {
-	return GetFallbackDeviceName();
+	// Get the currently focused/selected item from the panel (following NetRocks pattern)
+	intptr_t size = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, 0);
+	if (size < (intptr_t)sizeof(PluginPanelItem)) {
+		DBG("No selected item or invalid size: %ld\n", (long)size);
+		return "";
+	}
+	
+	PluginPanelItem *item = (PluginPanelItem *)malloc(size + 0x100);
+	if (!item) {
+		DBG("Failed to allocate memory for panel item\n");
+		return "";
+	}
+	
+	// Clear the memory first
+	memset(item, 0, size + 0x100);
+	
+	g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, (LONG_PTR)(void *)item);
+	
+	if (!item->FindData.lpwszFileName) {
+		free(item);
+		return "";
+	}
+	
+	// Get serial number from filename (since we set it there)
+	std::string deviceSerial = StrWide2MB(item->FindData.lpwszFileName);
+	
+	free(item);
+	return deviceSerial;
 }
 
 std::string ADBPlugin::GetFallbackDeviceName()
@@ -288,53 +494,25 @@ std::string ADBPlugin::GetFallbackDeviceName()
 	return "Unknown Device";
 }
 
-bool ADBPlugin::ByKey_TryEnterSelectedDevice()
-{
-	std::string deviceSerial = GetFirstAvailableDevice();
-	if (deviceSerial.empty()) {
-		return false;
-	}
-	
-	if (!ConnectToDevice(deviceSerial)) {
-		return false;
-	}
-	
-	_isConnected = true;
-	_devicePath = "/";
-	UpdatePathInfo();
-	return true;
-}
-
 bool ADBPlugin::ConnectToDevice(const std::string &deviceSerial)
 {
+	DBG("ConnectToDevice: deviceSerial='%s'\n", deviceSerial.c_str());
 	try {
 		_adbDevice = std::make_shared<ADBDevice>(deviceSerial);
+		DBG("ConnectToDevice: ADBDevice created\n");
 		
 		if (!_adbDevice->IsConnected()) {
+			DBG("ConnectToDevice: ADBDevice not connected\n");
 			return false;
 		}
 		
+		DBG("ConnectToDevice: Successfully connected\n");
 		return true;
 		
 	} catch (const std::exception &ex) {
+		DBG("ConnectToDevice: Exception: %s\n", ex.what());
 		return false;
 	}
-}
-
-void ADBPlugin::UpdatePathInfo()
-{
-	std::wstring panel_title = StrMB2Wide(_devicePath);
-	
-	if (panel_title.size() >= ARRAYSIZE(_panel_title)) {
-		size_t rmlen = 4 + (panel_title.size() - ARRAYSIZE(_panel_title));
-		panel_title.replace((panel_title.size() - rmlen) / 2, rmlen, L"...");
-	}
-	
-	wcscpy(_panel_title, panel_title.c_str());
-	wcscpy(_cur_dir, StrMB2Wide(_devicePath).c_str());
-	
-	std::wstring format_str = L"adb" + StrMB2Wide(_devicePath);
-	wcscpy(_format, format_str.c_str());
 }
 
 std::string ADBPlugin::GetFirstAvailableDevice()
@@ -365,25 +543,35 @@ std::string ADBPlugin::GetFirstAvailableDevice()
 	return "";
 }
 
-int ADBPlugin::GetHighlightedDeviceIndex()
+int ADBPlugin::GetAvailableDeviceCount()
 {
-	static int currentSelection = 0;
+	ADBShell tempShell;
+	std::string output = ADBShell::adbExec("devices -l");
+	if (output.empty()) {
+		return 0;
+	}
 	
-	PluginStartupInfo *info = GetInfo();
-	if (info) {
-		try {
-			PanelInfo panelInfo = {};
-			if (info->Control(PANEL_ACTIVE, FCTL_GETPANELINFO, 0, (LONG_PTR)&panelInfo)) {
-				if (panelInfo.CurrentItem >= 0 && panelInfo.CurrentItem < panelInfo.ItemsNumber) {
-					currentSelection = panelInfo.CurrentItem;
-					return currentSelection;
-				}
+	std::istringstream stream(output);
+	std::string line;
+	int count = 0;
+	
+	// Skip header line
+	if (std::getline(stream, line)) {
+	}
+	
+	while (std::getline(stream, line)) {
+		if (line.empty()) continue;
+		
+		std::istringstream lineStream(line);
+		std::string serial;
+		if (lineStream >> serial) {
+			if (serial != "List" && serial != "daemon" && serial != "starting" && serial != "adb") {
+				count++;
 			}
-		} catch (...) {
 		}
 	}
 	
-	return currentSelection;
+	return count;
 }
 
 PluginStartupInfo *ADBPlugin::GetInfo()
@@ -393,51 +581,82 @@ PluginStartupInfo *ADBPlugin::GetInfo()
 
 int ADBPlugin::ProcessEventCommand(const wchar_t *cmd, HANDLE hPlugin)
 {
-	return FALSE;
-}
+	// Force debug output to file immediately
+	fprintf(stderr, "ProcessEventCommand called with cmd='%ls'\n", cmd ? cmd : L"NULL");
+	fflush(stderr);
+	
+	DBG("Called with cmd='%ls'\n", cmd ? cmd : L"NULL");
 
-void ADBPlugin::SetupDeviceSelectionMode() {
-	memset(&_panel_mode, 0, sizeof(_panel_mode));
-	
-	_panel_mode.FullScreen = 0;
-	_panel_mode.DetailedStatus = 1;
-	
-	_panel_mode.ColumnTypes = L"N,C0,C1,C2";
-	_panel_mode.ColumnWidths = L"35,15,15,15";
-	
-	_panel_mode.StatusColumnTypes = L"N,C0,C1,C2";
-	_panel_mode.StatusColumnWidths = L"35,15,15,15";
-	
-	static const wchar_t* columnTitles[] = {
-		L"Device Name",
-		L"Model",
-		L"Serial Number",
-		L"Port"
-	};
-	_panel_mode.ColumnTitles = columnTitles;
-}
+	if (!cmd) {
+		DBG("No command provided\n");
+		return FALSE;
+	}
 
-void ADBPlugin::SetupFileBrowsingMode() {
-	memset(&_panel_mode, 0, sizeof(_panel_mode));
+	// Check if we're connected to a device - if not, we can't process any commands
+	if (!_isConnected || !_adbDevice) {
+		DBG("Not connected to device\n");
+		return FALSE;
+	}
+
+	const wchar_t *commandToExecute = nullptr;
+
+	// Check if command starts with "adb:" (explicit ADB command)
+	if (wcsncasecmp(cmd, L"adb:", 4) == 0) {
+		// Skip the "adb:" prefix
+		commandToExecute = cmd + 4;
+		DBG("Processing prefixed command: '%ls'\n", commandToExecute);
+	} else {
+		// Direct command when ADB panel is active
+		commandToExecute = cmd;
+		DBG("Processing direct command: '%ls'\n", commandToExecute);
+	}
+
+	// Skip leading spaces
+	while (*commandToExecute == L' ') {
+		commandToExecute++;
+	}
+
+	// Check if we have a command to execute
+	if (*commandToExecute == L'\0') {
+		DBG("Empty command after removing prefix and spaces\n");
+		return FALSE;
+	}
+
+	DBG("About to execute command\n");
 	
-	_panel_mode.FullScreen = 0;
-	_panel_mode.DetailedStatus = 1;
+	// Execute the command in the existing ADB shell session
+	std::string command = StrWide2MB(commandToExecute);
+	DBG("Executing command '%s'\n", command.c_str());
+
+	// Use the existing ADB shell session to execute the command
+	std::string output = _adbDevice->RunShellCommand(command);
+	DBG("Command output length=%zu\n", output.length());
+
+	DBG("About to clear command line\n");
+	/* Clear the command line
+	DBG("Command line cleared\n");
+	*/
+
+	// Display the output in far2l console
+	if (!output.empty()) {
+		DBG("Output: '%s'\n", output.c_str());
+		
+		// Use read -r -d '' with heredoc to avoid escaping issues
+		std::string readCmd = "read -r -d '' mytext <<'EOF'\n" + output + "\nEOF\necho \"$mytext\"";
+		std::wstring wideReadCmd = StrMB2Wide(readCmd);
+		DBG("Executing read with heredoc\n");
+		
+		if (g_Info.FSF && g_Info.FSF->Execute) {
+			g_Info.FSF->Execute(wideReadCmd.c_str(), EF_NOCMDPRINT);
+		}
+	} else {
+		DBG("No output from command\n");
+	}
 	
-    _panel_mode.ColumnTypes = L"N,S,D,T,M,L";
-    _panel_mode.ColumnWidths = L"30,10,12,8,12,8";
-    
-    _panel_mode.StatusColumnTypes = L"N,S,D,T,M,L";
-    _panel_mode.StatusColumnWidths = L"30,10,12,8,12,8";
-    
-    static const wchar_t* columnTitles[] = {
-        L"Name",
-        L"Size",
-        L"Date",
-        L"Time",
-        L"Mode",
-        L"Links"
-    };
-    _panel_mode.ColumnTitles = columnTitles;
+	// Clear command line after execution
+	g_Info.Control(hPlugin, FCTL_SETCMDLINE, 0, (LONG_PTR)L"");
+	
+	return TRUE;
 }
 
 int ADBPlugin::SetDirectory(const wchar_t *Dir, int OpMode)
@@ -447,31 +666,34 @@ int ADBPlugin::SetDirectory(const wchar_t *Dir, int OpMode)
 	}
 	
 	std::string target_dir = StrWide2MB(Dir);
-	
-	if (target_dir == "..") {
-		size_t lastSlash = _devicePath.find_last_of('/');
-		if (lastSlash != std::string::npos && lastSlash > 0) {
-			_devicePath = _devicePath.substr(0, lastSlash);
-		} else {
-			_devicePath = "/";
-		}
-		
-		UpdatePathInfo();
-		return TRUE;
-	}
-	
 	if (!_adbDevice->SetDirectory(target_dir)) {
 		return FALSE;
 	}
 	
-	_devicePath = _adbDevice->GetCurrentWorkingDirectory();
-	UpdatePathInfo();
+	// Remember the directory we're entering for cursor position tracking
+	_lastEnteredDir = target_dir;
+	
+	// Update _CurrentDir to match the new directory
+	_CurrentDir = _adbDevice->GetCurrentPath();
+	
+	// Update panel title with device serial and path
+	std::wstring panel_title = StrMB2Wide(_deviceSerial) + L":" + StrMB2Wide(_CurrentDir);
+	if (panel_title.size() >= ARRAYSIZE(_PanelTitle)) {
+		size_t rmlen = 4 + (panel_title.size() - ARRAYSIZE(_PanelTitle));
+		panel_title.replace((panel_title.size() - rmlen) / 2, rmlen, L"...");
+	}
+	wcscpy(_PanelTitle, panel_title.c_str());
+	/*
+	// Refresh panel to show new directory contents
+	g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
+	g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, 0);
+	*/
 	
 	return TRUE;
 }
 
 int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, const wchar_t **DestPath, int OpMode) {
-	DebugLog("GetFiles: ItemsNumber=%d, Move=%d, OpMode=0x%x\n", ItemsNumber, Move, OpMode);
+	DBG("ItemsNumber=%d, Move=%d, OpMode=0x%x\n", ItemsNumber, Move, OpMode);
 	
 	if (ItemsNumber <= 0 || !_isConnected || !_adbDevice || !PanelItem || !DestPath) {
 		return FALSE;
@@ -481,7 +703,7 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 	if (DestPath && DestPath[0]) {
 		destPath = StrWide2MB(DestPath[0]);
 	} else {
-		destPath = _devicePath;
+		destPath = GetCurrentDevicePath();
 	}
 	
 	if (!(OpMode & OPM_SILENT)) {
@@ -491,34 +713,34 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 	}
 	
 	if (OpMode & OPM_VIEW) {
-		DebugLog("F3 View: ItemsNumber=%d\n", ItemsNumber);
+		DBG("ItemsNumber=%d\n", ItemsNumber);
 		if (ItemsNumber > 0) {
 			std::string fileName = StrWide2MB(PanelItem[0].FindData.lpwszFileName);
-			DebugLog("F3 View: fileName='%s'\n", fileName.c_str());
+			DBG("fileName='%s'\n", fileName.c_str());
 			
 			if (PanelItem[0].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-				DebugLog("F3 View: Directory, returning FALSE\n");
+				DBG("Directory, returning FALSE\n");
 				return FALSE;
 			}
 			
-			std::string devicePath = _devicePath;
+			std::string devicePath = GetCurrentDevicePath();
 			if (devicePath.back() != '/') {
 				devicePath += "/";
 			}
 			devicePath += fileName;
-			DebugLog("F3 View: devicePath='%s'\n", devicePath.c_str());
+			DBG("F3 View: devicePath='%s'\n", devicePath.c_str());
 			
 			std::string localPath = destPath;
 			if (localPath.back() == '/' || localPath.back() == '\\') {
 				localPath += fileName;
 			}
-			DebugLog("F3 View: localPath='%s'\n", localPath.c_str());
+			DBG("localPath='%s'\n", localPath.c_str());
 			
 			int result = _adbDevice->PullFile(devicePath, localPath);
-			DebugLog("F3 View: PullFile result=%d\n", result);
+			DBG("PullFile result=%d\n", result);
 			return (result == 0) ? TRUE : FALSE;
 		}
-		DebugLog("F3 View: No items, returning FALSE\n");
+		DBG("No items, returning FALSE\n");
 		return FALSE;
 	}
 	
@@ -528,7 +750,7 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 	for (int i = 0; i < ItemsNumber; i++) {
 		std::string fileName = StrWide2MB(PanelItem[i].FindData.lpwszFileName);
 		
-		std::string devicePath = _devicePath;
+		std::string devicePath = GetCurrentDevicePath();
 		if (devicePath.back() != '/') {
 			devicePath += "/";
 		}
@@ -573,7 +795,7 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 }
 
 int ADBPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, const wchar_t *SrcPath, int OpMode) {
-	DebugLog("PutFiles: ItemsNumber=%d, Move=%d, OpMode=0x%x\n", ItemsNumber, Move, OpMode);
+	DBG("ItemsNumber=%d, Move=%d, OpMode=0x%x\n", ItemsNumber, Move, OpMode);
 	
 	if (ItemsNumber <= 0 || !_isConnected || !_adbDevice || !PanelItem || !SrcPath) {
 		return FALSE;
@@ -582,7 +804,7 @@ int ADBPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 	std::string srcPath = StrWide2MB(SrcPath);
 	
 	if (!(OpMode & OPM_SILENT)) {
-		std::string destPath = _devicePath;
+		std::string destPath = GetCurrentDevicePath();
 		if (!destPath.empty() && destPath.back() != '/') {
 			destPath += "/";
 		}
@@ -591,8 +813,11 @@ int ADBPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 			return -1;
 		}
 		
-		if (destPath != _devicePath) {
-			_devicePath = destPath;
+		if (destPath != GetCurrentDevicePath()) {
+			// Update ADBDevice's path when changing directory
+			if (_adbDevice) {
+				_adbDevice->SetDirectory(destPath);
+			}
 		}
 	}
 	
@@ -608,7 +833,7 @@ int ADBPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 		}
 		localPath += fileName;
 		
-		std::string devicePath = _devicePath;
+		std::string devicePath = GetCurrentDevicePath();
 		if (devicePath.back() != '/') {
 			devicePath += "/";
 		}
@@ -747,7 +972,7 @@ int ADBPlugin::DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMo
 	for (int i = 0; i < ItemsNumber; i++) {
 		std::string fileName = StrWide2MB(PanelItem[i].FindData.lpwszFileName);
 		
-		std::string devicePath = _devicePath;
+		std::string devicePath = GetCurrentDevicePath();
 		if (devicePath.back() != '/') {
 			devicePath += "/";
 		}
@@ -796,7 +1021,7 @@ int ADBPlugin::MakeDirectory(const wchar_t **Name, int OpMode)
 		return FALSE;
 	}
 	
-	std::string devicePath = _devicePath;
+	std::string devicePath = GetCurrentDevicePath();
 	if (!devicePath.empty() && devicePath.back() != '/') {
 		devicePath += "/";
 	}
@@ -814,4 +1039,12 @@ int ADBPlugin::MakeDirectory(const wchar_t **Name, int OpMode)
 		WINPORT(SetLastError)(result);
 		return FALSE;
 	}
+}
+
+std::string ADBPlugin::GetCurrentDevicePath() const
+{
+	if (_isConnected && _adbDevice) {
+		return _adbDevice->GetCurrentPath();
+	}
+	return "/";
 }

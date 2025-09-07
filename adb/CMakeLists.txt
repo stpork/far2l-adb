@@ -7,6 +7,7 @@ set(SOURCES
     src/ADBShell.cpp
     src/ADBDevice.cpp
     src/ADBDialogs.cpp
+    src/ADBLog.cpp
 )
 
 # Create the plugin

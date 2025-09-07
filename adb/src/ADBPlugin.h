@@ -17,31 +17,33 @@
 
 // Global Info pointer declaration
 extern PluginStartupInfo g_Info;
+extern FarStandardFunctions g_FSF;
 
 class ADBPlugin
 {
 	friend class AllADB;
 
 	// Panel state
-	wchar_t _panel_title[64];
-	wchar_t _cur_dir[1024];
+	wchar_t _PanelTitle[64];
 	wchar_t _mk_dir[1024];
-	wchar_t _format[256];
 	
-	// Custom panel mode for device selection (like NetRocks host selection)
-	PanelMode _panel_mode;
 
 	// Standalone config
 	std::wstring _standalone_config;
 	bool _allow_remember_location_dir;
 	
-	bool _isFileMode;  // true = device selection, false = file browsing
-	bool _isConnected;               // false = device selection, true = file navigation
+	bool _isConnected;               // true = connected to device (file mode), false = device selection mode
 	std::string _deviceSerial;      // Current device serial
-	std::string _devicePath;        // Current path on device
+	std::string _CurrentDir;        // Current path on device
+	
+	// Cursor position tracking for better UX
+	std::string _lastEnteredDir;
 	
 	// ADBDevice for file operations
 	std::shared_ptr<class ADBDevice> _adbDevice;
+	
+	// Helper method to get current device path
+	std::string GetCurrentDevicePath() const;
 
 public:
 	ADBPlugin(const wchar_t *path = nullptr, bool path_is_standalone_config = false, int OpMode = 0);
@@ -55,24 +57,21 @@ public:
 	int ProcessKey(int Key, unsigned int ControlState);
 	int ProcessEventCommand(const wchar_t *cmd, HANDLE hPlugin = nullptr);
 	
-	// Custom column definitions
-	void SetupDeviceSelectionMode();
-	void SetupFileBrowsingMode();
 
 	int ExitDeviceFilePanel();
-	int GetDeviceFileData(PluginPanelItem **pPanelItem, int *pItemsNumber, int OpMode);
+	int GetDeviceData(PluginPanelItem **pPanelItem, int *pItemsNumber);
+	int GetFileData(PluginPanelItem **pPanelItem, int *pItemsNumber);
 	
 	// Device selection methods
+	std::string GetFirstAvailableDevice();
+	int GetAvailableDeviceCount();
+	bool ByKey_TryEnterSelectedDevice();
+	std::string GetDeviceFriendlyName(const std::string& serial);
+	int GetHighlightedDeviceIndex();
 	std::string GetCurrentPanelItemDeviceName();
 	std::string GetFallbackDeviceName();
-	int GetHighlightedDeviceIndex();
-	
-	// Device connection methods (NetRocks pattern)
-	std::string GetFirstAvailableDevice();
-	bool ByKey_TryEnterSelectedDevice();
 	bool ConnectToDevice(const std::string &deviceSerial);
-	void UpdatePathInfo();
-	
+
 	// File transfer methods
 	int GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, const wchar_t **DestPath, int OpMode);
 	int PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, const wchar_t *SrcPath, int OpMode);
