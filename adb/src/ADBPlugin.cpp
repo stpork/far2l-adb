@@ -683,12 +683,6 @@ int ADBPlugin::SetDirectory(const wchar_t *Dir, int OpMode)
 		panel_title.replace((panel_title.size() - rmlen) / 2, rmlen, L"...");
 	}
 	wcscpy(_PanelTitle, panel_title.c_str());
-	/*
-	// Refresh panel to show new directory contents
-	g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
-	g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, 0);
-	*/
-	
 	return TRUE;
 }
 
