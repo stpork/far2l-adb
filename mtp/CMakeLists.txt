@@ -7,7 +7,7 @@ set(SOURCES
     src/MTPDevice.cpp
     src/MTPFileSystem.cpp
     src/MTPLog.cpp
-    mtp_explorer.cpp
+    src/MTPDialogs.cpp
 )
 
 # Create the plugin

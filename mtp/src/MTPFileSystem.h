@@ -1,38 +1,29 @@
 #pragma once
 
-// Standard library includes
 #include <string>
 #include <vector>
 #include <memory>
 #include <map>
-
-// System includes
 #include <sys/stat.h>
-
-// FAR Manager includes
 #include "farplug-wide.h"
-
-// libmtp includes
 #include <libmtp.h>
 
-// Forward declarations
 class MTPDevice;
 struct PluginPanelItem;
 
-// Simplified MTP File System for navigation only
 class MTPFileSystem {
 private:
     std::shared_ptr<MTPDevice> _mtpDevice;
     LIBMTP_mtpdevice_t* _device;
     LIBMTP_devicestorage_t* _storage;
     std::string _currentPath;
-    uint32_t _currentObjectId;  // Track current object ID for parent resolution
+    uint32_t _currentObjectId;
     std::string _lastError;
     
     // Shadow mechanism state
-    std::string _currentObject;  // Encoded form of current object (S/D/F/O + 8 hex digits)
-    std::map<std::string, std::string> _nameToEncodedId;  // Maps real names to encoded IDs
-    std::map<std::string, std::string> _encodedIdToName;  // Maps encoded IDs to real names
+    std::string _currentObject;
+    std::map<std::string, std::string> _nameToEncodedId;
+    std::map<std::string, std::string> _encodedIdToName;
     
 public:
     MTPFileSystem(std::shared_ptr<MTPDevice> mtpDevice);

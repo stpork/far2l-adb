@@ -115,14 +115,27 @@ SHAREDSYMBOL int WINAPI SetDirectoryW(HANDLE hPlugin, const wchar_t *Dir, int Op
     return FALSE;
 }
 
-// File operations removed - navigation only
+SHAREDSYMBOL int WINAPI MakeDirectoryW(HANDLE hPlugin, const wchar_t **Name, int OpMode)
+{
+    if (g_plugin) {
+        return g_plugin->MakeDirectory(Name, OpMode);
+    }
+    return FALSE;
+}
+
+SHAREDSYMBOL int WINAPI DeleteFilesW(HANDLE hPlugin, PluginPanelItem *PanelItem, int ItemsNumber, int OpMode)
+{
+    if (g_plugin) {
+        return g_plugin->DeleteFiles(PanelItem, ItemsNumber, OpMode);
+    }
+    return FALSE;
+}
 
 SHAREDSYMBOL HANDLE WINAPI OpenFilePluginW(const wchar_t *Name, const unsigned char *Data, int DataSize, int OpMode)
 {
     // MTPPlugin doesn't have OpenFilePlugin method
     return INVALID_HANDLE_VALUE;
 }
-
 
 SHAREDSYMBOL int WINAPI GetLinkTargetW(HANDLE hPlugin, PluginPanelItem *PanelItem, wchar_t *Target, size_t TargetSize, int OpMode)
 {

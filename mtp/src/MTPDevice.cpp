@@ -1,14 +1,3 @@
-/**
- * @file MTPDevice.cpp
- * @brief MTP Device Management Implementation
- * 
- * This file implements the MTPDevice class that handles MTP device
- * connection, file operations, and device management.
- * 
- * @author MTP Plugin Team
- * @version 1.0
- */
-
 #include "MTPDevice.h"
 #include "MTPLog.h"
 #include <thread>
@@ -191,23 +180,8 @@ void MTPDevice::Disconnect()
     }
 }
 
-// These methods are already defined inline in the header
-
-// Removed RunMTPCommand - not used
-
-// Removed GetCurrentWorkingDirectory - not used
-
-// Removed DirectoryEnum - handled by MTPFileSystem
-
-// Removed SetDirectory - handled by MTPFileSystem
-
-// File operations removed - navigation only
-
-// Removed WStringToString - not used
-
 int MTPDevice::Str2Errno(const std::string &mtpError)
 {
-    // Map MTP errors to errno values
     if (mtpError.find("not found") != std::string::npos) return ENOENT;
     if (mtpError.find("permission") != std::string::npos) return EACCES;
     if (mtpError.find("busy") != std::string::npos) return EBUSY;
@@ -218,8 +192,8 @@ int MTPDevice::Str2Errno(const std::string &mtpError)
 void MTPDevice::SetCurrentStorage(uint32_t storageId, const std::string& storageName)
 {
     _currentStorageId = storageId;
-    _currentDirId = 0;  // Reset to storage root
-    _currentPath = "/";  // Start from root without storage name
+    _currentDirId = 0;
+    _currentPath = "/";
     DBG("SetCurrentStorage: ID=%u, Name='%s', Path='%s'", storageId, storageName.c_str(), _currentPath.c_str());
 }
 
@@ -261,4 +235,98 @@ void MTPDevice::NavigateToRoot()
     DBG("NavigateToRoot: Path='%s'", _currentPath.c_str());
 }
 
-// These methods are already defined inline in the header
+int MTPDevice::CreateMTPDirectory(const std::string& dirName)
+{
+    if (!_connected || !_device) {
+        DBG("CreateDirectory: Device not connected");
+        return EIO;
+    }
+    
+    if (dirName.empty()) {
+        DBG("CreateDirectory: Empty directory name");
+        return EINVAL;
+    }
+    
+    // Determine parent object ID
+    uint32_t parentId = LIBMTP_FILES_AND_FOLDERS_ROOT;
+    if (_currentDirId != 0) {
+        parentId = _currentDirId;
+    }
+    
+    // Determine storage ID
+    uint32_t storageId = 0;
+    if (_currentStorageId != 0) {
+        storageId = _currentStorageId;
+    } else if (_storage) {
+        storageId = _storage->id;
+    } else {
+        DBG("CreateDirectory: No storage available");
+        return EIO;
+    }
+    
+    DBG("CreateDirectory: Creating '%s' in storage %u, parent %u", dirName.c_str(), storageId, parentId);
+    
+    // Use the correct libmtp function for creating folders
+    uint32_t result = LIBMTP_Create_Folder(_device, const_cast<char*>(dirName.c_str()), parentId, storageId);
+    
+    if (result != 0) {
+        DBG("CreateDirectory: Successfully created directory '%s' with ID %u", dirName.c_str(), result);
+        return 0;
+    } else {
+        DBG("CreateDirectory: Failed to create directory '%s'", dirName.c_str());
+        return EIO;
+    }
+}
+
+int MTPDevice::DeleteMTPFile(uint32_t objectId)
+{
+    if (!_connected || !_device) {
+        DBG("DeleteFile: Device not connected");
+        return EIO;
+    }
+    
+    if (objectId == 0) {
+        DBG("DeleteFile: Invalid object ID");
+        return EINVAL;
+    }
+    
+    DBG("DeleteFile: Deleting file with ID %u", objectId);
+    
+    int result = LIBMTP_Delete_Object(_device, objectId);
+    
+    if (result == 0) {
+        DBG("DeleteFile: Successfully deleted file with ID %u", objectId);
+        return 0;
+    } else {
+        DBG("DeleteFile: Failed to delete file with ID %u, error: %d", objectId, result);
+        return EIO;
+    }
+}
+
+int MTPDevice::DeleteMTPDirectory(uint32_t objectId)
+{
+    if (!_connected || !_device) {
+        DBG("DeleteDirectory: Device not connected");
+        return EIO;
+    }
+    
+    if (objectId == 0) {
+        DBG("DeleteDirectory: Invalid object ID");
+        return EINVAL;
+    }
+    
+    DBG("DeleteDirectory: Deleting directory with ID %u", objectId);
+    
+    // For directories, we also use LIBMTP_Delete_Object
+    // libmtp should handle recursive deletion if the device supports it
+    int result = LIBMTP_Delete_Object(_device, objectId);
+    
+    if (result == 0) {
+        DBG("DeleteDirectory: Successfully deleted directory with ID %u", objectId);
+        return 0;
+    } else {
+        DBG("DeleteDirectory: Failed to delete directory with ID %u, error: %d", objectId, result);
+        return EIO;
+    }
+}
+

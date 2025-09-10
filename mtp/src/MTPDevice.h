@@ -1,19 +1,12 @@
 #pragma once
 
-// Standard library includes
 #include <string>
 #include <time.h>
-
-// System includes
 #include <sys/stat.h>
-
-// libmtp includes
 #include <libmtp.h>
 
-// Forward declarations
 struct PluginPanelItem;
 
-// MTP Device implementation
 class MTPDevice {
 private:
     std::string _device_id;
@@ -22,16 +15,16 @@ private:
     LIBMTP_devicestorage_t* _storage;
     bool _connected;
     
-    // Device properties (set once when connected)
+    // Device properties
     std::string _friendlyName;
     std::string _manufacturer;
     std::string _model;
     std::string _serialNumber;
     
     // Current state
-    uint32_t _currentStorageId;  // 0 = no storage selected
-    uint32_t _currentDirId;     // 0 = at storage root
-    std::string _currentPath;   // Simulated filesystem path like "/StorageName/DirName/"
+    uint32_t _currentStorageId;
+    uint32_t _currentDirId;
+    std::string _currentPath;
     
     void EnsureConnection();
 
@@ -72,4 +65,9 @@ public:
     void SetCurrentDir(uint32_t dirId, const std::string& dirName);
     void NavigateUp();
     void NavigateToRoot();
+    
+    // File operations
+    int CreateMTPDirectory(const std::string& dirName);
+    int DeleteMTPFile(uint32_t objectId);
+    int DeleteMTPDirectory(uint32_t objectId);
 };

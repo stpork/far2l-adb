@@ -1,16 +1,6 @@
-/**
- * @file MTPPlugin.cpp
- * @brief MTP Plugin Implementation for far2l
- * 
- * This file implements the main MTP plugin class that provides MTP device
- * access through the Far Manager plugin interface.
- * 
- * @author MTP Plugin Team
- * @version 1.0
- */
-
 #include "MTPPlugin.h"
 #include "MTPLog.h"
+#include "MTPDialogs.h"
 #include "farplug-wide.h"
 #include <thread>
 #include <atomic>
@@ -21,12 +11,7 @@
 #include <cctype>
 #include <IntStrConv.h>
 
-// Global plugin instance
 static MTPPlugin* g_plugin = nullptr;
-
-// Static member definitions removed - using malloc approach for UserData
-
-// Global Info pointer
 PluginStartupInfo g_Info;
 FarStandardFunctions g_FSF;
 
@@ -37,20 +22,10 @@ MTPPlugin::MTPPlugin(const wchar_t *path, bool path_is_standalone_config, int Op
     , _currentStorageID(0)
     , _currentDirID(0)
 {
-    DBG("MTPPlugin constructor called");
-    
-    // Initialize panel title
     wcscpy(_PanelTitle, L"MTP Device");
-    
-    DBG("Initializing MTP device and file system");
-    // Initialize MTP device and file system
     _mtpDevice = std::make_shared<MTPDevice>("");
     _mtpFileSystem = std::make_shared<MTPFileSystem>(_mtpDevice);
-    
-    // Set global plugin instance
     g_plugin = this;
-    
-    DBG("MTPPlugin constructor completed");
 }
 
 MTPPlugin::~MTPPlugin()
@@ -94,21 +69,18 @@ void MTPPlugin::GetOpenPluginInfo(OpenPluginInfo *Info)
     Info->StructSize = sizeof(OpenPluginInfo);
     Info->Flags = OPIF_SHOWPRESERVECASE | OPIF_USEHIGHLIGHTING | OPIF_ADDDOTS;
     Info->HostFile = nullptr;
-    // For cursor position restoration, return the name that can be found in panel items
+    
+    // Set CurDir for cursor position restoration
     if (_currentDirID != 0 && _mtpDevice) {
-        // We're in a directory - return the directory name for cursor restoration
         LIBMTP_file_t* objectFile = LIBMTP_Get_Filemetadata(_mtpDevice->GetDevice(), _currentDirID);
         if (objectFile && objectFile->filename) {
             std::string dirName = std::string(objectFile->filename);
             std::wstring wideDir = StrMB2Wide(dirName);
             Info->CurDir = (wchar_t*)malloc((wideDir.length() + 1) * sizeof(wchar_t));
             if (Info->CurDir) {
-                // Copy the string content
                 const wchar_t* src = wideDir.c_str();
                 wchar_t* dst = const_cast<wchar_t*>(Info->CurDir);
-                while (*src) {
-                    *dst++ = *src++;
-                }
+                while (*src) *dst++ = *src++;
                 *dst = L'\0';
             } else {
                 Info->CurDir = L"/";
@@ -118,7 +90,6 @@ void MTPPlugin::GetOpenPluginInfo(OpenPluginInfo *Info)
             Info->CurDir = L"/";
         }
     } else if (_currentStorageID != 0 && _mtpDevice) {
-        // We're at storage root - return the storage name for cursor restoration
         LIBMTP_devicestorage_t* storage = _mtpDevice->GetDevice()->storage;
         while (storage) {
             if (storage->id == _currentStorageID) {
@@ -126,12 +97,9 @@ void MTPPlugin::GetOpenPluginInfo(OpenPluginInfo *Info)
                 std::wstring wideStorage = StrMB2Wide(storageName);
                 Info->CurDir = (wchar_t*)malloc((wideStorage.length() + 1) * sizeof(wchar_t));
                 if (Info->CurDir) {
-                    // Copy the string content
                     const wchar_t* src = wideStorage.c_str();
                     wchar_t* dst = const_cast<wchar_t*>(Info->CurDir);
-                    while (*src) {
-                        *dst++ = *src++;
-                    }
+                    while (*src) *dst++ = *src++;
                     *dst = L'\0';
                 } else {
                     Info->CurDir = L"/";
@@ -144,7 +112,6 @@ void MTPPlugin::GetOpenPluginInfo(OpenPluginInfo *Info)
             Info->CurDir = L"/";
         }
     } else if (_isConnected && _mtpDevice) {
-        // We're at device root (showing storages) - return the device name for cursor restoration
         std::string deviceName = _mtpDevice->GetFriendlyName();
         if (deviceName.empty()) {
             deviceName = "MTP Device";
@@ -152,22 +119,18 @@ void MTPPlugin::GetOpenPluginInfo(OpenPluginInfo *Info)
         std::wstring wideDevice = StrMB2Wide(deviceName);
         Info->CurDir = (wchar_t*)malloc((wideDevice.length() + 1) * sizeof(wchar_t));
         if (Info->CurDir) {
-            // Copy the string content
             const wchar_t* src = wideDevice.c_str();
             wchar_t* dst = const_cast<wchar_t*>(Info->CurDir);
-            while (*src) {
-                *dst++ = *src++;
-            }
+            while (*src) *dst++ = *src++;
             *dst = L'\0';
         } else {
             Info->CurDir = L"/";
         }
     } else {
-        // At device selection - return "/"
         Info->CurDir = L"/";
     }
+    
     Info->Format = L"MTP";
-    // Generate dynamic panel title based on current state
     _dynamicPanelTitle = GeneratePanelTitle();
     Info->PanelTitle = _dynamicPanelTitle.c_str();
     Info->InfoLines = nullptr;
@@ -183,60 +146,32 @@ void MTPPlugin::GetOpenPluginInfo(OpenPluginInfo *Info)
 
 int MTPPlugin::SetDirectory(const wchar_t *Dir, int OpMode)
 {
-    // Convert wide string to UTF-8 string using far2l utilities
-    std::string dir;
-    if (Dir) {
-        dir = StrWide2MB(Dir);
-    }
-    
+    std::string dir = Dir ? StrWide2MB(Dir) : "";
     DBG("SetDirectory: Setting directory to: %s", dir.c_str());
     
     if (!_isConnected) {
-        // Handle device selection
         if (dir == ".." || dir == "/") {
-            // Go back to device list
             _currentStorageID = 0;
             _currentDirID = 0;
             wcscpy(_PanelTitle, L"MTP Devices");
             return TRUE;
         }
-        
-        // Try to connect to selected device using the device ID from selected panel item
-        if (ByKey_TryEnterSelectedDevice()) {
-            _currentStorageID = 0;
-            _currentDirID = 0;
-            return TRUE;
-        }
-        
-        return FALSE;
+        return ByKey_TryEnterSelectedDevice() ? TRUE : FALSE;
     }
     
     try {
-        // If we're not connected, device selection should be handled by ProcessKey
-        if (!_isConnected) {
-            DBG("SetDirectory: Not connected, device selection should be handled by ProcessKey");
-            return FALSE;
-        }
-        
-        // If we're connected, try to navigate to the directory
-        // First check if it's a special path
         if (dir == "..") {
             DBG("SetDirectory: Processing '..' navigation");
-            
             if (_currentDirID == 0) {
-                // At storage root, go back to device root (showing storages)
                 if (_currentStorageID != 0) {
-                    // We're at a storage root, go back to device root
                     _currentStorageID = 0;
                     _currentDirID = 0;
-                    // Update MTPDevice to device root
                     if (_mtpDevice) {
                         _mtpDevice->NavigateToRoot();
                     }
                     DBG("SetDirectory: Back to device root (showing storages)");
                     return TRUE;
                 } else {
-                    // We're at device root, go back to device selection
                     _isConnected = false;
                     _currentStorageID = 0;
                     _currentDirID = 0;
@@ -244,27 +179,21 @@ int MTPPlugin::SetDirectory(const wchar_t *Dir, int OpMode)
                     return TRUE;
                 }
             } else {
-                // In a directory, get parent object
                 LIBMTP_file_t* currentObject = LIBMTP_Get_Filemetadata(_mtpDevice->GetDevice(), _currentDirID);
                 if (currentObject) {
                     uint32_t parentId = currentObject->parent_id;
                     LIBMTP_destroy_file_t(currentObject);
                     
                     if (parentId == 0) {
-                        // Parent is storage root
                         _currentDirID = 0;
-                        // Update MTPDevice to storage root
                         if (_mtpDevice) {
                             std::string storageName = _mtpFileSystem->GetStorageName();
                             _mtpDevice->SetCurrentStorage(_currentStorageID, storageName);
                         }
-                        // Clear the directory name for storage root
                         _lastEnteredDirName.clear();
                         DBG("SetDirectory: Navigated to storage root");
                     } else {
-                        // Navigate to parent directory
                         _currentDirID = parentId;
-                        // Update MTPDevice with parent directory info
                         if (_mtpDevice) {
                             LIBMTP_file_t* parentFile = LIBMTP_Get_Filemetadata(_mtpDevice->GetDevice(), parentId);
                             if (parentFile && parentFile->filename) {
@@ -275,10 +204,6 @@ int MTPPlugin::SetDirectory(const wchar_t *Dir, int OpMode)
                         }
                         DBG("SetDirectory: Navigated to parent directory: ID=%u", parentId);
                     }
-                    
-                    // far2l handles cursor position restoration automatically for ".." navigation
-                    // No custom restoration needed - far2l will use GoToFile() internally
-                    
                     return TRUE;
                 } else {
                     DBG("SetDirectory: Failed to get current object metadata");
@@ -286,110 +211,81 @@ int MTPPlugin::SetDirectory(const wchar_t *Dir, int OpMode)
                 }
             }
         }
-        
-    // Check if dir is an encoded ID (S00010002 for storage or O12349876 for object)
-    if (IsEncodedId(dir)) {
-        DBG("SetDirectory: Navigating to encoded ID: %s", dir.c_str());
-        
-        // Convert encoded ID to numeric IDs
-        SetCurrentFromEncodedId(dir);
-        
-        // Verify the object exists and is a directory
-        if (_currentDirID != 0) {
-            LIBMTP_file_t* objectFile = LIBMTP_Get_Filemetadata(_mtpDevice->GetDevice(), _currentDirID);
-            if (objectFile) {
-                if (objectFile->filetype == LIBMTP_FILETYPE_FOLDER) {
-                    // Store the directory name for cursor position tracking
-                    if (objectFile->filename) {
-                        _lastEnteredDirName = std::string(objectFile->filename);
+        if (IsEncodedId(dir)) {
+            DBG("SetDirectory: Navigating to encoded ID: %s", dir.c_str());
+            SetCurrentFromEncodedId(dir);
+            
+            if (_currentDirID != 0) {
+                LIBMTP_file_t* objectFile = LIBMTP_Get_Filemetadata(_mtpDevice->GetDevice(), _currentDirID);
+                if (objectFile) {
+                    if (objectFile->filetype == LIBMTP_FILETYPE_FOLDER) {
+                        if (objectFile->filename) {
+                            _lastEnteredDirName = std::string(objectFile->filename);
+                        }
+                        LIBMTP_destroy_file_t(objectFile);
+                        DBG("SetDirectory: Successfully navigated to directory: ID=%u, Name='%s'", _currentDirID, _lastEnteredDirName.c_str());
+                        return TRUE;
+                    } else {
+                        LIBMTP_destroy_file_t(objectFile);
+                        DBG("SetDirectory: Object is not a directory: ID=%u", _currentDirID);
+                        return FALSE;
                     }
-                    LIBMTP_destroy_file_t(objectFile);
-                    DBG("SetDirectory: Successfully navigated to directory: ID=%u, Name='%s' (may be empty)", _currentDirID, _lastEnteredDirName.c_str());
-                    return TRUE;
                 } else {
-                    LIBMTP_destroy_file_t(objectFile);
-                    DBG("SetDirectory: Object is not a directory: ID=%u", _currentDirID);
+                    DBG("SetDirectory: Object not found: ID=%u", _currentDirID);
                     return FALSE;
                 }
+            } else if (_currentStorageID != 0) {
+                _lastEnteredDirName.clear();
+                DBG("SetDirectory: Successfully navigated to storage: ID=%u", _currentStorageID);
+                return TRUE;
             } else {
-                DBG("SetDirectory: Object not found: ID=%u", _currentDirID);
+                DBG("SetDirectory: Invalid encoded ID: %s", dir.c_str());
                 return FALSE;
             }
-        } else if (_currentStorageID != 0) {
-            // Storage root - clear the directory name
-            _lastEnteredDirName.clear();
-            DBG("SetDirectory: Successfully navigated to storage: ID=%u", _currentStorageID);
-            return TRUE;
         } else {
-            DBG("SetDirectory: Invalid encoded ID: %s", dir.c_str());
-            return FALSE;
-        }
-    } else {
-        // Try to get the selected item and use shadow mechanism
-        DBG("SetDirectory: Looking for selected item with filename: %s", dir.c_str());
-        
-        // Get the currently selected item from the panel
-        intptr_t size = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, 0);
-        if (size >= (intptr_t)sizeof(PluginPanelItem)) {
-            PluginPanelItem* item = (PluginPanelItem*)malloc(size + 0x100);
-            if (item) {
-                memset(item, 0, size + 0x100);
-                g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, (LONG_PTR)(void*)item);
-                
-                std::string encodedId;
-                
-                if (item->UserData != 0) {
-                    // Extract encoded ID from UserData (primary method)
-                    char* encodedIdPtr = (char*)item->UserData;
-                    encodedId = std::string(encodedIdPtr);
-                    DBG("SetDirectory: Found encoded ID in UserData: %s", encodedId.c_str());
-                } else {
-                    // Try shadow mechanism - look up encoded ID by clean name
-                    std::wstring wideDir(dir.c_str(), dir.c_str() + dir.length());
-                    std::string cleanName = StrWide2MB(wideDir);
-                    encodedId = _mtpFileSystem->GetEncodedIdForName(cleanName);
-                    DBG("SetDirectory: Found encoded ID via shadow mechanism: %s -> %s", cleanName.c_str(), encodedId.c_str());
-                }
-                
-                if (!encodedId.empty()) {
-                    // Convert encoded ID to numeric IDs
-                    DBG("SetDirectory: Using shadow mechanism - encoded ID: %s", encodedId.c_str());
+            DBG("SetDirectory: Looking for selected item with filename: %s", dir.c_str());
+            intptr_t size = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, 0);
+            if (size >= (intptr_t)sizeof(PluginPanelItem)) {
+                PluginPanelItem* item = (PluginPanelItem*)malloc(size + 0x100);
+                if (item) {
+                    memset(item, 0, size + 0x100);
+                    g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, (LONG_PTR)(void*)item);
                     
-                    // Store the directory name for cursor position restoration
-                    _lastEnteredDirName = dir;
-                    DBG("SetDirectory: Stored directory name for cursor restoration: %s", _lastEnteredDirName.c_str());
+                    std::string encodedId;
+                    if (item->UserData != 0) {
+                        char* encodedIdPtr = (char*)item->UserData;
+                        encodedId = std::string(encodedIdPtr);
+                        DBG("SetDirectory: Found encoded ID in UserData: %s", encodedId.c_str());
+                    } else {
+                        std::wstring wideDir(dir.c_str(), dir.c_str() + dir.length());
+                        std::string cleanName = StrWide2MB(wideDir);
+                        encodedId = _mtpFileSystem->GetEncodedIdForName(cleanName);
+                        DBG("SetDirectory: Found encoded ID via shadow mechanism: %s -> %s", cleanName.c_str(), encodedId.c_str());
+                    }
                     
-                    SetCurrentFromEncodedId(encodedId);
+                    if (!encodedId.empty()) {
+                        _lastEnteredDirName = dir;
+                        DBG("SetDirectory: Stored directory name for cursor restoration: %s", _lastEnteredDirName.c_str());
+                        SetCurrentFromEncodedId(encodedId);
+                        free(item);
+                        return TRUE;
+                    }
                     free(item);
-                    return TRUE;
-                } else {
-                    DBG("SetDirectory: Shadow mechanism found no encoded ID for: %s", dir.c_str());
                 }
-                
-                free(item);
+            }
+            
+            DBG("SetDirectory: Fallback - looking for object by filename: %s", dir.c_str());
+            uint32_t objectId = _mtpFileSystem->FindObjectByFilename(dir);
+            if (objectId != 0) {
+                std::string encodedId = _mtpFileSystem->EncodeObjectId(objectId);
+                DBG("SetDirectory: Found object ID %u, encoded as: %s", objectId, encodedId.c_str());
+                _lastEnteredDirName = dir;
+                DBG("SetDirectory: Stored directory name for cursor restoration: %s", _lastEnteredDirName.c_str());
+                SetCurrentFromEncodedId(encodedId);
+                return TRUE;
             }
         }
-        
-        // Fallback: try to find object by filename
-        DBG("SetDirectory: Fallback - looking for object by filename: %s", dir.c_str());
-        uint32_t objectId = _mtpFileSystem->FindObjectByFilename(dir);
-        if (objectId != 0) {
-            // Found object, navigate to it
-            std::string encodedId = _mtpFileSystem->EncodeObjectId(objectId);
-            DBG("SetDirectory: Found object ID %u, encoded as: %s", objectId, encodedId.c_str());
-            
-            // Store the directory name for cursor position restoration
-            _lastEnteredDirName = dir;
-            DBG("SetDirectory: Stored directory name for cursor restoration: %s", _lastEnteredDirName.c_str());
-            
-            // Convert encoded ID to numeric IDs
-            SetCurrentFromEncodedId(encodedId);
-            return TRUE;
-        }
-    }
-        
         return FALSE;
-        
     } catch (const std::exception& e) {
         DBG("Exception in SetDirectory: %s", e.what());
         return FALSE;
@@ -398,37 +294,24 @@ int MTPPlugin::SetDirectory(const wchar_t *Dir, int OpMode)
 
 int MTPPlugin::ProcessKey(int Key, unsigned int ControlState)
 {
-    // Only handle device selection - let Far2l handle navigation with encoded IDs
     if (!_isConnected && Key == VK_RETURN && ControlState == 0) {
         return ByKey_TryEnterSelectedDevice() ? TRUE : FALSE;
     }
-
-    // Let Far2l handle all other keys (including ENTER when connected)
     return FALSE;
 }
 
-// ID encoding/decoding utilities moved to MTPFileSystem
-
 bool MTPPlugin::IsEncodedId(const std::string& str)
 {
-    // Check basic format: exactly 9 characters, starts with S or O
     if (str.length() != 9 || (str[0] != 'S' && str[0] != 'O')) {
         return false;
     }
-    
-    // Check that the remaining 8 characters are valid hexadecimal digits
     for (size_t i = 1; i < 9; i++) {
         if (!std::isxdigit(str[i])) {
             return false;
         }
     }
-    
-    // Try to decode the numeric value and check it's valid
     try {
         uint32_t value = std::stoul(str.substr(1), nullptr, 16);
-        
-        // Check that the value is not zero (invalid ID)
-        // All 32-bit values (1 to 0xFFFFFFFF) are valid for any type
         return value != 0;
     } catch (const std::exception&) {
         return false;
@@ -486,43 +369,20 @@ void MTPPlugin::SetCurrentFromEncodedId(const std::string& encodedId)
     }
 }
 
-// ProcessEventCommand removed - not needed
-
-int MTPPlugin::ExitDeviceFilePanel()
-{
-    _isConnected = false;
-    _deviceSerial.clear();
-    _currentStorageID = 0;
-    _currentDirID = 0;
-    
-    if (_mtpDevice) {
-        _mtpDevice->Disconnect();
-    }
-    
-    return TRUE;
-}
 
 int MTPPlugin::GetDeviceData(PluginPanelItem **pPanelItem, int *pItemsNumber)
 {
     DBG("Getting device data...");
-    
-    // Get available MTP devices
-    std::vector<std::string> devices;
-    
-    // Initialize MTP
     LIBMTP_Init();
     
     LIBMTP_raw_device_t* rawdevices;
     int numrawdevices;
-    
-    DBG("Detecting raw devices...");
     LIBMTP_error_number_t err = LIBMTP_Detect_Raw_Devices(&rawdevices, &numrawdevices);
     
     if (err != LIBMTP_ERROR_NONE) {
         DBG("Failed to detect devices: %d - showing error message", err);
         *pItemsNumber = 1;
         *pPanelItem = (PluginPanelItem*)calloc(1, sizeof(PluginPanelItem));
-        
         PluginPanelItem& item = (*pPanelItem)[0];
         item.FindData.lpwszFileName = (wchar_t*)calloc(50, sizeof(wchar_t));
         wcscpy((wchar_t*)item.FindData.lpwszFileName, L"MTP detection failed");
@@ -532,7 +392,6 @@ int MTPPlugin::GetDeviceData(PluginPanelItem **pPanelItem, int *pItemsNumber)
         item.FindData.ftCreationTime = {0};
         item.FindData.ftLastAccessTime = {0};
         item.FindData.ftLastWriteTime = {0};
-        
         return TRUE;
     }
     
@@ -542,7 +401,6 @@ int MTPPlugin::GetDeviceData(PluginPanelItem **pPanelItem, int *pItemsNumber)
         DBG("No devices found - showing message");
         *pItemsNumber = 1;
         *pPanelItem = (PluginPanelItem*)calloc(1, sizeof(PluginPanelItem));
-        
         PluginPanelItem& item = (*pPanelItem)[0];
         item.FindData.lpwszFileName = (wchar_t*)calloc(50, sizeof(wchar_t));
         wcscpy((wchar_t*)item.FindData.lpwszFileName, L"No MTP devices found");
@@ -552,56 +410,41 @@ int MTPPlugin::GetDeviceData(PluginPanelItem **pPanelItem, int *pItemsNumber)
         item.FindData.ftCreationTime = {0};
         item.FindData.ftLastAccessTime = {0};
         item.FindData.ftLastWriteTime = {0};
-        
         LIBMTP_FreeMemory(rawdevices);
         return TRUE;
     }
     
-    // Create panel items for each device
     *pItemsNumber = numrawdevices;
     *pPanelItem = (PluginPanelItem*)calloc(numrawdevices, sizeof(PluginPanelItem));
     
     for (int i = 0; i < numrawdevices; i++) {
         PluginPanelItem& item = (*pPanelItem)[i];
-        
-        // Create device identifier as plain bus_devnum string
         std::string deviceId = std::to_string(rawdevices[i].bus_location) + "_" + std::to_string(rawdevices[i].devnum);
         DBG("Creating device item %d: ID='%s', bus=%d, dev=%d", i, deviceId.c_str(), rawdevices[i].bus_location, rawdevices[i].devnum);
         
-        // Get device friendly name using MTP device info
-        DBG("GetDeviceData: Attempting to get friendly name for device %d (bus=%d, dev=%d)", i, rawdevices[i].bus_location, rawdevices[i].devnum);
         std::string friendlyName = GetDeviceFriendlyNameFromRawDevice(rawdevices[i]);
         DBG("GetDeviceData: Got friendly name: '%s'", friendlyName.c_str());
         
-        // Check if this is the device we were previously connected to
         std::string currentDeviceId = std::to_string(rawdevices[i].bus_location) + "_" + std::to_string(rawdevices[i].devnum);
         if (currentDeviceId == _deviceSerial && !_deviceName.empty()) {
-            // Use the stored friendly name from previous connection
             friendlyName = _deviceName;
             DBG("GetDeviceData: Using stored friendly name for previously connected device: '%s'", friendlyName.c_str());
         }
         
-        // Use fallback name if no friendly name available
         if (friendlyName.empty()) {
             friendlyName = "Device " + std::to_string(i + 1);
             DBG("GetDeviceData: Using fallback name: '%s'", friendlyName.c_str());
         }
         
-        
-        // Set file name to friendly name for display
         std::wstring wideFriendlyName = StrMB2Wide(friendlyName);
         item.FindData.lpwszFileName = (wchar_t*)calloc(wideFriendlyName.length() + 1, sizeof(wchar_t));
         if (item.FindData.lpwszFileName) {
-            // Copy the string content
             const wchar_t* src = wideFriendlyName.c_str();
             wchar_t* dst = const_cast<wchar_t*>(item.FindData.lpwszFileName);
-            while (*src) {
-                *dst++ = *src++;
-            }
+            while (*src) *dst++ = *src++;
             *dst = L'\0';
         }
         
-        // Store device ID in UserData as malloc'd string
         char* deviceIdPtr = (char*)malloc(deviceId.length() + 1);
         if (deviceIdPtr) {
             strcpy(deviceIdPtr, deviceId.c_str());
@@ -612,7 +455,6 @@ int MTPPlugin::GetDeviceData(PluginPanelItem **pPanelItem, int *pItemsNumber)
             DBG("GetDeviceData: Failed to allocate memory for device ID");
         }
         
-        // Set attributes
         item.FindData.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
         item.FindData.nFileSize = 0;
         item.FindData.nPhysicalSize = 0;
@@ -622,7 +464,6 @@ int MTPPlugin::GetDeviceData(PluginPanelItem **pPanelItem, int *pItemsNumber)
     }
     
     LIBMTP_FreeMemory(rawdevices);
-    
     DBG("Successfully created %d panel items", numrawdevices);
     DBG("GetDeviceData completed successfully");
     return TRUE;
@@ -674,11 +515,8 @@ int MTPPlugin::GetFileData(PluginPanelItem **pPanelItem, int *pItemsNumber)
     }
 }
 
-// Device enumeration methods removed - using GetDeviceData instead
-
 bool MTPPlugin::ByKey_TryEnterSelectedDevice()
 {
-    // Get the currently selected device from the panel
     std::string deviceId = GetCurrentPanelItemDeviceName();
     if (deviceId.empty()) {
         DBG("No device selected");
@@ -686,12 +524,9 @@ bool MTPPlugin::ByKey_TryEnterSelectedDevice()
     }
     
     DBG("Connecting to selected device: %s", deviceId.c_str());
-    
-    // Update panel title to show connection progress
     wcscpy(_PanelTitle, L"Connecting to MTP device...");
     g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
     
-    // Try to connect with better error handling
     bool connected = false;
     try {
         connected = ConnectToDevice(deviceId);
@@ -702,27 +537,20 @@ bool MTPPlugin::ByKey_TryEnterSelectedDevice()
     
     if (!connected) {
         DBG("Failed to connect to device: %s", deviceId.c_str());
-        
-        // Show error message to user
         const wchar_t* errorMsg = L"Failed to connect to MTP device.\nDevice may be busy or not responding.";
         g_Info.Message(g_Info.ModuleNumber, FMSG_MB_OK | FMSG_WARNING, nullptr, &errorMsg, 1, 0);
         return false;
     }
     
-    // Set up the connection state
     _isConnected = true;
     _deviceSerial = deviceId;
     _currentStorageID = 0;
     _currentDirID = 0;
     
-    // Update panel title with device info (use generic name to avoid hanging)
     std::wstring panel_title = L"MTP Device:/";
     wcscpy(_PanelTitle, panel_title.c_str());
-    
-    // Refresh the panel to show the new directory contents
     g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
     
-    // Reset cursor position to top of the panel
     PanelRedrawInfo ri = {};
     ri.CurrentItem = ri.TopPanelItem = 0;
     g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, (LONG_PTR)&ri);
@@ -867,11 +695,8 @@ std::string MTPPlugin::GetDeviceFriendlyNameFromRawDevice(const LIBMTP_raw_devic
     return friendlyName;
 }
 
-// GetHighlightedDeviceIndex removed - not needed
-
 std::string MTPPlugin::GetCurrentPanelItemDeviceName()
 {
-    // Get the currently focused/selected item from the panel (following ADB plugin pattern)
     intptr_t size = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, 0);
     if (size < (intptr_t)sizeof(PluginPanelItem)) {
         DBG("No selected item or invalid size: %ld", (long)size);
@@ -884,9 +709,7 @@ std::string MTPPlugin::GetCurrentPanelItemDeviceName()
         return "";
     }
     
-    // Clear the memory first
     memset(item, 0, size + 0x100);
-    
     g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, (LONG_PTR)(void *)item);
     
     if (!item->UserData) {
@@ -895,7 +718,6 @@ std::string MTPPlugin::GetCurrentPanelItemDeviceName()
         return "";
     }
     
-    // Get device ID from UserData - make a copy since the original might be freed
     char* deviceIdPtr = (char*)item->UserData;
     DBG("GetCurrentPanelItemDeviceName: UserData=%p, deviceIdPtr=%p", (void*)item->UserData, deviceIdPtr);
     std::string deviceId;
@@ -944,15 +766,10 @@ std::wstring MTPPlugin::GeneratePanelTitle()
     }
 }
 
-// GetFallbackDeviceName removed - not needed
-
-// Device enumeration methods removed - using GetDeviceData instead
-
 bool MTPPlugin::ConnectToDevice(const std::string &deviceId)
 {
     DBG("ConnectToDevice: Connecting to device: %s", deviceId.c_str());
     
-    // Parse device ID to get bus and device number
     size_t underscore_pos = deviceId.find('_');
     if (underscore_pos == std::string::npos) {
         DBG("ConnectToDevice: Invalid device ID format: %s", deviceId.c_str());
@@ -963,7 +780,6 @@ bool MTPPlugin::ConnectToDevice(const std::string &deviceId)
     int devnum = std::stoi(deviceId.substr(underscore_pos + 1));
     DBG("ConnectToDevice: Parsed bus=%d, dev=%d", bus_location, devnum);
     
-    // Find the raw device
     LIBMTP_Init();
     LIBMTP_raw_device_t* rawdevices;
     int numrawdevices;
@@ -975,26 +791,21 @@ bool MTPPlugin::ConnectToDevice(const std::string &deviceId)
         return false;
     }
     
-    // Find matching device
     for (int i = 0; i < numrawdevices; i++) {
         if (rawdevices[i].bus_location == bus_location && rawdevices[i].devnum == devnum) {
-            // Create MTP device
             _mtpDevice = std::make_unique<MTPDevice>(deviceId);
             if (_mtpDevice && _mtpDevice->Connect()) {
                 _isConnected = true;
                 _deviceSerial = deviceId;
                 _mtpFileSystem = std::make_unique<MTPFileSystem>(std::shared_ptr<MTPDevice>(_mtpDevice.get(), [](MTPDevice*){}));
-                // Initialize to device root (no storage selected yet)
                 _currentStorageID = 0;
                 _currentDirID = 0;
                 
-                // Get device friendly name from the connected device
                 _deviceName = _mtpDevice->GetFriendlyName();
                 if (_deviceName.empty()) {
                     _deviceName = "Device " + std::to_string(i + 1);
                 }
                 DBG("ConnectToDevice: Using device friendly name: '%s'", _deviceName.c_str());
-                
                 DBG("ConnectToDevice: Successfully connected to device: %s", _deviceName.c_str());
                 LIBMTP_FreeMemory(rawdevices);
                 return true;
@@ -1006,9 +817,200 @@ bool MTPPlugin::ConnectToDevice(const std::string &deviceId)
     LIBMTP_FreeMemory(rawdevices);
     return false;
 }
-// GetCurrentDevicePath removed - not needed
+
 PluginStartupInfo *MTPPlugin::GetInfo()
 {
     return &g_Info;
+}
+
+int MTPPlugin::MakeDirectory(const wchar_t **Name, int OpMode)
+{
+    if (!_isConnected || !_mtpDevice) {
+        return FALSE;
+    }
+    
+    std::string dir_name;
+    if (Name && *Name) {
+        dir_name = StrWide2MB(*Name);
+    }
+    
+    if (!(OpMode & OPM_SILENT)) {
+        if (!MTPDialogs::AskCreateDirectory(dir_name)) {
+            return -1;
+        }
+    }
+    
+    if (dir_name.empty()) {
+        return FALSE;
+    }
+    
+    int result = _mtpDevice->CreateMTPDirectory(dir_name);
+    if (result == 0) {
+        if (Name && !(OpMode & OPM_SILENT)) {
+            wcscpy(_mk_dir, StrMB2Wide(dir_name).c_str());
+            *Name = _mk_dir;
+        }
+        return TRUE;
+    } else {
+        WINPORT(SetLastError)(result);
+        return FALSE;
+    }
+}
+
+int MTPPlugin::DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMode)
+{
+    if (ItemsNumber <= 0 || !_isConnected || !_mtpDevice || !PanelItem) {
+        return FALSE;
+    }
+    
+    // Check for special directory entries that cannot be deleted
+    for (int i = 0; i < ItemsNumber; i++) {
+        if (PanelItem[i].FindData.lpwszFileName) {
+            if (wcscmp(PanelItem[i].FindData.lpwszFileName, L"..") == 0) {
+                DBG("DeleteFiles: Cannot delete parent directory '..'");
+                WINPORT(SetLastError)(EACCES); // Access denied
+                return FALSE;
+            }
+            if (wcscmp(PanelItem[i].FindData.lpwszFileName, L".") == 0) {
+                DBG("DeleteFiles: Cannot delete current directory '.'");
+                WINPORT(SetLastError)(EACCES); // Access denied
+                return FALSE;
+            }
+        }
+    }
+    
+    if (!(OpMode & OPM_SILENT)) {
+        std::wstring itemName;
+        std::wstring itemType;
+        
+        if (ItemsNumber == 1) {
+            itemName = PanelItem[0].FindData.lpwszFileName;
+            if (PanelItem[0].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                itemType = L"the folder";
+            } else {
+                itemType = L"the file";
+            }
+        } else {
+            itemName = std::to_wstring(ItemsNumber) + L" items";
+            itemType = L"";
+        }
+        
+        int result;
+        if (!itemType.empty()) {
+            result = MTPDialogs::Message(FMSG_MB_YESNO,
+                L"Delete",
+                L"Do you wish to delete",
+                itemType,
+                itemName);
+        } else {
+            result = MTPDialogs::Message(FMSG_MB_YESNO,
+                L"Delete",
+                L"Do you wish to delete",
+                itemName);
+        }
+        
+        if (result != 0) {
+            return -1;
+        }
+        
+        bool needsRedDialog = false;
+        bool hasMultipleItems = (ItemsNumber > 1);
+        bool hasNonEmptyDirs = false;
+        
+        for (int i = 0; i < ItemsNumber; i++) {
+            if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                hasNonEmptyDirs = true;
+                break;
+            }
+        }
+        
+        if (hasMultipleItems || hasNonEmptyDirs) {
+            needsRedDialog = true;
+        }
+        
+        if (needsRedDialog) {
+            int fileCount = 0;
+            int folderCount = 0;
+            for (int i = 0; i < ItemsNumber; i++) {
+                if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                    folderCount++;
+                } else {
+                    fileCount++;
+                }
+            }
+            
+            int redResult = 0;
+            if (hasMultipleItems && !hasNonEmptyDirs) {
+                redResult = MTPDialogs::Message(FMSG_WARNING | FMSG_MB_YESNO,
+                    L"Delete files",
+                    L"Do you wish to delete",
+                    std::to_wstring(ItemsNumber) + L" items");
+            } else if (hasNonEmptyDirs && ItemsNumber == 1) {
+                redResult = MTPDialogs::Message(FMSG_WARNING | FMSG_MB_YESNO,
+                    L"Delete folder",
+                    L"The following folder will be deleted:",
+                    L"/" + std::wstring(PanelItem[0].FindData.lpwszFileName));
+            } else if (hasNonEmptyDirs && ItemsNumber > 1) {
+                if (fileCount > 0 && folderCount > 0) {
+                    redResult = MTPDialogs::Message(FMSG_WARNING | FMSG_MB_YESNO,
+                        L"Delete items",
+                        L"The following items will be deleted:",
+                        std::to_wstring(folderCount) + L" folders",
+                        std::to_wstring(fileCount) + L" files");
+                } else {
+                    redResult = MTPDialogs::Message(FMSG_WARNING | FMSG_MB_YESNO,
+                        L"Delete folders",
+                        L"The following folders will be deleted:",
+                        std::to_wstring(ItemsNumber) + L" folders");
+                }
+            }
+            
+            if (redResult != 0) {
+                return -1;
+            }
+        }
+    }
+    
+    int successCount = 0;
+    int lastErrorCode = 0;
+    
+    for (int i = 0; i < ItemsNumber; i++) {
+        // Get object ID from UserData
+        uint32_t objectId = 0;
+        if (PanelItem[i].UserData != 0) {
+            char* encodedIdPtr = (char*)PanelItem[i].UserData;
+            if (encodedIdPtr) {
+                std::string encodedId = std::string(encodedIdPtr);
+                if (encodedId[0] == 'O') {
+                    objectId = _mtpFileSystem->DecodeObjectId(encodedId);
+                }
+            }
+        }
+        
+        if (objectId == 0) {
+            DBG("DeleteFiles: Could not get object ID for item %d", i);
+            lastErrorCode = EINVAL;
+            continue;
+        }
+        
+        int result = 0;
+        if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            result = _mtpDevice->DeleteMTPDirectory(objectId);
+        } else {
+            result = _mtpDevice->DeleteMTPFile(objectId);
+        }
+        
+        if (result == 0) {
+            successCount++;
+        } else {
+            lastErrorCode = result;
+        }
+    }
+    
+    if (successCount == 0) {
+        WINPORT(SetLastError)(lastErrorCode);
+    }
+    
+    return (successCount > 0) ? TRUE : FALSE;
 }
 

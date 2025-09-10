@@ -1,22 +1,12 @@
 #pragma once
 
-// Standard library includes
 #include <string>
-
-// System includes
 #include <wchar.h>
-
-// FAR Manager includes
 #include "farplug-wide.h"
-
-// libmtp includes
 #include <libmtp.h>
-
-// Local includes
 #include "MTPDevice.h"
 #include "MTPFileSystem.h"
 
-// Global Info pointer declaration
 extern PluginStartupInfo g_Info;
 extern FarStandardFunctions g_FSF;
 
@@ -24,29 +14,29 @@ class MTPPlugin
 {
 	friend class AllMTP;
 
+private:
 	// Panel state
 	wchar_t _PanelTitle[64];
 	wchar_t _mk_dir[1024];
-	std::wstring _dynamicPanelTitle;  // Dynamic panel title for GetOpenPluginInfo
+	std::wstring _dynamicPanelTitle;
 	
-	// Standalone config
+	// Configuration
 	std::wstring _standalone_config;
 	bool _allow_remember_location_dir;
 	
-	bool _isConnected;               // true = connected to device (file mode), false = device selection mode
-	std::string _deviceSerial;      // Current device serial/identifier
-	std::string _deviceName;        // Current device friendly name
-	uint32_t _currentStorageID;     // Current storage ID (0 = no storage selected)
-	uint32_t _currentDirID;         // Current directory ID (0 = at storage root)
+	// Connection state
+	bool _isConnected;
+	std::string _deviceSerial;
+	std::string _deviceName;
+	uint32_t _currentStorageID;
+	uint32_t _currentDirID;
 	
-	// Cursor position tracking for better UX
+	// Cursor position tracking
 	std::string _lastEnteredDir;
-	std::string _lastEnteredDirName;  // Name of the directory we entered (for ".." navigation)
+	std::string _lastEnteredDirName;
 	
-	// MTPDevice for file operations
+	// MTP components
 	std::shared_ptr<class MTPDevice> _mtpDevice;
-	
-	// MTPFileSystem for file system operations
 	std::shared_ptr<class MTPFileSystem> _mtpFileSystem;
 
 public:
@@ -60,30 +50,29 @@ public:
 	int SetDirectory(const wchar_t *Dir, int OpMode);
 	int ProcessKey(int Key, unsigned int ControlState);
 	
-	int ExitDeviceFilePanel();
+	// File operations
+	int MakeDirectory(const wchar_t **Name, int OpMode);
+	int DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMode);
+	
+	// Data retrieval
 	int GetDeviceData(PluginPanelItem **pPanelItem, int *pItemsNumber);
 	int GetFileData(PluginPanelItem **pPanelItem, int *pItemsNumber);
 	
-    // Device selection methods
-    bool ByKey_TryEnterSelectedDevice();
-    std::string GetDeviceFriendlyName(const std::string& deviceId);
+	// Device management
+	bool ByKey_TryEnterSelectedDevice();
+	bool ConnectToDevice(const std::string &deviceId);
+	std::string GetDeviceFriendlyName(const std::string& deviceId);
 	std::string GetDeviceFriendlyNameFromRawDevice(const LIBMTP_raw_device_t& rawDevice);
 	std::string GetCurrentPanelItemDeviceName();
+	
+	// UI helpers
 	std::wstring GeneratePanelTitle();
-    
-    // ID encoding/decoding utilities moved to MTPFileSystem
-    static bool IsEncodedId(const std::string& str);
-    
-    // Helper methods for ID conversion
-    std::string GetCurrentEncodedId() const;
-    void SetCurrentFromEncodedId(const std::string& encodedId);
-    
-	bool ConnectToDevice(const std::string &deviceId);
 	
-	// Device enumeration handled by GetDeviceData
-
-	// Basic navigation only - no file operations needed
+	// ID utilities
+	static bool IsEncodedId(const std::string& str);
+	std::string GetCurrentEncodedId() const;
+	void SetCurrentFromEncodedId(const std::string& encodedId);
 	
-	// far2l API access
+	// API access
 	static PluginStartupInfo *GetInfo();
 };
