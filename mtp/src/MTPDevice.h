@@ -1,0 +1,75 @@
+#pragma once
+
+// Standard library includes
+#include <string>
+#include <time.h>
+
+// System includes
+#include <sys/stat.h>
+
+// libmtp includes
+#include <libmtp.h>
+
+// Forward declarations
+struct PluginPanelItem;
+
+// MTP Device implementation
+class MTPDevice {
+private:
+    std::string _device_id;
+    std::string _current_path;
+    LIBMTP_mtpdevice_t* _device;
+    LIBMTP_devicestorage_t* _storage;
+    bool _connected;
+    
+    // Device properties (set once when connected)
+    std::string _friendlyName;
+    std::string _manufacturer;
+    std::string _model;
+    std::string _serialNumber;
+    
+    // Current state
+    uint32_t _currentStorageId;  // 0 = no storage selected
+    uint32_t _currentDirId;     // 0 = at storage root
+    std::string _currentPath;   // Simulated filesystem path like "/StorageName/DirName/"
+    
+    void EnsureConnection();
+
+public:
+    // Constructor and destructor
+    MTPDevice(const std::string &device_id);
+    virtual ~MTPDevice();
+
+    // Connection management
+    bool Connect();
+    void Disconnect();
+    bool IsConnected() const { return _connected; }
+    std::string GetDeviceId() const { return _device_id; }
+    
+    // Error mapping
+    static int Str2Errno(const std::string &mtpError);
+    
+    // MTP-specific methods
+    bool InitializeMTP();
+    void CleanupMTP();
+    LIBMTP_mtpdevice_t* GetDevice() const { return _device; }
+    LIBMTP_devicestorage_t* GetStorage() const { return _storage; }
+    
+    // Device properties access
+    std::string GetFriendlyName() const { return _friendlyName; }
+    std::string GetManufacturer() const { return _manufacturer; }
+    std::string GetModel() const { return _model; }
+    std::string GetSerialNumber() const { return _serialNumber; }
+    
+    // State management
+    uint32_t GetCurrentStorageId() const { return _currentStorageId; }
+    uint32_t GetCurrentDirId() const { return _currentDirId; }
+    std::string GetCurrentPath() const { return _currentPath; }
+    
+    // State setters
+    void SetFriendlyName(const std::string& name) { _friendlyName = name; }
+    void SetCurrentStorage(uint32_t storageId, const std::string& storageName);
+    void SetCurrentDir(uint32_t dirId, const std::string& dirName);
+    void NavigateUp();
+    void NavigateToRoot();
+};
