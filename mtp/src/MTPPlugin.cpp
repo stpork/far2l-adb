@@ -26,6 +26,38 @@ MTPPlugin::MTPPlugin(const wchar_t *path, bool path_is_standalone_config, int Op
     _mtpDevice = std::make_shared<MTPDevice>("");
     _mtpFileSystem = std::make_shared<MTPFileSystem>(_mtpDevice);
     g_plugin = this;
+    
+    // Auto-connect to first available MTP device (similar to ADB plugin)
+    DBG("MTPPlugin: Auto-connecting to first available MTP device");
+    LIBMTP_Init();
+    
+    LIBMTP_raw_device_t* rawdevices;
+    int numrawdevices;
+    LIBMTP_error_number_t err = LIBMTP_Detect_Raw_Devices(&rawdevices, &numrawdevices);
+    
+    if (err != LIBMTP_ERROR_NONE) {
+        DBG("MTPPlugin: Failed to detect MTP devices: %d", err);
+        LIBMTP_FreeMemory(rawdevices);
+        return;
+    }
+    
+    if (numrawdevices == 0) {
+        DBG("MTPPlugin: No MTP devices found");
+        LIBMTP_FreeMemory(rawdevices);
+        return;
+    }
+    
+    // Connect to first available device
+    std::string deviceId = std::to_string(rawdevices[0].bus_location) + "_" + std::to_string(rawdevices[0].devnum);
+    DBG("MTPPlugin: Attempting to connect to first device: %s", deviceId.c_str());
+    
+    if (ConnectToDevice(deviceId)) {
+        DBG("MTPPlugin: Successfully auto-connected to MTP device");
+    } else {
+        DBG("MTPPlugin: Failed to auto-connect to MTP device");
+    }
+    
+    LIBMTP_FreeMemory(rawdevices);
 }
 
 MTPPlugin::~MTPPlugin()
@@ -1013,4 +1045,335 @@ int MTPPlugin::DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMo
     
     return (successCount > 0) ? TRUE : FALSE;
 }
+
+int MTPPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, const wchar_t **DestPath, int OpMode)
+{
+    if (ItemsNumber <= 0 || !_isConnected || !_mtpDevice || !PanelItem) {
+        DBG("GetFiles: Invalid parameters");
+        return FALSE;
+    }
+    
+    DBG("GetFiles: Processing %d items, Move=%d, OpMode=0x%x", ItemsNumber, Move, OpMode);
+    
+    // Handle F3 View operation (OPM_VIEW)
+    if (OpMode & OPM_VIEW) {
+        DBG("GetFiles: F3 View operation detected");
+        if (ItemsNumber > 0) {
+            std::string fileName = PanelItem[0].FindData.lpwszFileName ? 
+                                  StrWide2MB(PanelItem[0].FindData.lpwszFileName) : "unknown_file";
+            
+            if (PanelItem[0].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                DBG("GetFiles: Cannot view directory: %s", fileName.c_str());
+                return FALSE;
+            }
+            
+            // Get object ID from UserData
+            uint32_t objectId = 0;
+            if (PanelItem[0].UserData != 0) {
+                char* encodedIdPtr = (char*)PanelItem[0].UserData;
+                if (encodedIdPtr) {
+                    std::string encodedId = std::string(encodedIdPtr);
+                    if (encodedId[0] == 'O') {
+                        objectId = _mtpFileSystem->DecodeObjectId(encodedId);
+                    }
+                }
+            }
+            
+            if (objectId == 0) {
+                DBG("GetFiles: Could not get object ID for viewing");
+                return FALSE;
+            }
+            
+            // Check if it's a file (not a directory)
+            if (!_mtpDevice->IsFile(objectId)) {
+                DBG("GetFiles: Object is not a file");
+                return FALSE;
+            }
+            
+            // Get file size to determine if we can view it
+            uint64_t fileSize = 0;
+            int sizeResult = _mtpDevice->GetMTPFileSize(objectId, fileSize);
+            if (sizeResult != 0) {
+                DBG("GetFiles: Could not get file size");
+                return FALSE;
+            }
+            
+            // Limit file size for viewing (e.g., 10MB max)
+            const uint64_t MAX_VIEW_SIZE = 10 * 1024 * 1024; // 10MB
+            if (fileSize > MAX_VIEW_SIZE) {
+                const wchar_t* errorMsg = L"File is too large to view.\nMaximum viewable size is 10MB.";
+                g_Info.Message(g_Info.ModuleNumber, FMSG_MB_OK | FMSG_WARNING, nullptr, &errorMsg, 1, 0);
+                return FALSE;
+            }
+            
+            DBG("GetFiles: Viewing file %s (size: %llu bytes)", fileName.c_str(), (unsigned long long)fileSize);
+            
+            // Use the temporary directory provided by far2l
+            if (!DestPath || !DestPath[0]) {
+                DBG("GetFiles: No destination path provided for viewing");
+                return FALSE;
+            }
+            
+            std::string destPath = StrWide2MB(DestPath[0]);
+            std::string tempPath = destPath;
+            if (tempPath.back() != '/' && tempPath.back() != '\\') {
+                tempPath += "/";
+            }
+            tempPath += fileName; // Use original filename, not prefixed
+            
+            DBG("GetFiles: Downloading file to temporary path: %s", tempPath.c_str());
+            
+            // Download file to temporary location
+            int downloadResult = _mtpDevice->DownloadFile(objectId, tempPath);
+            if (downloadResult != 0) {
+                DBG("GetFiles: Failed to download file for viewing, error: %d", downloadResult);
+                return FALSE;
+            }
+            
+            DBG("GetFiles: Successfully downloaded file for viewing: %s", tempPath.c_str());
+            return TRUE; // File is now available for viewing at tempPath
+        }
+        return FALSE;
+    }
+    
+    // Handle F5/F6 Copy/Move operations
+    if (!DestPath) {
+        DBG("GetFiles: No destination path specified");
+        return FALSE;
+    }
+    
+    std::string destPath = StrWide2MB(DestPath[0]);
+    if (destPath.empty()) {
+        DBG("GetFiles: Empty destination path");
+        return FALSE;
+    }
+    
+    // Count files (skip directories)
+    int fileCount = 0;
+    for (int i = 0; i < ItemsNumber; i++) {
+        if (!(PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            fileCount++;
+        }
+    }
+    
+    if (fileCount == 0) {
+        DBG("GetFiles: No files to download");
+        return FALSE;
+    }
+    
+    // Show confirmation dialog if not in silent mode
+    if (!(OpMode & OPM_SILENT)) {
+        std::wstring operation = Move ? L"Move" : L"Copy";
+        std::wstring source = L"MTP Device";
+        std::wstring destination = StrMB2Wide(destPath);
+        
+        if (!MTPDialogs::AskTransferConfirmation(operation.c_str(), source.c_str(), 
+                                                destination.c_str(), fileCount)) {
+            DBG("GetFiles: User cancelled transfer");
+            return -1;
+        }
+    }
+    
+    int successCount = 0;
+    int lastErrorCode = 0;
+    int currentFile = 0;
+    
+    for (int i = 0; i < ItemsNumber; i++) {
+        // Skip directories for file download
+        if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            DBG("GetFiles: Skipping directory: %s", 
+                PanelItem[i].FindData.lpwszFileName ? StrWide2MB(PanelItem[i].FindData.lpwszFileName).c_str() : "Unknown");
+            continue;
+        }
+        
+        currentFile++;
+        
+        // Show progress dialog
+        if (!(OpMode & OPM_SILENT)) {
+            std::string fileName = PanelItem[i].FindData.lpwszFileName ? 
+                                  StrWide2MB(PanelItem[i].FindData.lpwszFileName) : "unknown_file";
+            std::wstring progressMsg = L"Downloading: " + StrMB2Wide(fileName);
+            bool cancelled = false;
+            MTPDialogs::ShowProgressDialog(L"MTP Download", progressMsg.c_str(), 
+                                          currentFile, fileCount, cancelled);
+            if (cancelled) {
+                DBG("GetFiles: User cancelled transfer");
+                break;
+            }
+        }
+        
+        // Get object ID from UserData
+        uint32_t objectId = 0;
+        if (PanelItem[i].UserData != 0) {
+            char* encodedIdPtr = (char*)PanelItem[i].UserData;
+            if (encodedIdPtr) {
+                std::string encodedId = std::string(encodedIdPtr);
+                if (encodedId[0] == 'O') {
+                    objectId = _mtpFileSystem->DecodeObjectId(encodedId);
+                }
+            }
+        }
+        
+        if (objectId == 0) {
+            DBG("GetFiles: Could not get object ID for item %d", i);
+            lastErrorCode = EINVAL;
+            continue;
+        }
+        
+        // Get filename
+        std::string fileName = _mtpDevice->GetFileName(objectId);
+        if (fileName.empty()) {
+            fileName = PanelItem[i].FindData.lpwszFileName ? 
+                      StrWide2MB(PanelItem[i].FindData.lpwszFileName) : "unknown_file";
+        }
+        
+        // Construct full destination path
+        std::string fullDestPath = destPath;
+        if (fullDestPath.back() != '/' && fullDestPath.back() != '\\') {
+            fullDestPath += "/";
+        }
+        fullDestPath += fileName;
+        
+        DBG("GetFiles: Downloading %s to %s", fileName.c_str(), fullDestPath.c_str());
+        
+        // Download the file
+        int result = _mtpDevice->DownloadFile(objectId, fullDestPath);
+        
+        if (result == 0) {
+            successCount++;
+            DBG("GetFiles: Successfully downloaded %s", fileName.c_str());
+            
+            // If this is a move operation, delete the source file
+            if (Move) {
+                DBG("GetFiles: Move operation - deleting source file %s", fileName.c_str());
+                int deleteResult = _mtpDevice->DeleteMTPFile(objectId);
+                if (deleteResult != 0) {
+                    DBG("GetFiles: Warning - failed to delete source file after move: %d", deleteResult);
+                }
+            }
+        } else {
+            lastErrorCode = result;
+            DBG("GetFiles: Failed to download %s, error: %d", fileName.c_str(), result);
+        }
+    }
+    
+    if (successCount == 0) {
+        WINPORT(SetLastError)(lastErrorCode);
+    }
+    
+    DBG("GetFiles: Completed - %d/%d files processed successfully", successCount, fileCount);
+    return (successCount > 0) ? TRUE : FALSE;
+}
+
+int MTPPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, const wchar_t *SrcPath, int OpMode)
+{
+    if (ItemsNumber <= 0 || !_isConnected || !_mtpDevice || !PanelItem || !SrcPath) {
+        DBG("PutFiles: Invalid parameters");
+        return FALSE;
+    }
+    
+    DBG("PutFiles: Processing %d items, Move=%d", ItemsNumber, Move);
+    
+    // Get source path
+    std::string srcPath = StrWide2MB(SrcPath);
+    if (srcPath.empty()) {
+        DBG("PutFiles: No source path specified");
+        return FALSE;
+    }
+    
+    // Count files (skip directories)
+    int fileCount = 0;
+    for (int i = 0; i < ItemsNumber; i++) {
+        if (!(PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            fileCount++;
+        }
+    }
+    
+    if (fileCount == 0) {
+        DBG("PutFiles: No files to upload");
+        return FALSE;
+    }
+    
+    // Show confirmation dialog if not in silent mode
+    if (!(OpMode & OPM_SILENT)) {
+        std::wstring operation = Move ? L"Move" : L"Copy";
+        std::wstring source = StrMB2Wide(srcPath);
+        std::wstring destination = L"MTP Device";
+        
+        if (!MTPDialogs::AskTransferConfirmation(operation.c_str(), source.c_str(), 
+                                                destination.c_str(), fileCount)) {
+            DBG("PutFiles: User cancelled transfer");
+            return -1;
+        }
+    }
+    
+    int successCount = 0;
+    int lastErrorCode = 0;
+    int currentFile = 0;
+    
+    for (int i = 0; i < ItemsNumber; i++) {
+        // Skip directories for file upload
+        if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            DBG("PutFiles: Skipping directory: %s", 
+                PanelItem[i].FindData.lpwszFileName ? StrWide2MB(PanelItem[i].FindData.lpwszFileName).c_str() : "Unknown");
+            continue;
+        }
+        
+        currentFile++;
+        
+        // Show progress dialog
+        if (!(OpMode & OPM_SILENT)) {
+            std::string fileName = PanelItem[i].FindData.lpwszFileName ? 
+                                  StrWide2MB(PanelItem[i].FindData.lpwszFileName) : "unknown_file";
+            std::wstring progressMsg = L"Uploading: " + StrMB2Wide(fileName);
+            bool cancelled = false;
+            MTPDialogs::ShowProgressDialog(L"MTP Upload", progressMsg.c_str(), 
+                                          currentFile, fileCount, cancelled);
+            if (cancelled) {
+                DBG("PutFiles: User cancelled transfer");
+                break;
+            }
+        }
+        
+        // Get filename
+        std::string fileName = PanelItem[i].FindData.lpwszFileName ? 
+                              StrWide2MB(PanelItem[i].FindData.lpwszFileName) : "unknown_file";
+        
+        // Construct full source path
+        std::string fullSrcPath = srcPath;
+        if (fullSrcPath.back() != '/' && fullSrcPath.back() != '\\') {
+            fullSrcPath += "/";
+        }
+        fullSrcPath += fileName;
+        
+        DBG("PutFiles: Uploading %s from %s", fileName.c_str(), fullSrcPath.c_str());
+        
+        // Upload the file
+        int result = _mtpDevice->UploadFile(fullSrcPath, fileName);
+        
+        if (result == 0) {
+            successCount++;
+            DBG("PutFiles: Successfully uploaded %s", fileName.c_str());
+            
+            // If this is a move operation, delete the source file
+            if (Move) {
+                DBG("PutFiles: Move operation - deleting source file %s", fullSrcPath.c_str());
+                if (remove(fullSrcPath.c_str()) != 0) {
+                    DBG("PutFiles: Warning - failed to delete source file after move");
+                }
+            }
+        } else {
+            lastErrorCode = result;
+            DBG("PutFiles: Failed to upload %s, error: %d", fileName.c_str(), result);
+        }
+    }
+    
+    if (successCount == 0) {
+        WINPORT(SetLastError)(lastErrorCode);
+    }
+    
+    DBG("PutFiles: Completed - %d/%d files processed successfully", successCount, fileCount);
+    return (successCount > 0) ? TRUE : FALSE;
+}
+
 

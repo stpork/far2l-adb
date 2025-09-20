@@ -54,6 +54,10 @@ public:
 	int MakeDirectory(const wchar_t **Name, int OpMode);
 	int DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMode);
 	
+	// File transfer operations
+	int GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, const wchar_t **DestPath, int OpMode);
+	int PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, const wchar_t *SrcPath, int OpMode);
+	
 	// Data retrieval
 	int GetDeviceData(PluginPanelItem **pPanelItem, int *pItemsNumber);
 	int GetFileData(PluginPanelItem **pPanelItem, int *pItemsNumber);

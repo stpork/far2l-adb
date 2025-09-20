@@ -78,4 +78,12 @@ public:
         
         return result;
     }
+    
+    // Progress dialog for file transfers
+    static bool ShowProgressDialog(const wchar_t* title, const wchar_t* message, 
+                                   int current, int total, bool& cancelled);
+    
+    // Transfer confirmation dialog
+    static bool AskTransferConfirmation(const wchar_t* operation, const wchar_t* source, 
+                                        const wchar_t* destination, int fileCount);
 };

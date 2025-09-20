@@ -70,4 +70,12 @@ public:
     int CreateMTPDirectory(const std::string& dirName);
     int DeleteMTPFile(uint32_t objectId);
     int DeleteMTPDirectory(uint32_t objectId);
+    
+    // File transfer operations
+    int DownloadFile(uint32_t objectId, const std::string& localPath);
+    int UploadFile(const std::string& localPath, const std::string& remoteName, uint32_t parentId = 0);
+    int GetFileContent(uint32_t objectId, void* buffer, size_t bufferSize, size_t& bytesRead);
+    int GetMTPFileSize(uint32_t objectId, uint64_t& fileSize);
+    bool IsFile(uint32_t objectId);
+    std::string GetFileName(uint32_t objectId);
 };

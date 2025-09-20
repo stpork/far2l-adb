@@ -42,7 +42,7 @@ SHAREDSYMBOL void WINAPI GetPluginInfoW(PluginInfo *Info)
         return;
     }
     Info->StructSize = sizeof(*Info);
-    Info->Flags = PF_FULLCMDLINE;
+    Info->Flags = PF_FULLCMDLINE | PF_VIEWER | PF_EDITOR;
     Info->DiskMenuStrings = nullptr;
     Info->DiskMenuStringsNumber = 0;
     static const wchar_t *s_menu_strings[] = {L"MTP Plugin"};
@@ -143,9 +143,25 @@ SHAREDSYMBOL int WINAPI GetLinkTargetW(HANDLE hPlugin, PluginPanelItem *PanelIte
     return FALSE;
 }
 
+SHAREDSYMBOL int WINAPI GetFilesW(HANDLE hPlugin, PluginPanelItem *PanelItem, int ItemsNumber, int Move, const wchar_t **DestPath, int OpMode)
+{
+    if (g_plugin) {
+        return g_plugin->GetFiles(PanelItem, ItemsNumber, Move, DestPath, OpMode);
+    }
+    return FALSE;
+}
+
+SHAREDSYMBOL int WINAPI PutFilesW(HANDLE hPlugin, PluginPanelItem *PanelItem, int ItemsNumber, int Move, const wchar_t *SrcPath, int OpMode)
+{
+    if (g_plugin) {
+        return g_plugin->PutFiles(PanelItem, ItemsNumber, Move, SrcPath, OpMode);
+    }
+    return FALSE;
+}
+
 SHAREDSYMBOL int WINAPI ExecuteW(HANDLE hPlugin, PluginPanelItem *PanelItem, int ItemsNumber, int OpMode)
 {
-    // MTPPlugin doesn't have Execute method
+    // F3 view operations are handled in GetFilesW with OPM_VIEW flag
     return FALSE;
 }
 
