@@ -62,7 +62,11 @@ bool g_wx_norgb = false;
 
 WinPortRGB WxConsoleForeground2RGB(DWORD64 attributes)
 {
+<<<<<<< HEAD
 //	if (attributes & EXPLICIT_LINE_BREAK) { // uncomment if debugging automatic VT line wrapping
+=======
+//	if (attributes & EXPLICIT_LINE_BREAK) { // uncomment if debugging automatic VT line wrapping
+>>>>>>> origin/feature-mtp
 //		return WinPortRGB(0x123456);
 //	}
 	if (g_wx_norgb) {
@@ -75,7 +79,11 @@ WinPortRGB WxConsoleForeground2RGB(DWORD64 attributes)
 
 WinPortRGB WxConsoleBackground2RGB(DWORD64 attributes)
 {
+<<<<<<< HEAD
 //	if (attributes & EXPLICIT_LINE_BREAK) { // uncomment if debugging automatic VT line wrapping
+=======
+//	if (attributes & EXPLICIT_LINE_BREAK) { // uncomment if debugging automatic VT line wrapping
+>>>>>>> origin/feature-mtp
 //		return WinPortRGB(~0x123456);
 //	}
 	if (g_wx_norgb) {

@@ -143,7 +143,7 @@ namespace VTLog
 			FLAG_IS_COMPRESSED = 0x80
 		};
 
-	public:
+public:
 		void Add(HANDLE con_hnd, const CHAR_INFO *Chars, unsigned int Width, bool EOL)
 		{
 			std::lock_guard<std::mutex> lock(_mutex);
