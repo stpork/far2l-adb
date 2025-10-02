@@ -86,4 +86,34 @@ public:
     // Transfer confirmation dialog
     static bool AskTransferConfirmation(const wchar_t* operation, const wchar_t* source, 
                                         const wchar_t* destination, int fileCount);
+    
+    // Progress dialog class (like NetRocks' ComplexOperationProgress)
+    class MTPProgressDialog {
+    public:
+        MTPProgressDialog(const std::string& operation, const std::string& fileName, int total);
+        void Show();
+        void UpdateProgress(int current, const std::string& currentFile = "");
+        void SetFinished();
+        bool IsCancelled() const { return _cancelled; }
+        
+    private:
+        std::string _operation;
+        std::string _fileName;
+        int _total;
+        bool _finished;
+        bool _cancelled;
+        
+        // Dialog controls (like NetRocks)
+        int _i_cur_file = -1;
+        int _i_progress_bar = -1;
+        int _i_progress_text = -1;
+        int _i_cancel = -1;
+        
+        void CreateProgressUI();
+        void UpdateProgressBar(int percent);
+        bool CheckForCancellation();
+    };
+    
+    // Convenience methods
+    static std::unique_ptr<MTPProgressDialog> ShowProgress(const std::string& operation, const std::string& fileName, int total);
 };

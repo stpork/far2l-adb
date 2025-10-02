@@ -569,8 +569,8 @@ bool MTPPlugin::ByKey_TryEnterSelectedDevice()
     
     if (!connected) {
         DBG("Failed to connect to device: %s", deviceId.c_str());
-        const wchar_t* errorMsg = L"Failed to connect to MTP device.\nDevice may be busy or not responding.";
-        g_Info.Message(g_Info.ModuleNumber, FMSG_MB_OK | FMSG_WARNING, nullptr, &errorMsg, 1, 0);
+        const wchar_t* errorMsg[] = { L"Failed to connect to MTP device.", L"Device may be busy or not responding." };
+        g_Info.Message(g_Info.ModuleNumber, FMSG_MB_OK | FMSG_WARNING, nullptr, errorMsg, 2, 0);
         return false;
     }
     
@@ -1090,19 +1090,11 @@ int MTPPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
                 return FALSE;
             }
             
-            // Get file size to determine if we can view it
+            // Get file size for logging purposes
             uint64_t fileSize = 0;
             int sizeResult = _mtpDevice->GetMTPFileSize(objectId, fileSize);
             if (sizeResult != 0) {
                 DBG("GetFiles: Could not get file size");
-                return FALSE;
-            }
-            
-            // Limit file size for viewing (e.g., 10MB max)
-            const uint64_t MAX_VIEW_SIZE = 10 * 1024 * 1024; // 10MB
-            if (fileSize > MAX_VIEW_SIZE) {
-                const wchar_t* errorMsg = L"File is too large to view.\nMaximum viewable size is 10MB.";
-                g_Info.Message(g_Info.ModuleNumber, FMSG_MB_OK | FMSG_WARNING, nullptr, &errorMsg, 1, 0);
                 return FALSE;
             }
             
@@ -1123,12 +1115,21 @@ int MTPPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
             
             DBG("GetFiles: Downloading file to temporary path: %s", tempPath.c_str());
             
+            // Show progress dialog for F3 View operation
+            auto progressDialog = MTPDialogs::ShowProgress("Viewing", fileName, 1);
+            progressDialog->UpdateProgress(0, fileName);
+
             // Download file to temporary location
             int downloadResult = _mtpDevice->DownloadFile(objectId, tempPath);
             if (downloadResult != 0) {
                 DBG("GetFiles: Failed to download file for viewing, error: %d", downloadResult);
+                progressDialog->SetFinished();
                 return FALSE;
             }
+
+            // Update progress to 100% and finish
+            progressDialog->UpdateProgress(1, fileName);
+            progressDialog->SetFinished();
             
             DBG("GetFiles: Successfully downloaded file for viewing: %s", tempPath.c_str());
             return TRUE; // File is now available for viewing at tempPath
@@ -1161,8 +1162,9 @@ int MTPPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
         return FALSE;
     }
     
-    // Show confirmation dialog if not in silent mode
-    if (!(OpMode & OPM_SILENT)) {
+    // Show confirmation dialog ONLY for device→Mac F5/F6 operations
+    // Not for silent operations, F3/F4, or QuickView
+    if (!(OpMode & OPM_SILENT) && !(OpMode & OPM_VIEW)) {
         std::wstring operation = Move ? L"Move" : L"Copy";
         std::wstring source = L"MTP Device";
         std::wstring destination = StrMB2Wide(destPath);
@@ -1178,6 +1180,12 @@ int MTPPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
     int lastErrorCode = 0;
     int currentFile = 0;
     
+    // Initialize progress dialog for F5/F6 operations
+    std::unique_ptr<MTPDialogs::MTPProgressDialog> progressDialog;
+    if (!(OpMode & OPM_SILENT) && !(OpMode & OPM_VIEW)) {
+        progressDialog = MTPDialogs::ShowProgress("Downloading", "Starting download...", fileCount);
+    }
+    
     for (int i = 0; i < ItemsNumber; i++) {
         // Skip directories for file download
         if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
@@ -1188,17 +1196,17 @@ int MTPPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
         
         currentFile++;
         
-        // Show progress dialog
-        if (!(OpMode & OPM_SILENT)) {
-            std::string fileName = PanelItem[i].FindData.lpwszFileName ? 
-                                  StrWide2MB(PanelItem[i].FindData.lpwszFileName) : "unknown_file";
-            std::wstring progressMsg = L"Downloading: " + StrMB2Wide(fileName);
-            bool cancelled = false;
-            MTPDialogs::ShowProgressDialog(L"MTP Download", progressMsg.c_str(), 
-                                          currentFile, fileCount, cancelled);
-            if (cancelled) {
+        // Update progress for F5/F6 operations
+        if (progressDialog) {
+            std::string fileName = PanelItem[i].FindData.lpwszFileName ?
+                                 StrWide2MB(PanelItem[i].FindData.lpwszFileName) : "unknown_file";
+            
+            progressDialog->UpdateProgress(currentFile, fileName);
+            
+            // Check for cancellation
+            if (progressDialog->IsCancelled()) {
                 DBG("GetFiles: User cancelled transfer");
-                break;
+                return -1;
             }
         }
         
@@ -1257,6 +1265,11 @@ int MTPPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
         }
     }
     
+    // Finish progress dialog
+    if (progressDialog) {
+        progressDialog->SetFinished();
+    }
+    
     if (successCount == 0) {
         WINPORT(SetLastError)(lastErrorCode);
     }
@@ -1294,22 +1307,23 @@ int MTPPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
         return FALSE;
     }
     
-    // Show confirmation dialog if not in silent mode
-    if (!(OpMode & OPM_SILENT)) {
-        std::wstring operation = Move ? L"Move" : L"Copy";
-        std::wstring source = StrMB2Wide(srcPath);
-        std::wstring destination = L"MTP Device";
-        
-        if (!MTPDialogs::AskTransferConfirmation(operation.c_str(), source.c_str(), 
-                                                destination.c_str(), fileCount)) {
-            DBG("PutFiles: User cancelled transfer");
-            return -1;
-        }
+    // far2l handles confirmation dialogs for Mac→device operations
+    // We don't need to show our own confirmation dialog
+    if (OpMode & OPM_SILENT) {
+        DBG("PutFiles: Silent operation - skipping confirmation dialog");
+    } else {
+        DBG("PutFiles: Non-silent operation - far2l will handle confirmation");
     }
     
     int successCount = 0;
     int lastErrorCode = 0;
     int currentFile = 0;
+    
+    // Initialize progress dialog for Mac→Device operations
+    std::unique_ptr<MTPDialogs::MTPProgressDialog> progressDialog;
+    if (!(OpMode & OPM_SILENT)) {
+        progressDialog = MTPDialogs::ShowProgress("Uploading", "Starting upload...", fileCount);
+    }
     
     for (int i = 0; i < ItemsNumber; i++) {
         // Skip directories for file upload
@@ -1321,17 +1335,17 @@ int MTPPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
         
         currentFile++;
         
-        // Show progress dialog
-        if (!(OpMode & OPM_SILENT)) {
-            std::string fileName = PanelItem[i].FindData.lpwszFileName ? 
-                                  StrWide2MB(PanelItem[i].FindData.lpwszFileName) : "unknown_file";
-            std::wstring progressMsg = L"Uploading: " + StrMB2Wide(fileName);
-            bool cancelled = false;
-            MTPDialogs::ShowProgressDialog(L"MTP Upload", progressMsg.c_str(), 
-                                          currentFile, fileCount, cancelled);
-            if (cancelled) {
+        // Update progress for Mac→Device operations
+        if (progressDialog) {
+            std::string fileName = PanelItem[i].FindData.lpwszFileName ?
+                                 StrWide2MB(PanelItem[i].FindData.lpwszFileName) : "unknown_file";
+            
+            progressDialog->UpdateProgress(currentFile, fileName);
+            
+            // Check for cancellation
+            if (progressDialog->IsCancelled()) {
                 DBG("PutFiles: User cancelled transfer");
-                break;
+                return -1;
             }
         }
         
@@ -1366,6 +1380,11 @@ int MTPPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
             lastErrorCode = result;
             DBG("PutFiles: Failed to upload %s, error: %d", fileName.c_str(), result);
         }
+    }
+    
+    // Finish progress dialog
+    if (progressDialog) {
+        progressDialog->SetFinished();
     }
     
     if (successCount == 0) {
