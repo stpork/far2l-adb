@@ -5,7 +5,48 @@ ConsoleBuffer::ConsoleBuffer() : _width(0)
 {
 }
 
-void ConsoleBuffer::SetSize(unsigned int width, unsigned int height, uint64_t attributes, COORD &cursor_pos)
+void ConsoleBuffer::SetSizeSimple(unsigned int width, unsigned int height, uint64_t attributes, COORD &cursor_pos)
+{
+	if (width==_width && (width*height)==_console_chars.size() )
+		return;
+
+	unsigned int prev_height = _width ? (SHORT)(_console_chars.size() / _width) : (SHORT)0;
+	CHAR_INFO fill_ci{};
+	CI_SET_WCATTR(fill_ci, L' ', attributes);
+	ConsoleChars new_chars(size_t(height) * width, fill_ci);
+	if (!new_chars.empty() && !_console_chars.empty()) {
+		size_t y_offset = (prev_height > height) ? prev_height - height : 0;
+		for (unsigned int y = y_offset; y < prev_height; ++y) {
+			size_t last_elb = (size_t)-1;
+			for (unsigned int x = 0; x < _width; ++x) {
+				auto &ci = _console_chars[y * _width + x];
+				if ( (ci.Attributes & EXPLICIT_LINE_BREAK) != 0) {
+					last_elb = x;
+					ci.Attributes&= ~EXPLICIT_LINE_BREAK;
+				}
+				if (x < width) {
+					new_chars[(y - y_offset) * width + x] = ci;
+				}
+			}
+			if (last_elb != (size_t)-1 && y < prev_height) {
+				if (last_elb >= width) {
+					last_elb = width - 1;
+				}
+				new_chars[(y - y_offset) * width + last_elb].Attributes|= EXPLICIT_LINE_BREAK;
+			}
+		}
+	}
+	_console_chars.swap(new_chars);
+	_width = width;
+	if ((size_t)cursor_pos.X >= _width) {
+		cursor_pos.X = _width - 1;
+	}
+	if ((size_t)cursor_pos.Y >= (_console_chars.size() / _width)) {
+		cursor_pos.Y = (_console_chars.size() / _width) - 1;
+	}
+}
+
+void ConsoleBuffer::SetSizeRecomposing(unsigned int width, unsigned int height, uint64_t attributes, COORD &cursor_pos)
 {
 	if (width==_width && (width*height)==_console_chars.size() )
 		return;
@@ -13,50 +54,80 @@ void ConsoleBuffer::SetSize(unsigned int width, unsigned int height, uint64_t at
 	CHAR_INFO fill_ci{};
 	CI_SET_WCATTR(fill_ci, L' ', attributes);
 	ConsoleChars new_chars(size_t(height) * width, fill_ci);
-	std::vector<bool> implicit_linewraps;
-	if (_width && !_console_chars.empty()) {
+	if (_width && !_console_chars.empty() && !new_chars.empty()) {
 		size_t nc_cursor_offset = (size_t)-1;
 		ConsoleChars unwrapped_chars;
 		for (size_t y = 0, ymax = _console_chars.size() / _width; y < ymax; ++y) {
+			// need to skip unrelevant spaces at the line ending, for that -
+			// loop from end to begin until first meaningful character, which can be:
+			//  - any non space character
+			//  - any space character with EXPLICIT_LINE_BREAK or IMPORTANT_LINE_CHAR attribute set
+			//  - any space character which causes background color change
 			size_t w = _width;
-			for (;w > 0; --w) {
+			for (const CHAR_INFO *prev_ci = nullptr; w > 0; --w) {
 				const auto &ci = _console_chars[_width * y + (w - 1)];
-				if ((ci.Char.UnicodeChar && ci.Char.UnicodeChar != L' ') || (ci.Attributes & EXPLICIT_LINE_WRAP) != 0
-						|| ((ci.Attributes ^ attributes) & (BACKGROUND_RED|BACKGROUND_GREEN|BACKGROUND_BLUE)) != 0) {
+				if ((ci.Char.UnicodeChar && ci.Char.UnicodeChar != L' ')
+						|| (ci.Attributes & (EXPLICIT_LINE_BREAK | IMPORTANT_LINE_CHAR)) != 0
+						|| (prev_ci && (ci.Attributes & BACKGROUND_RGB) != (prev_ci->Attributes & BACKGROUND_RGB)))  {
 					break;
 				}
+				prev_ci = &ci;
 			}
 			if (w > 0) {
+				// mark characters before unrelevant space tail as important, so spaces there will not be considered
+				// unrelevant and skipped if currently collected whole line will be wrapped again in future
+				// also remove redundant EXPLICIT_LINE_BREAK markings in the middle of string
+				if (w > 1) for (auto x = w - 1; x--; ) {
+					_console_chars[_width * y + x].Attributes &= ~EXPLICIT_LINE_BREAK;
+					_console_chars[_width * y + x].Attributes |= IMPORTANT_LINE_CHAR;
+				}
 				auto line_begin = _console_chars.begin() + y * _width;
 				unwrapped_chars.insert(unwrapped_chars.end(), line_begin, line_begin + w);
-				if (w != _width) {
-					implicit_linewraps.resize(unwrapped_chars.size());
-					implicit_linewraps.back() = true;
-				}
 				if ((size_t)cursor_pos.Y == y) {
-					int cx = ((size_t)cursor_pos.X < w) ? cursor_pos.X : w - 1;
+					int cx = ((size_t)cursor_pos.X < w) ? cursor_pos.X : (w ? w - 1 : 0);
 					nc_cursor_offset = unwrapped_chars.size() - w + cx;
 				}
 			}
 		}
-		implicit_linewraps.resize(new_chars.size());
 		bool cursor_pos_adjusted = false;
-		size_t y = 0;
-		for (size_t x = 0, i = 0; i != unwrapped_chars.size(); ++i) {
+		size_t x, y;
+		for (size_t i = x = y = 0; i != unwrapped_chars.size(); ++i) {
 			size_t ofs = y * width + x;
 			if (ofs >= new_chars.size()) {
-				--y;
+				if (nc_cursor_offset != (size_t)-1) {
+					if (nc_cursor_offset >= width) {
+						nc_cursor_offset-= width;
+					} else {
+						nc_cursor_offset = 0;
+					}
+				} else if (cursor_pos.Y > 0) {
+					cursor_pos.Y--;
+				} else {
+					fprintf(stderr, "ConsoleBuffer: cursor underflow\n");
+				}
 				ofs-= width;
+				--y;
+				if (nc_cursor_offset != (size_t)-1 && ofs == nc_cursor_offset) {
+					nc_cursor_offset = (size_t)-1;
+					cursor_pos.Y = y;
+					cursor_pos.X = x;
+					cursor_pos_adjusted = true;
+				}
+				if (scroll_callback.pfn) {
+					scroll_callback.pfn(scroll_callback.context, con_handle, width, &new_chars[0]);
+				}
 				memmove(&new_chars[0], &new_chars[width], (new_chars.size() - width) * sizeof(CHAR_INFO));
 				std::fill(new_chars.end() - width, new_chars.end(), fill_ci);
 			}
-			auto ci = unwrapped_chars[i];
-			if (!cursor_pos_adjusted && nc_cursor_offset == ofs) {
-				cursor_pos.X = x;
-				cursor_pos.Y = y;
-				cursor_pos_adjusted = true;
-			}
-			if ( (ci.Attributes & EXPLICIT_LINE_WRAP) != 0 || implicit_linewraps[i]) {
+			const auto &ci = unwrapped_chars[i];
+			new_chars[ofs] = ci;
+			if ( (ci.Attributes & EXPLICIT_LINE_BREAK) != 0) {
+				const DWORD64 rendering_attrs = ci.Attributes & (~(IMPORTANT_LINE_CHAR | EXPLICIT_LINE_BREAK));
+				for (;x < width; ++x) { // derive rendering attributes to all remain chars in line
+					auto &nci = new_chars[y * width + x];
+					nci.Attributes&= (IMPORTANT_LINE_CHAR | EXPLICIT_LINE_BREAK);
+					nci.Attributes|= rendering_attrs;
+				}
 				x = 0;
 				++y;
 			} else {
@@ -66,31 +137,34 @@ void ConsoleBuffer::SetSize(unsigned int width, unsigned int height, uint64_t at
 					++y;
 				}
 			}
-			new_chars[ofs] = ci;
 		}
-		if (y + 1 < new_chars.size() / width) {
-			size_t empty_lines = new_chars.size() / width - (y + 1);
-			memmove(&new_chars[empty_lines * width], &new_chars[0], (new_chars.size() - empty_lines * width) * sizeof(CHAR_INFO));
-			std::fill(new_chars.begin(), new_chars.begin() + empty_lines * width, fill_ci);
-			y+= empty_lines;
-			if (cursor_pos_adjusted) {
-				cursor_pos.Y+= empty_lines;
+
+		if (!cursor_pos_adjusted) { // put it at beginning of 1st free line
+			if (x > 0) {
+				x = 0;
+				++y;
 			}
-		}
-		if (!cursor_pos_adjusted) {
+			while (y && y >= height) { // ensure at least one free line is there at the bottom
+				if (scroll_callback.pfn) {
+					scroll_callback.pfn(scroll_callback.context, con_handle, width, &new_chars[0]);
+				}
+				memmove(&new_chars[0], &new_chars[width], (new_chars.size() - width) * sizeof(CHAR_INFO));
+				std::fill(new_chars.end() - width, new_chars.end(), fill_ci);
+				--y;
+			}
 			cursor_pos.X = 0;
 			cursor_pos.Y = y;
+			fprintf(stderr, "ConsoleBuffer: cursor defaulted at %d.%d screen %u.%u \n", cursor_pos.X, cursor_pos.Y, width, height);
 		}
 	}
 
 	_console_chars.swap(new_chars);
 	_width = width;
-
-	if (cursor_pos.X >= (int)width && width > 0) {
-		cursor_pos.X = width - 1;
+	if ((size_t)cursor_pos.X >= _width) {
+		cursor_pos.X = _width - 1;
 	}
-	if (cursor_pos.Y >= (int)(_console_chars.size() / width) && _console_chars.size() >= width) {
-		cursor_pos.Y = _console_chars.size() / width;
+	if ((size_t)cursor_pos.Y >= (_console_chars.size() / _width)) {
+		cursor_pos.Y = (_console_chars.size() / _width) - 1;
 	}
 }
 
