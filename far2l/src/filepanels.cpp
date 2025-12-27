@@ -54,6 +54,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "pathmix.hpp"
 #include "dirmix.hpp"
 #include "interf.hpp"
+#include "scrbuf.hpp"
 
 FilePanels::FilePanels()
 	:
@@ -82,7 +83,7 @@ static void PrepareOptFolder(FARString &strSrc, int IsLocalPath_FarPath)
 		apiExpandEnvironmentStrings(strSrc, strSrc);
 	}
 
-	if (strSrc != L"/") {
+	if (strSrc != WGOOD_SLASH) {
 		CheckShortcutFolder(strSrc, false, true);
 	}
 
@@ -807,7 +808,7 @@ int FilePanels::ProcessKey(FarKey Key)
 			return TRUE;
 		}
 		default: {
-			if (Key >= KEY_CTRL0 && Key <= KEY_CTRL9)
+			if (Key >= KEY_CTRL0 && Key <= KEY_CTRL9 && !(ActivePanel->GetType() == TREE_PANEL))
 				ChangePanelViewMode(ActivePanel, Key - KEY_CTRL0, TRUE);
 			else if (!ActivePanel->ProcessKey(Key))
 				CtrlObject->CmdLine->ProcessKey(Key);
@@ -1044,7 +1045,6 @@ void FilePanels::DisplayObject()
 {
 	// if ( !Focus )
 	// return;
-	ConsoleRepaintsDeferScope crds(NULL); // prevent flickering due to ShowBackground
 	_OT(SysLog(L"[%p] FilePanels::Redraw() {%d, %d - %d, %d}", this, X1, Y1, X2, Y2));
 	CtrlObject->CmdLine->ShowBackground( (bool)(Opt.PanelsDisposition) );
 
@@ -1096,7 +1096,6 @@ void FilePanels::DisplayObject()
 			LeftPanel->Show();
 		}
 	}
-
 #endif
 }
 
