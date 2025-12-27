@@ -159,7 +159,7 @@ typedef SHORT *PSHORT;
 typedef LONGLONG *PLONGLONG;
 typedef ULONGLONG *PULONGLONG;
 
-//#define TCHAR WCHAR 
+//#define TCHAR WCHAR
 #define CONST const
 
 //typedef const CHAR *LPCSTR;
@@ -458,9 +458,9 @@ typedef struct _CHAR_INFO {
 #define CI_USING_COMPOSITE_CHAR(CI) (UNLIKELY(((CI).Char.UnicodeChar & COMPOSITE_CHAR_MARK) != 0))
 
 #define CI_FULL_WIDTH_CHAR(CI) ( \
-        CharClasses::IsFullWidth( CI_USING_COMPOSITE_CHAR(CI) \
-            ? *WINPORT(CompositeCharLookup)((CI).Char.UnicodeChar) \
-            : (CI).Char.UnicodeChar ) \
+        CI_USING_COMPOSITE_CHAR(CI)   \
+            ? CharClasses::IsFullWidth(WINPORT(CompositeCharLookup)((CI).Char.UnicodeChar)) \
+            : CharClasses::IsFullWidth((CI).Char.UnicodeChar ) \
         )
 
 #define GET_RGB_FORE(ATTR)       ((DWORD)(((ATTR) >> 16) & 0xffffff))
@@ -1472,6 +1472,59 @@ typedef LONG NTSTATUS;
 #define IS_INTRESOURCE(_r) ((((ULONG_PTR)(_r)) >> 16) == 0)
 
 #define CREATE_SUSPENDED                  0x00000004
+
+// capabilities reported by GetConsoleImageCaps
+#define WP_IMGCAP_RGBA      0x001 // supports WP_IMG_RGB/WP_IMG_RGBA
+#define WP_IMGCAP_PNG       0x002 // supports WP_IMG_PNG
+#define WP_IMGCAP_JPG       0x003 // supports WP_IMG_JPG
+#define WP_IMGCAP_ATTACH    0x100 // supports existing image attaching
+#define WP_IMGCAP_SCROLL    0x200 // supports existing image scrolling
+// reserved for a while:    0x400
+#define WP_IMGCAP_ROTMIR    0x800 // supports existing image rotation and mirroring
+
+// flags used for SetConsoleImage
+#define WP_IMG_RGBA             0 // supported if WP_IMGCAP_RGBA
+#define WP_IMG_RGB              1 // supported if WP_IMGCAP_RGBA
+#define WP_IMG_PNG              2 // supported if WP_IMGCAP_PNG
+#define WP_IMG_JPG              3 // supported if WP_IMGCAP_JPG
+
+// SetConsoleImage attaching flags supported if WP_IMGCAP_ATTACH reported
+#define WP_IMG_ATTACH_LEFT      0x010000 // attach given image at left edge of existing one
+#define WP_IMG_ATTACH_RIGHT     0x020000 // attach given image at right edge of existing one
+#define WP_IMG_ATTACH_TOP       0x030000 // attach given image at top edge of existing one
+#define WP_IMG_ATTACH_BOTTOM    0x040000 // attach given image at bottom edge of existing one
+
+// Can be used only with any of WP_IMG_ATTACH_* if WP_IMGCAP_SCROLL reported
+// Scrolls image after attaching to direction opposite to attached edge
+#define WP_IMG_SCROLL           0x080000
+
+
+// if area fully specified - then:
+//  if WP_IMG_PIXEL_OFFSET is not set - image scaled to cover specified area [LEFT TOP RIGHT BOTTOM]
+//  if WP_IMG_PIXEL_OFFSET is set - image NOT scaled, and RIGHT and BOTTOM fields treated as pixel-level offset for displaying image
+#define WP_IMG_PIXEL_OFFSET     0x100000
+
+
+#define WP_IMG_MASK_FMT         0x00ffff
+#define WP_IMG_MASK_ATTACH      0x070000
+
+// WP_IMGTF_ROTATE_* supported if WP_IMGCAP_ROTMIR reported occupy least
+#define WP_IMGTF_MASK_ROTATE     0x03 // 2 bits that can be one of given values:
+#define WP_IMGTF_ROTATE0         0x00 // no rotation (so can use it just to move image)
+#define WP_IMGTF_ROTATE90        0x01 // rotate by 90 degrees
+#define WP_IMGTF_ROTATE180       0x02 // rotate by 180 degrees
+#define WP_IMGTF_ROTATE270       0x03 // rotate by 270 degrees
+
+// WP_IMG_MIRROR_* supported if WP_IMGCAP_ROTMIR reported and independent bit values
+// note that mirroring applied before rotation, if specified together
+#define WP_IMGTF_MIRROR_H   0x04  // flip image horizontally
+#define WP_IMGTF_MIRROR_V   0x08  // flip image vertically
+
+typedef struct WinportGraphicsInfo1
+{
+    DWORD64 Caps;
+    COORD PixPerCell;
+} WinportGraphicsInfo;
 
 #define HGLOBAL     HANDLE
 #define GMEM_FIXED          0x0000

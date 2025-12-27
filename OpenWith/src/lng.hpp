@@ -3,32 +3,60 @@
 enum LanguageID
 {
 	MPluginTitle,
-	MConfigTitle,
 	MChooseApplication,
-	MError,
+
 	MOk,
 	MCancel,
-	MUseExternalTerminal,
+	MError,
+	MNotRealNames,
 	MSaveConfigError,
 	MNoAppsFound,
 	MCannotExecute,
+
+	MConfigTitle,
+
+	MUseExternalTerminal,
 	MNoWaitForCommandCompletion,
-	MDetails,
-	MLaunchCommand,
-	MPathname,
-	MMimeType,
-	MDesktopFile,
-	MFilterByShowIn,
-	MValidateTryExec,
-	MUseMimeinfoCache,
-	MUseExtensionBasedFallback,
+	MClearSelection,
+	MConfirmLaunchOption,
+
 	MUseXdgMimeTool,
 	MUseFileTool,
+	MUseMagikaTool,
+	MUseGlobRules,
+	MUseExtensionBasedFallback,
 	MLoadMimeTypeAliases,
+	MLoadMimeTypeSubclasses,
+	MResolveStructuredSuffixes,
+	MUseGenericMimeFallbacks,
+	MShowUniversalHandlers,
+	MUseMimeinfoCache,
+	MFilterByShowIn,
+	MValidateTryExec,
+	MSortAlphabetically,
+	MTreatUrlsAsPaths,
+
+	MDetails,
+
+	MPathname,
+	MFilesSelected,
+	MMimeProfile,
+	MLaunchCommand,
 	MClose,
 	MLaunch,
+
+	MDesktopFile,
 	MSource,
 	MFullScanFor,
 	MFor,
 	MIn,
+
+	MAppName,
+	MFullPath,
+	MExecutableFile,
+	MVersion,
+	MBundleVersion,
+
+	MConfirmLaunchTitle,
+	MConfirmLaunchMessage
 };

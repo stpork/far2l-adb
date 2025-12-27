@@ -158,8 +158,13 @@ struct pick_color256_s
 
 	union {
 		struct {
+#ifdef ENDIAN_IS_BIG
+			uint32_t rgb;
+			uint32_t hsv;
+#else
 			uint32_t hsv;
 			uint32_t rgb;
+#endif
 		};
 		uint64_t hsvrgb64;
 	};
@@ -233,7 +238,7 @@ void pick_color256_s::update_table_index(void)
 {
 	if (mode < 2) {
 		uint32_t y = 12 - (((hsv >> ((1 + mode) << 3)) & 0xFF) / 20);
-		index = y > 11 ? 11 * 64 + (((hsv >> (mode << 3)) & 0xFF) >> 2) : 
+		index = y > 11 ? 11 * 64 + (((hsv >> (mode << 3)) & 0xFF) >> 2) :
 				y * 64 + (((hsv >> (mode << 3)) & 0xFF) >> 2);
 	}
 }

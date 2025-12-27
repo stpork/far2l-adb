@@ -225,7 +225,9 @@ struct EditorOptions
 	int SearchRegexp;
 	int SearchPickUpWord;
 	int ShowWhiteSpace;
+	int ShowLineNumbers;
 
+	int WordWrap;
 	FARString strWordDiv;
 };
 
@@ -357,6 +359,9 @@ struct TreeOptions
 	int MinTreeCount;		// Минимальное количество папок для сохранения дерева в файле.
 	int AutoChangeFolder;	// автосмена папок при перемещении по дереву
 	DWORD TreeFileAttr;		// файловые атрибуты для файлов-деревях
+	FARString ExclSubTreeMask;
+	bool ScanDepthEnabled;
+	int DefaultScanDepth;
 };
 
 struct CopyMoveOptions
@@ -527,8 +532,6 @@ struct Options
 	int ClassicHotkeyLinkResolving;
 	int PanelRightClickRule;	// задает поведение правой клавиши мыши
 	int PanelCtrlAltShiftRule;	// задает поведение Ctrl-Alt-Shift для панелей.
-	// Panel/CtrlFRule в реестре - задает поведение Ctrl-F. Если = 0, то штампуется файл как есть, иначе - с учетом отображения на панели
-	int PanelCtrlFRule;
 	/*
 		битовые флаги, задают поведение Ctrl-Alt-Shift
 			бит установлен - функция включена:
