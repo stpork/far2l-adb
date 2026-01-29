@@ -8,11 +8,13 @@
 #include <chrono>
 #include <cstdarg>
 #include <algorithm>
+#include <fstream>
 
 // System includes
 #include <unistd.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+
 
 static std::string _adbPath;    
 
@@ -40,32 +42,66 @@ ADBShell::~ADBShell() {
 }
 
 std::string ADBShell::findAdbExecutable() {
+    // First, try to use 'which' to find adb in PATH
+    FILE *which_pipe = popen("which adb 2>/dev/null", "r");
+    if (which_pipe) {
+        char buffer[512];
+        if (fgets(buffer, sizeof(buffer), which_pipe)) {
+            std::string path(buffer);
+            // Remove trailing newline
+            while (!path.empty() && (path.back() == '\n' || path.back() == '\r')) {
+                path.pop_back();
+            }
+            if (!path.empty()) {
+                // Verify it's actually ADB
+                std::string test_command = path + " version 2>&1";
+                FILE *test_pipe = popen(test_command.c_str(), "r");
+                if (test_pipe) {
+                    char test_buffer[256];
+                    if (fgets(test_buffer, sizeof(test_buffer), test_pipe)) {
+                        std::string output(test_buffer);
+                        if (output.find("Android Debug Bridge") != std::string::npos || 
+                            output.find("version") != std::string::npos) {
+                            pclose(test_pipe);
+                            pclose(which_pipe);
+                            _adbPath = path;
+                            return path;
+                        }
+                    }
+                    pclose(test_pipe);
+                }
+            }
+        }
+        pclose(which_pipe);
+    }
+    
+    // Fallback to hardcoded paths
     const char* adb_paths[] = {
         "/opt/homebrew/bin/adb",
-        "/usr/local/bin/adb", 
+        "/usr/local/bin/adb",
+        "/Users/C5370280/Android/sdk/platform-tools/adb",
         "adb"
     };
     
     for (const char* path : adb_paths) {
-        // Use direct popen for ADB version check (can't use adbCommand due to circular dependency)
         std::string test_command = std::string(path) + " version 2>&1";
         FILE *test_pipe = popen(test_command.c_str(), "r");
         if (test_pipe) {
             char buffer[256];
             if (fgets(buffer, sizeof(buffer), test_pipe)) {
-                // Check if output contains "Android Debug Bridge" or version info
                 std::string output(buffer);
                 if (output.find("Android Debug Bridge") != std::string::npos || 
                     output.find("version") != std::string::npos) {
                     _adbPath = path;
                     pclose(test_pipe);
-                    return path;  // Return the actual path
+                    return path;
                 }
             }
             pclose(test_pipe);
         }
     }
-    return "";  // Return empty string if not found
+    
+    return "";
 }
 
 std::string ADBShell::generateMarker() {
@@ -268,6 +304,7 @@ void ADBShell::setError(const std::string& error) {
 
 // Static version for global ADB commands (e.g., "adb devices -l")
 std::string ADBShell::adbExec(const std::string& command) {
+    
     // Ensure ADB path is available
     if (_adbPath.empty()) {
         _adbPath = findAdbExecutable();
@@ -275,6 +312,7 @@ std::string ADBShell::adbExec(const std::string& command) {
             return "";
         }
     }
+    
 
     // Construct full command with stderr redirection
     std::string full_command = _adbPath + " " + command + " 2>&1";
@@ -311,6 +349,7 @@ std::string ADBShell::adbExec(const std::string& command) {
     while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) {
         output.pop_back();
     }
+
 
     return output;
 }

@@ -52,7 +52,7 @@ if(NOT "${GIT_TAG}" STREQUAL "v_${VERSION}")
                 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
                 OUTPUT_VARIABLE GIT_DATE
                 OUTPUT_STRIP_TRAILING_WHITESPACE)
-            string(SUBSTRING ${GIT_DATE} 0 10 GIT_DATE)
+            string(SUBSTRING "" 0 10 GIT_DATE)
             execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
                 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
                 OUTPUT_VARIABLE GIT_HASH

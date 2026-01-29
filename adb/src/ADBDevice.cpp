@@ -11,11 +11,17 @@
 #include <wchar.h>
 #include <errno.h>
 #include <utils.h>
+#include <fstream>
+#include <chrono>
+
 
 ADBDevice::ADBDevice(const std::string &device_serial)
     : _device_serial(device_serial), _current_path("/"), _adb_shell(nullptr), _connected(false)
 {
+    
+    
     Connect();
+    
 }
 
 ADBDevice::~ADBDevice()
@@ -25,21 +31,31 @@ ADBDevice::~ADBDevice()
 
 bool ADBDevice::Connect()
 {
+    
     if (_connected) {
         return true;
     }
     
     try {
+        
         _adb_shell = std::make_unique<ADBShell>(_device_serial);
+        
+        
         if (!_adb_shell->start()) {
             return false;
         }
+        
+        
         std::string pwd_response = _adb_shell->shellCommand("pwd");
+        
+        
         if (pwd_response.empty()) {
             return false;
         }
         _current_path = ExtractPathFromPwd(pwd_response);
         _connected = true;
+        
+        
         return true;
         
     } catch (const std::exception& e) {
@@ -188,18 +204,45 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
         if (filename.empty() || filename == "." || filename == "..") continue;
 
         PluginPanelItem item{};
-        item.FindData.lpwszFileName = wcsdup(StrMB2Wide(filename).c_str());
+        // Use malloc + wcscpy for compatibility with free()
+        std::wstring wfilename = StrMB2Wide(filename);
+        size_t len = wfilename.length() + 1;
+        wchar_t* filename_buf = (wchar_t*)malloc(len * sizeof(wchar_t));
+        if (filename_buf) {
+            wcscpy(filename_buf, wfilename.c_str());
+            item.FindData.lpwszFileName = filename_buf;
+        }
         item.FindData.dwUnixMode = (perms[0] == 'd') ? (S_IFDIR | 0755) : (is_symlink ? (S_IFLNK | 0644) : (S_IFREG | 0644));
         item.FindData.dwFileAttributes = WINPORT(EvaluateAttributesA)(item.FindData.dwUnixMode, filename.c_str());
         if (perms[0] == 'd') item.FindData.dwFileAttributes |= FILE_ATTRIBUTE_DIRECTORY;
 
-        if (is_symlink)
-            item.Description = wcsdup(symlink_target.empty() ? L"Symlink (no target)" : StrMB2Wide(symlink_target).c_str());
+        if (is_symlink) {
+            std::wstring wtarget = symlink_target.empty() ? L"Symlink (no target)" : StrMB2Wide(symlink_target);
+            size_t len = wtarget.length() + 1;
+            wchar_t* desc_buf = (wchar_t*)malloc(len * sizeof(wchar_t));
+            if (desc_buf) {
+                wcscpy(desc_buf, wtarget.c_str());
+                item.Description = desc_buf;
+            }
+        }
 
         try { item.FindData.nFileSize = item.FindData.nPhysicalSize = std::stoull(size); } catch (...) { item.FindData.nFileSize = item.FindData.nPhysicalSize = 0; }
 
-        item.Owner = wcsdup(StrMB2Wide(owner).c_str());
-        item.Group = wcsdup(StrMB2Wide(group).c_str());
+        // Use malloc + wcscpy for compatibility with free()
+        std::wstring wowner = StrMB2Wide(owner);
+        size_t owner_len = wowner.length() + 1;
+        wchar_t* owner_buf = (wchar_t*)malloc(owner_len * sizeof(wchar_t));
+        if (owner_buf) {
+            wcscpy(owner_buf, wowner.c_str());
+            item.Owner = owner_buf;
+        }
+        std::wstring wgroup = StrMB2Wide(group);
+        size_t group_len = wgroup.length() + 1;
+        wchar_t* group_buf = (wchar_t*)malloc(group_len * sizeof(wchar_t));
+        if (group_buf) {
+            wcscpy(group_buf, wgroup.c_str());
+            item.Group = group_buf;
+        }
         try { item.NumberOfLinks = std::stoi(links); } catch (...) { item.NumberOfLinks = 1; }
 
         FILETIME ft{};

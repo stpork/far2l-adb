@@ -60,6 +60,8 @@ SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int OpenFrom, INT_PTR Item)
 		// Create new plugin instance
 		impl = new ADBPlugin();
 		return (HANDLE)impl;
+	} catch (const std::exception& e) {
+		return INVALID_HANDLE_VALUE;
 	} catch (...) {
 		return INVALID_HANDLE_VALUE;
 	}
@@ -82,7 +84,8 @@ SHAREDSYMBOL int WINAPI GetFindDataW(HANDLE hPlugin, PluginPanelItem **pPanelIte
 		return 0;
 	}
 	ADBPlugin *plugin = (ADBPlugin*)hPlugin;
-	return plugin->GetFindData(pPanelItem, pItemsNumber, OpMode);
+	int result = plugin->GetFindData(pPanelItem, pItemsNumber, OpMode);
+	return result;
 }
 
 SHAREDSYMBOL void WINAPI FreeFindDataW(HANDLE hPlugin, PluginPanelItem *PanelItem, int ItemsNumber)

@@ -14,6 +14,16 @@
 #include <dirent.h>
 #include <utils.h>
 #include <farplug-wide.h>
+// Safe wcsdup wrapper that always uses malloc (compatible with free)
+static wchar_t* safe_wcsdup(const wchar_t* str) {
+    if (!str) return nullptr;
+    size_t len = wcslen(str) + 1;
+    wchar_t* result = (wchar_t*)malloc(len * sizeof(wchar_t));
+    if (result) {
+        wcscpy(result, str);
+    }
+    return result;
+}
 
 
 PluginStartupInfo g_Info = {};
@@ -39,6 +49,7 @@ ADBPlugin::ADBPlugin(const wchar_t *path, bool path_is_standalone_config, int Op
 	
 	if (deviceCount == 1) {
 		std::string deviceSerial = GetFirstAvailableDevice();
+		
 		if (!deviceSerial.empty()) {
 			if (ConnectToDevice(deviceSerial)) {
 				_isConnected = true;
@@ -73,19 +84,34 @@ int ADBPlugin::GetFindData(PluginPanelItem **pPanelItem, int *pItemsNumber, int 
 
 void ADBPlugin::FreeFindData(PluginPanelItem *PanelItem, int ItemsNumber)
 {
-	if (PanelItem) {
+	// Guard against null or invalid pointer
+	if (!PanelItem || ItemsNumber <= 0) {
+		return;
+	}
+	
+	// Guard against double-free by checking if already freed (set to magic value)
+	static const PluginPanelItem *FREED_MARKER = (PluginPanelItem*)0xDEADBEEF;
+	if (PanelItem == FREED_MARKER) {
+		return;
+	}
+	
+	{
 		for (int i = 0; i < ItemsNumber; i++) {
 			if (PanelItem[i].FindData.lpwszFileName) {
 				free((void*)PanelItem[i].FindData.lpwszFileName);
+				PanelItem[i].FindData.lpwszFileName = nullptr; // Prevent double-free
 			}
 			if (PanelItem[i].Description) {
 				free((void*)PanelItem[i].Description);
+				PanelItem[i].Description = nullptr;
 			}
 			if (PanelItem[i].Owner) {
 				free((void*)PanelItem[i].Owner);
+				PanelItem[i].Owner = nullptr;
 			}
 			if (PanelItem[i].Group) {
 				free((void*)PanelItem[i].Group);
+				PanelItem[i].Group = nullptr;
 			}
 			// Free custom column data for device selection
 			if (PanelItem[i].CustomColumnData) {
@@ -97,7 +123,12 @@ void ADBPlugin::FreeFindData(PluginPanelItem *PanelItem, int ItemsNumber)
 				delete[] PanelItem[i].CustomColumnData;
 			}
 		}
-		delete[] PanelItem;
+		
+		// Mark as freed before deleting to prevent double-free
+		PluginPanelItem *saved_ptr = PanelItem;
+		PanelItem = nullptr; // Clear local reference
+		
+		delete[] saved_ptr;
 	}
 }
 
@@ -191,7 +222,7 @@ int ADBPlugin::GetFileData(PluginPanelItem **pPanelItem, int *pItemsNumber)
 		std::string current_path = _adbDevice->DirectoryEnum(GetCurrentDevicePath(), files);
 		
 		PluginPanelItem parentDir{};
-		parentDir.FindData.lpwszFileName = wcsdup(L"..");
+		parentDir.FindData.lpwszFileName = safe_wcsdup(L"..");
 		parentDir.FindData.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
 		parentDir.FindData.dwUnixMode = S_IFDIR | 0755;
 		files.insert(files.begin(), parentDir);
@@ -217,7 +248,14 @@ int ADBPlugin::GetFileData(PluginPanelItem **pPanelItem, int *pItemsNumber)
 		
 		item.FindData.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
 		item.FindData.dwUnixMode = 0644;
-		item.FindData.lpwszFileName = const_cast<wchar_t*>(L"Error accessing device");
+		wchar_t *filename = safe_wcsdup(L"Error accessing device");
+		if (!filename) {
+			delete[] *pPanelItem;
+			*pPanelItem = nullptr;
+			*pItemsNumber = 0;
+			return 0;
+		}
+		item.FindData.lpwszFileName = filename;
 		
 		return 1;
 	}
@@ -226,7 +264,9 @@ int ADBPlugin::GetFileData(PluginPanelItem **pPanelItem, int *pItemsNumber)
 int ADBPlugin::GetDeviceData(PluginPanelItem **pPanelItem, int *pItemsNumber)
 {
 	ADBShell tempShell;
+	
 	std::string output = ADBShell::adbExec("devices -l");
+	
 	DBG("ADB devices output: %s\n", output.c_str());
 	
 	if (output.empty()) {
@@ -239,7 +279,16 @@ int ADBPlugin::GetDeviceData(PluginPanelItem **pPanelItem, int *pItemsNumber)
 		
 		item.FindData.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
 		//item.FindData.dwUnixMode = 0644;
-		item.FindData.lpwszFileName = const_cast<wchar_t*>(L"No ADB devices found");
+		wchar_t *filename = safe_wcsdup(L"No ADB devices found");
+		
+		if (!filename) {
+			// Last resort: return empty
+			delete[] *pPanelItem;
+			*pPanelItem = nullptr;
+			*pItemsNumber = 0;
+			return 0;
+		}
+		item.FindData.lpwszFileName = filename;
 		
 		return 1;
 	}
@@ -285,16 +334,16 @@ int ADBPlugin::GetDeviceData(PluginPanelItem **pPanelItem, int *pItemsNumber)
 				}
 				
 				PluginPanelItem device{};
-				device.FindData.lpwszFileName = wcsdup(StrMB2Wide(serial).c_str());
+				device.FindData.lpwszFileName = safe_wcsdup(StrMB2Wide(serial).c_str());
 				device.FindData.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY; // Make it look like a directory
 				//device.FindData.dwUnixMode = S_IFDIR | 0755;
 				
 				// Store additional data in custom fields
 				// C0=Serial Number, C1=Device Name, C2=Model, C3=Port
 				wchar_t **customData = new wchar_t*[3];
-				customData[0] = wcsdup(StrMB2Wide(deviceName).c_str()); // C1: Device Name
-				customData[1] = wcsdup(StrMB2Wide(model).c_str());     // C2: Model
-				customData[2] = wcsdup(StrMB2Wide(usbPort).c_str());   // C3: Port
+				customData[0] = safe_wcsdup(StrMB2Wide(deviceName).c_str()); // C1: Device Name
+				customData[1] = safe_wcsdup(StrMB2Wide(model).c_str());     // C2: Model
+				customData[2] = safe_wcsdup(StrMB2Wide(usbPort).c_str());   // C3: Port
 				
 				device.CustomColumnData = customData;
 				device.CustomColumnNumber = 3;
@@ -499,6 +548,7 @@ bool ADBPlugin::ConnectToDevice(const std::string &deviceSerial)
 	DBG("ConnectToDevice: deviceSerial='%s'\n", deviceSerial.c_str());
 	try {
 		_adbDevice = std::make_shared<ADBDevice>(deviceSerial);
+		
 		DBG("ConnectToDevice: ADBDevice created\n");
 		
 		if (!_adbDevice->IsConnected()) {
