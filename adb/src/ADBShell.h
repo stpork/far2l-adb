@@ -41,7 +41,6 @@ private:
     std::string _last_error;
     
     // Session management
-    uint32_t _session_id;
     std::atomic<uint32_t> _command_counter;
     
     // Private methods

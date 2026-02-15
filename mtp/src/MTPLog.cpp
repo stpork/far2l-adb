@@ -1,6 +1,8 @@
 #include "MTPLog.h"
 #include <time.h>
 
+#ifndef NDEBUG
+
 void DebugLog(const char *format, ...)
 {
     static FILE *logFile = nullptr;
@@ -92,3 +94,5 @@ void DebugLog(const char *format, ...)
     // Ensure it's written to disk
     fflush(logFile);
 }
+
+#endif // NDEBUG

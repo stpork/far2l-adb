@@ -16,17 +16,11 @@
 
 MTPFileSystem::MTPFileSystem(std::shared_ptr<MTPDevice> mtpDevice)
     : _mtpDevice(mtpDevice)
-    , _device(nullptr)
-    , _storage(nullptr)
     , _currentPath("/")
     , _currentObjectId(0)
     , _lastError("")
     , _currentObject("")
 {
-    if (_mtpDevice) {
-        _device = _mtpDevice->GetDevice();
-        _storage = _mtpDevice->GetStorage();
-    }
     DBG("MTPFileSystem initialized");
 }
 
@@ -39,15 +33,16 @@ std::vector<PluginPanelItem> MTPFileSystem::ListDirectory(const std::string& pat
 {
     DBG("Listing directory: %s", path.c_str());
     std::vector<PluginPanelItem> items;
+    auto device = _mtpDevice->GetDevice();
     
-    if (!_device) {
+    if (!device) {
         _lastError = "MTP device not connected";
         return items;
     }
     
     try {
         if (path == "/" || path.empty()) {
-            LIBMTP_devicestorage_t* storage = _device->storage;
+            LIBMTP_devicestorage_t* storage = device->storage;
             while (storage) {
                 items.push_back(CreateStorageItem(storage));
                 storage = storage->next;
@@ -117,7 +112,10 @@ bool MTPFileSystem::ChangeDirectory(const std::string& path)
     DBG("=== ChangeDirectory called ===");
     DBG("Path argument: '%s' (length: %zu)", path.c_str(), path.length());
     
-    if (!_device) {
+    auto device = _mtpDevice->GetDevice();
+    auto storage_ptr = _mtpDevice->GetStorage();
+
+    if (!device) {
         _lastError = "MTP device not connected";
         return false;
     }
@@ -131,13 +129,13 @@ bool MTPFileSystem::ChangeDirectory(const std::string& path)
             if (_currentObjectId == 0) {
                 _currentPath = "/";
                 _currentObjectId = 0;
-                _storage = nullptr;
+                // _storage was nullptr here effectively
                 _currentObject = "";
                 DBG("Navigated from storage root to device root");
                 return true;
             }
             
-            LIBMTP_file_t* currentObject = LIBMTP_Get_Filemetadata(_device, _currentObjectId);
+            LIBMTP_file_t* currentObject = LIBMTP_Get_Filemetadata(device, _currentObjectId);
             if (!currentObject) {
                 _lastError = "Cannot get current object metadata";
                 DBG("ERROR: %s", _lastError.c_str());
@@ -170,15 +168,15 @@ bool MTPFileSystem::ChangeDirectory(const std::string& path)
                 return false;
             }
             
-            if (!_storage) {
+            if (!storage_ptr) {
                 _lastError = "No storage selected. Please select a storage first.";
                 DBG("ERROR: %s", _lastError.c_str());
                 return false;
             }
             
-            DBG("ChangeDirectory: Testing if object %u is a directory (storage %u)", objectId, _storage->id);
+            DBG("ChangeDirectory: Testing if object %u is a directory (storage %u)", objectId, storage_ptr->id);
             
-            LIBMTP_file_t* objectFile = LIBMTP_Get_Filemetadata(_device, objectId);
+            LIBMTP_file_t* objectFile = LIBMTP_Get_Filemetadata(device, objectId);
             if (!objectFile) {
                 _lastError = "Object not found: " + path;
                 DBG("ERROR: %s", _lastError.c_str());
@@ -194,7 +192,7 @@ bool MTPFileSystem::ChangeDirectory(const std::string& path)
             
             LIBMTP_destroy_file_t(objectFile);
             
-            LIBMTP_file_t* files = LIBMTP_Get_Files_And_Folders(_device, _storage->id, objectId);
+            LIBMTP_file_t* files = LIBMTP_Get_Files_And_Folders(device, storage_ptr->id, objectId);
             if (files) {
                 LIBMTP_file_t* file = files;
                 while (file) {
@@ -223,10 +221,9 @@ bool MTPFileSystem::ChangeDirectory(const std::string& path)
                 return false;
             }
             
-            LIBMTP_devicestorage_t* storage = _device->storage;
+            LIBMTP_devicestorage_t* storage = device->storage;
             while (storage) {
                 if (storage->id == storageId) {
-                    _storage = storage;
                     _currentObjectId = 0;
                     _currentObject = "";
                     _currentPath = "/";
@@ -245,7 +242,6 @@ bool MTPFileSystem::ChangeDirectory(const std::string& path)
             _currentPath = "/";
             _currentObjectId = 0;
             _currentObject = "";
-            _storage = nullptr;
             _mtpDevice->NavigateToRoot();
             DBG("Changed to root directory");
             return true;
@@ -276,8 +272,9 @@ std::string MTPFileSystem::GetCurrentEncodedId() const
 {
     if (_currentObjectId == 0) {
         // At storage root, return the storage encoded ID
-        if (_storage) {
-            return EncodeStorageId(_storage->id);
+        auto storage = _mtpDevice->GetStorage();
+        if (storage) {
+            return EncodeStorageId(storage->id);
         } else {
             return ""; // At device root
         }
@@ -292,62 +289,75 @@ std::string MTPFileSystem::GetLastError() const
     return _lastError;
 }
 
-PluginPanelItem MTPFileSystem::CreateStorageItem(LIBMTP_devicestorage_t* storage)
+PluginPanelItem MTPFileSystem::CreatePanelItem(const std::string& name, const std::string& description, 
+                                          uint64_t size, bool isDir, uint32_t modificationTime, 
+                                          const std::string& userData)
 {
     PluginPanelItem item = {{{0}}};
-    if (!storage) return item;
     
-    std::string encodedId = EncodeStorageId(storage->id);
-    char* encodedIdPtr = (char*)malloc(encodedId.length() + 1);
-    if (encodedIdPtr) {
-        strcpy(encodedIdPtr, encodedId.c_str());
-        item.UserData = (DWORD_PTR)encodedIdPtr;
-    } else {
-        item.UserData = 0;
+    // UserData
+    if (!userData.empty()) {
+        char* userDataPtr = (char*)malloc(userData.length() + 1);
+        if (userDataPtr) {
+            strcpy(userDataPtr, userData.c_str());
+            item.UserData = (DWORD_PTR)userDataPtr;
+        }
     }
     
-    std::string displayName = GetStorageDisplayName(storage);
-    _nameToEncodedId[displayName] = encodedId;
-    _encodedIdToName[encodedId] = displayName;
-    
-    std::wstring wideDisplayName = StrMB2Wide(displayName);
-    item.FindData.lpwszFileName = (wchar_t*)calloc(wideDisplayName.length() + 1, sizeof(wchar_t));
+    // Name
+    std::wstring wideName = StrMB2Wide(name);
+    item.FindData.lpwszFileName = (wchar_t*)calloc(wideName.length() + 1, sizeof(wchar_t));
     if (item.FindData.lpwszFileName) {
-        const wchar_t* src = wideDisplayName.c_str();
-        wchar_t* dst = const_cast<wchar_t*>(item.FindData.lpwszFileName);
-        while (*src) *dst++ = *src++;
-        *dst = L'\0';
+        wcscpy((wchar_t*)item.FindData.lpwszFileName, wideName.c_str());
     }
     
-    item.FindData.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
-    item.FindData.dwUnixMode = S_IFDIR | 0755;
-    item.FindData.nFileSize = item.FindData.nPhysicalSize = storage->MaxCapacity;
+    // Attributes
+    if (isDir) {
+        item.FindData.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
+        item.FindData.dwUnixMode = S_IFDIR | 0755;
+    } else {
+        item.FindData.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
+        item.FindData.dwUnixMode = S_IFREG | 0644;
+    }
     
-    std::wstring wideEncodedId = StrMB2Wide(encodedId);
-    item.Description = (wchar_t*)calloc(wideEncodedId.length() + 1, sizeof(wchar_t));
-    if (item.Description) {
-        const wchar_t* src = wideEncodedId.c_str();
-        wchar_t* dst = const_cast<wchar_t*>(item.Description);
-        while (*src) *dst++ = *src++;
-        *dst = L'\0';
+    // Size
+    item.FindData.nFileSize = item.FindData.nPhysicalSize = size;
+    
+    // Times
+    item.FindData.ftCreationTime = {0};
+    item.FindData.ftLastAccessTime = {0};
+    item.FindData.ftLastWriteTime = ConvertMTPTimeToFILETIME(modificationTime);
+    
+    // Description
+    if (!description.empty()) {
+        std::wstring wideDesc = StrMB2Wide(description);
+        item.Description = (wchar_t*)calloc(wideDesc.length() + 1, sizeof(wchar_t));
+        if (item.Description) {
+            wcscpy((wchar_t*)item.Description, wideDesc.c_str());
+        }
     }
     
     return item;
 }
 
+PluginPanelItem MTPFileSystem::CreateStorageItem(LIBMTP_devicestorage_t* storage)
+{
+    if (!storage) return {{{0}}};
+    
+    std::string encodedId = EncodeStorageId(storage->id);
+    std::string displayName = GetStorageDisplayName(storage);
+    
+    _nameToEncodedId[displayName] = encodedId;
+    _encodedIdToName[encodedId] = displayName;
+    
+    return CreatePanelItem(displayName, encodedId, storage->MaxCapacity, true, 0, encodedId);
+}
+
 PluginPanelItem MTPFileSystem::CreateFileItem(LIBMTP_file_t* file)
 {
-    PluginPanelItem item = {{{0}}};
-    if (!file) return item;
+    if (!file) return {{{0}}};
     
     std::string encodedId = EncodeObjectId(file->item_id);
-    char* encodedIdPtr = (char*)malloc(encodedId.length() + 1);
-    if (encodedIdPtr) {
-        strcpy(encodedIdPtr, encodedId.c_str());
-        item.UserData = (DWORD_PTR)encodedIdPtr;
-    } else {
-        item.UserData = 0;
-    }
     
     std::string displayName;
     if (file->filename) {
@@ -359,39 +369,11 @@ PluginPanelItem MTPFileSystem::CreateFileItem(LIBMTP_file_t* file)
     _nameToEncodedId[displayName] = encodedId;
     _encodedIdToName[encodedId] = displayName;
     
-    std::wstring wideDisplayName = StrMB2Wide(displayName);
-    item.FindData.lpwszFileName = (wchar_t*)calloc(wideDisplayName.length() + 1, sizeof(wchar_t));
-    if (item.FindData.lpwszFileName) {
-        const wchar_t* src = wideDisplayName.c_str();
-        wchar_t* dst = const_cast<wchar_t*>(item.FindData.lpwszFileName);
-        while (*src) *dst++ = *src++;
-        *dst = L'\0';
-    }
+    bool isDir = (file->filetype == LIBMTP_FILETYPE_FOLDER);
     
-    if (file->filetype == LIBMTP_FILETYPE_FOLDER) {
-        item.FindData.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
-        item.FindData.dwUnixMode = S_IFDIR | 0755;
-    } else {
-        item.FindData.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
-        item.FindData.dwUnixMode = S_IFREG | 0644;
-    }
-    
-    item.FindData.nFileSize = item.FindData.nPhysicalSize = file->filesize;
-    item.FindData.ftCreationTime = {0};
-    item.FindData.ftLastAccessTime = {0};
-    item.FindData.ftLastWriteTime = ConvertMTPTimeToFILETIME(file->modificationdate);
-    
-    std::wstring wideEncodedId = StrMB2Wide(encodedId);
-    item.Description = (wchar_t*)calloc(wideEncodedId.length() + 1, sizeof(wchar_t));
-    if (item.Description) {
-        const wchar_t* src = wideEncodedId.c_str();
-        wchar_t* dst = const_cast<wchar_t*>(item.Description);
-        while (*src) *dst++ = *src++;
-        *dst = L'\0';
-    }
-    
-    return item;
+    return CreatePanelItem(displayName, encodedId, file->filesize, isDir, file->modificationdate, encodedId);
 }
+
 
 std::string MTPFileSystem::EncodeObjectId(uint32_t objectId) const
 {
@@ -460,18 +442,20 @@ FILETIME MTPFileSystem::ConvertMTPTimeToFILETIME(uint32_t mtpTime)
 
 uint32_t MTPFileSystem::FindObjectByFilename(const std::string& filename)
 {
-    if (!_device) {
+    auto device = _mtpDevice->GetDevice();
+    auto storage = _mtpDevice->GetStorage();
+    if (!device) {
         return 0;
     }
     
     // Search in current directory
-    if (_currentObjectId == 0 && _storage) {
+    if (_currentObjectId == 0 && storage) {
         // We're at storage root, search root-level objects
-        LIBMTP_file_t* files = LIBMTP_Get_Files_And_Folders(_device, _storage->id, LIBMTP_FILES_AND_FOLDERS_ROOT);
+        LIBMTP_file_t* files = LIBMTP_Get_Files_And_Folders(device, storage->id, LIBMTP_FILES_AND_FOLDERS_ROOT);
         if (files) {
         LIBMTP_file_t* file = files;
         while (file) {
-                if (file->filename && std::string(file->filename) == filename) {
+                if (file->item_id != LIBMTP_FILES_AND_FOLDERS_ROOT && file->filename && std::string(file->filename) == filename) {
                     uint32_t objectId = file->item_id;
                 // Clean up
                     LIBMTP_file_t* temp = files;
@@ -492,13 +476,13 @@ uint32_t MTPFileSystem::FindObjectByFilename(const std::string& filename)
                 LIBMTP_destroy_file_t(oldfile);
             }
         }
-    } else if (_currentObjectId != 0 && _storage) {
+    } else if (_currentObjectId != 0 && storage) {
         // We're in a directory, search its children
-        LIBMTP_file_t* files = LIBMTP_Get_Files_And_Folders(_device, _storage->id, _currentObjectId);
+        LIBMTP_file_t* files = LIBMTP_Get_Files_And_Folders(device, storage->id, _currentObjectId);
         if (files) {
             LIBMTP_file_t* file = files;
             while (file) {
-                if (file->filename && std::string(file->filename) == filename) {
+                if (file->item_id != _currentObjectId && file->filename && std::string(file->filename) == filename) {
                     uint32_t objectId = file->item_id;
                     // Clean up
                     LIBMTP_file_t* temp = files;
@@ -526,13 +510,14 @@ uint32_t MTPFileSystem::FindObjectByFilename(const std::string& filename)
 
 uint32_t MTPFileSystem::FindStorageForObject(uint32_t objectId) const
 {
-    if (!_device || objectId == 0) {
+    auto device = _mtpDevice->GetDevice();
+    if (!device || objectId == 0) {
         return 0;
     }
     
     try {
         // Get the object metadata to find its storage ID
-        LIBMTP_file_t* file = LIBMTP_Get_Filemetadata(_device, objectId);
+        LIBMTP_file_t* file = LIBMTP_Get_Filemetadata(device, objectId);
         if (!file) {
             return 0;
         }
@@ -546,6 +531,13 @@ uint32_t MTPFileSystem::FindStorageForObject(uint32_t objectId) const
         DBG("FindStorageForObject error: %s", e.what());
         return 0;
     }
+}
+
+DirectoryInfo MTPFileSystem::GetDirectoryInfo(const std::string& encodedId)
+{
+    if (encodedId.empty() || encodedId[0] != 'O') return DirectoryInfo();
+    uint32_t objectId = DecodeObjectId(encodedId);
+    return _mtpDevice->GetDirectoryInfo(objectId);
 }
 
 // Shadow mechanism methods
@@ -677,8 +669,9 @@ std::string MTPFileSystem::GetStorageDisplayName(LIBMTP_devicestorage_t* storage
 std::vector<MTPFileSystem::MTPObjectProperties> MTPFileSystem::GetBulkObjectProperties(uint32_t storageId, uint32_t parentHandle)
 {
     std::vector<MTPObjectProperties> properties;
+    auto device = _mtpDevice->GetDevice();
     
-    if (!_device) {
+    if (!device) {
         DBG("GetBulkObjectProperties: No device connected");
         return properties;
     }
@@ -688,7 +681,7 @@ std::vector<MTPFileSystem::MTPObjectProperties> MTPFileSystem::GetBulkObjectProp
         // For now, fall back to LIBMTP_Get_Files_And_Folders but with better structure
         DBG("GetBulkObjectProperties: Getting objects for storage %u, parent %u", storageId, parentHandle);
         
-        LIBMTP_file_t* files = LIBMTP_Get_Files_And_Folders(_device, storageId, parentHandle);
+        LIBMTP_file_t* files = LIBMTP_Get_Files_And_Folders(device, storageId, parentHandle);
         if (!files) {
             DBG("GetBulkObjectProperties: No objects found");
             return properties;
@@ -696,16 +689,20 @@ std::vector<MTPFileSystem::MTPObjectProperties> MTPFileSystem::GetBulkObjectProp
         
         LIBMTP_file_t* file = files;
         while (file) {
-            MTPObjectProperties prop;
-            prop.objectHandle = file->item_id;
-            prop.filename = file->filename ? std::string(file->filename) : "";
-            prop.filetype = file->filetype;
-            prop.filesize = file->filesize;
-            prop.parentId = file->parent_id;
-            prop.storageId = file->storage_id;
-            prop.modificationDate = file->modificationdate;
-            
-            properties.push_back(prop);
+            if (file->item_id != parentHandle) {
+                MTPObjectProperties prop;
+                prop.objectHandle = file->item_id;
+                prop.filename = file->filename ? std::string(file->filename) : "";
+                prop.filetype = file->filetype;
+                prop.filesize = file->filesize;
+                prop.parentId = file->parent_id;
+                prop.storageId = file->storage_id;
+                prop.modificationDate = file->modificationdate;
+                
+                properties.push_back(prop);
+            } else {
+                DBG("GetBulkObjectProperties: Skipping parent object %u returned as child", parentHandle);
+            }
             
             LIBMTP_file_t* oldfile = file;
             file = file->next;
@@ -723,84 +720,28 @@ std::vector<MTPFileSystem::MTPObjectProperties> MTPFileSystem::GetBulkObjectProp
 
 PluginPanelItem MTPFileSystem::CreateFileItemFromProperties(const MTPObjectProperties& prop)
 {
-    PluginPanelItem item = {{{0}}};
-    
     // Store the encoded ID in UserData as a pointer to allocated string
-    // Use O encoding for all objects (directories and files)
     std::string encodedId = EncodeObjectId(prop.objectHandle);
-    
-    // Allocate memory for the encoded ID string and store pointer in UserData
-    char* encodedIdPtr = (char*)malloc(encodedId.length() + 1);
-    if (encodedIdPtr) {
-        strcpy(encodedIdPtr, encodedId.c_str());
-        item.UserData = (DWORD_PTR)encodedIdPtr;
-    } else {
-        item.UserData = 0;
-    }
     
     // Use real MTP filename for display
     std::string displayName = prop.filename.empty() ? 
         (prop.filetype == LIBMTP_FILETYPE_FOLDER ? "Folder" : "File") : 
         prop.filename;
     
-    // Build shadow mechanism mappings (no decoration needed)
+    // Build shadow mechanism mappings
     _nameToEncodedId[displayName] = encodedId;
     _encodedIdToName[encodedId] = displayName;
     
-    // Set file name using clean display name
-    std::wstring wideDisplayName = StrMB2Wide(displayName);
-    item.FindData.lpwszFileName = (wchar_t*)calloc(wideDisplayName.length() + 1, sizeof(wchar_t));
-    if (item.FindData.lpwszFileName) {
-        // Copy the string content
-        const wchar_t* src = wideDisplayName.c_str();
-        wchar_t* dst = const_cast<wchar_t*>(item.FindData.lpwszFileName);
-        while (*src) {
-            *dst++ = *src++;
-        }
-        *dst = L'\0';
-    }
+    bool isDir = (prop.filetype == LIBMTP_FILETYPE_FOLDER);
     
-    // Set file attributes based on file type
-    DBG("CreateFileItemFromProperties: object=%u, filename='%s', filetype=0x%x", 
-        prop.objectHandle, prop.filename.c_str(), prop.filetype);
-    
-    if (prop.filetype == LIBMTP_FILETYPE_FOLDER) {
-        item.FindData.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
-        item.FindData.dwUnixMode = S_IFDIR | 0755;
-        DBG("Set as DIRECTORY: %s", prop.filename.c_str());
-    } else {
-        item.FindData.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
-        item.FindData.dwUnixMode = S_IFREG | 0644;
-        DBG("Set as FILE: %s", prop.filename.c_str());
-    }
-    
-    // Set file size
-    item.FindData.nFileSize = item.FindData.nPhysicalSize = prop.filesize;
-    
-    // Set timestamps from MTP data
-    item.FindData.ftCreationTime = {0}; // MTP doesn't provide creation time
-    item.FindData.ftLastAccessTime = {0}; // MTP doesn't provide last access time
-    item.FindData.ftLastWriteTime = ConvertMTPTimeToFILETIME(prop.modificationDate);
-    
-    // Set description to encoded object ID
-    std::wstring wideEncodedId = StrMB2Wide(encodedId);
-    item.Description = (wchar_t*)calloc(wideEncodedId.length() + 1, sizeof(wchar_t));
-    if (item.Description) {
-        // Copy the string content
-        const wchar_t* src = wideEncodedId.c_str();
-        wchar_t* dst = const_cast<wchar_t*>(item.Description);
-        while (*src) {
-            *dst++ = *src++;
-        }
-        *dst = L'\0';
-    }
-    
-    return item;
+    return CreatePanelItem(displayName, encodedId, prop.filesize, isDir, prop.modificationDate, encodedId);
 }
 
 std::string MTPFileSystem::GetParentObject(const std::string& encodedId) const
 {
-    if (!_device || encodedId.empty()) {
+    auto device = _mtpDevice->GetDevice();
+    auto storage = _mtpDevice->GetStorage();
+    if (!device || encodedId.empty()) {
         return "";
     }
     
@@ -821,7 +762,7 @@ std::string MTPFileSystem::GetParentObject(const std::string& encodedId) const
         }
         
         // Get the object metadata to find parent
-        LIBMTP_file_t* file = LIBMTP_Get_Filemetadata(_device, objectId);
+        LIBMTP_file_t* file = LIBMTP_Get_Filemetadata(device, objectId);
         if (!file) {
             return "";
         }
@@ -831,8 +772,8 @@ std::string MTPFileSystem::GetParentObject(const std::string& encodedId) const
         
         if (parentId == 0) {
             // Parent is storage root - return current storage
-            if (_storage) {
-                return EncodeStorageId(_storage->id);
+            if (storage) {
+                return EncodeStorageId(storage->id);
             }
             return "";
         }
@@ -848,20 +789,21 @@ std::string MTPFileSystem::GetParentObject(const std::string& encodedId) const
 
 std::string MTPFileSystem::GetStorageName() const
 {
-    if (!_storage) {
+    auto storage = _mtpDevice->GetStorage();
+    if (!storage) {
         return "Unknown Storage";
     }
     
-    if (_storage->StorageDescription && strlen(_storage->StorageDescription) > 0) {
-        return std::string(_storage->StorageDescription);
+    if (storage->StorageDescription && strlen(storage->StorageDescription) > 0) {
+        return std::string(storage->StorageDescription);
     }
     
-    if (_storage->VolumeIdentifier && strlen(_storage->VolumeIdentifier) > 0) {
-        return std::string(_storage->VolumeIdentifier);
+    if (storage->VolumeIdentifier && strlen(storage->VolumeIdentifier) > 0) {
+        return std::string(storage->VolumeIdentifier);
     }
     
     // Fallback to storage type-based name
-    switch (_storage->StorageType) {
+    switch (storage->StorageType) {
         case 0x0001: // Fixed RAM
         case 0x0005: // Fixed RAM (alternative)
             return "Phone Memory";
@@ -879,8 +821,11 @@ std::string MTPFileSystem::GetStorageName() const
 
 void MTPFileSystem::UpdatePathDown(uint32_t objectId)
 {
+    auto device = _mtpDevice->GetDevice();
+    if (!device) return;
+
     // Get object name for path
-    LIBMTP_file_t* file = LIBMTP_Get_Filemetadata(_device, objectId);
+    ScopedMTPFile file(LIBMTP_Get_Filemetadata(device, objectId));
     if (file && file->filename) {
         std::string dirName = std::string(file->filename);
         if (!_currentPath.empty() && _currentPath.back() == '/') {
@@ -893,10 +838,8 @@ void MTPFileSystem::UpdatePathDown(uint32_t objectId)
         _mtpDevice->SetCurrentDir(objectId, dirName);
         
         DBG("UpdatePathDown: Added '%s' to path: %s", dirName.c_str(), _currentPath.c_str());
-        LIBMTP_destroy_file_t(file);
     } else {
         DBG("UpdatePathDown: Could not get object name for ID %u", objectId);
-        if (file) LIBMTP_destroy_file_t(file);
     }
 }
 

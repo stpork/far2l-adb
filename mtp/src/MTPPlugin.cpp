@@ -89,8 +89,9 @@ void MTPPlugin::FreeFindData(PluginPanelItem *PanelItem, int ItemsNumber)
             if (PanelItem[i].Description) {
                 free((void*)PanelItem[i].Description);
             }
-            // Don't free UserData for device items - they contain device ID strings
-            // that need to persist across panel refreshes
+            if (PanelItem[i].UserData) {
+                free((void*)PanelItem[i].UserData);
+            }
         }
         free(PanelItem);
     }
@@ -1005,44 +1006,195 @@ int MTPPlugin::DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMo
     
     int successCount = 0;
     int lastErrorCode = 0;
-    
-    for (int i = 0; i < ItemsNumber; i++) {
-        // Get object ID from UserData
-        uint32_t objectId = 0;
-        if (PanelItem[i].UserData != 0) {
-            char* encodedIdPtr = (char*)PanelItem[i].UserData;
-            if (encodedIdPtr) {
-                std::string encodedId = std::string(encodedIdPtr);
-                if (encodedId[0] == 'O') {
-                    objectId = _mtpFileSystem->DecodeObjectId(encodedId);
+
+    if (OpMode & OPM_SILENT) {
+        for (int i = 0; i < ItemsNumber; i++) {
+            uint32_t objectId = 0;
+            if (PanelItem[i].UserData != 0) {
+                const char* encodedIdPtr = reinterpret_cast<const char*>(PanelItem[i].UserData);
+                if (encodedIdPtr) {
+                    objectId = _mtpFileSystem->DecodeObjectId(encodedIdPtr);
                 }
             }
+            if (objectId == 0) continue;
+
+            int res = (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                ? _mtpDevice->DeleteMTPDirectory(objectId)
+                : _mtpDevice->DeleteMTPFile(objectId);
+            
+            if (res == 0) successCount++;
+            else lastErrorCode = res;
         }
-        
-        if (objectId == 0) {
-            DBG("DeleteFiles: Could not get object ID for item %d", i);
-            lastErrorCode = EINVAL;
-            continue;
-        }
-        
-        int result = 0;
-        if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            result = _mtpDevice->DeleteMTPDirectory(objectId);
-        } else {
-            result = _mtpDevice->DeleteMTPFile(objectId);
-        }
-        
-        if (result == 0) {
-            successCount++;
-        } else {
-            lastErrorCode = result;
-        }
+    } else {
+        ProgressOperation op(L"Delete from MTP device");
+        op.GetState().count_total = ItemsNumber;
+
+        op.Run([&](ProgressState& state) {
+            for (int i = 0; i < ItemsNumber && !state.ShouldAbort(); i++) {
+                uint32_t objectId = 0;
+                if (PanelItem[i].UserData != 0) {
+                    const char* encodedIdPtr = reinterpret_cast<const char*>(PanelItem[i].UserData);
+                    if (encodedIdPtr) {
+                        objectId = _mtpFileSystem->DecodeObjectId(encodedIdPtr);
+                    }
+                }
+                if (objectId == 0) continue;
+
+                std::string fileName = StrWide2MB(PanelItem[i].FindData.lpwszFileName);
+                {
+                    std::lock_guard<std::mutex> lock(state.mtx_strings);
+                    state.current_file = StrMB2Wide(fileName);
+                }
+                state.count_complete = i;
+
+                int res = (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                    ? _mtpDevice->DeleteMTPDirectory(objectId)
+                    : _mtpDevice->DeleteMTPFile(objectId);
+
+                if (res == 0 && !state.ShouldAbort()) {
+                    successCount++;
+                } else if (res != 0) {
+                    lastErrorCode = res;
+                }
+            }
+            state.count_complete = ItemsNumber;
+        });
     }
-    
-    if (successCount == 0) {
+
+    if (successCount == 0 && lastErrorCode != 0) {
         WINPORT(SetLastError)(lastErrorCode);
     }
     
+    return (successCount > 0) ? TRUE : FALSE;
+}
+
+static int CheckOverwrite(const std::wstring &localPath, bool isMultiple, bool isDir, int &overwriteMode, ProgressState &state)
+{
+    if (overwriteMode == 1) return 0; // Overwrite all
+    if (overwriteMode == 2) return 1; // Skip all
+
+    OverwriteDialog dlg(localPath, isMultiple, isDir);
+    OverwriteDialog::Result res = dlg.Ask();
+
+    switch (res) {
+        case OverwriteDialog::OVERWRITE: return 0;
+        case OverwriteDialog::SKIP: return 1;
+        case OverwriteDialog::OVERWRITE_ALL: overwriteMode = 1; return 0;
+        case OverwriteDialog::SKIP_ALL: overwriteMode = 2; return 1;
+        default: state.SetAborting(); return 2; // Cancel
+    }
+}
+
+int MTPPlugin::ProcessFileTransfer(PluginPanelItem *PanelItem, int ItemsNumber, int OpMode,
+                                  const std::string& opName, const std::string& destPath,
+                                  const std::wstring& srcName, const std::wstring& dstName,
+                                  bool confirmTransfer,
+                                  std::function<int(int index, const std::string& itemName, std::function<void(int)>, std::function<bool()>, int&, bool)> processItem)
+{
+    if (ItemsNumber <= 0 || !PanelItem) return FALSE;
+
+    if (confirmTransfer && !(OpMode & OPM_SILENT)) {
+        std::string firstName = StrWide2MB(PanelItem[0].FindData.lpwszFileName);
+        if (!MTPDialogs::AskCopyMove(opName == "Move", opName == "Uploading", const_cast<std::string&>(destPath), firstName, ItemsNumber)) {
+            return -1;
+        }
+    }
+
+    uint64_t totalBytes = 0;
+    uint64_t totalFiles = 0;
+    std::map<int, DirectoryInfo> dirInfos;
+
+    // Pre-scan
+    for (int i = 0; i < ItemsNumber; i++) {
+        if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            uint32_t objectId = 0;
+            if (PanelItem[i].UserData != 0) {
+                const char* encodedIdPtr = reinterpret_cast<const char*>(PanelItem[i].UserData);
+                if (encodedIdPtr) {
+                    objectId = _mtpFileSystem->DecodeObjectId(encodedIdPtr);
+                }
+            }
+            if (objectId != 0) {
+                DirectoryInfo info = _mtpDevice->GetDirectoryInfo(objectId);
+                totalBytes += info.total_size;
+                totalFiles += info.file_count;
+                dirInfos[i] = info;
+            }
+        } else {
+            totalBytes += PanelItem[i].FindData.nFileSize;
+            totalFiles++;
+        }
+    }
+
+    int successCount = 0;
+    int lastErrorCode = 0;
+
+    if (OpMode & OPM_SILENT) {
+        int overwriteMode = 1; // Overwrite all in silent mode
+        bool isMultiple = ItemsNumber > 1;
+        for (int i = 0; i < ItemsNumber; i++) {
+            std::string fileName = StrWide2MB(PanelItem[i].FindData.lpwszFileName);
+            int res = processItem(i, fileName, nullptr, nullptr, overwriteMode, isMultiple);
+            if (res == 0) successCount++;
+            else lastErrorCode = res;
+        }
+    } else {
+        ProgressOperation op(StrMB2Wide(opName));
+        op.GetState().all_total = totalBytes;
+        op.GetState().count_total = totalFiles;
+        op.GetState().source_path = srcName;
+        op.GetState().dest_path = dstName;
+
+        int overwriteMode = 0;
+        bool isMultiple = ItemsNumber > 1;
+
+        op.Run([&](ProgressState& state) {
+            uint64_t processedBytes = 0;
+            uint64_t completedCount = 0;
+
+            for (int i = 0; i < ItemsNumber && !state.ShouldAbort(); i++) {
+                std::string fileName = StrWide2MB(PanelItem[i].FindData.lpwszFileName);
+                bool isDir = (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                
+                {
+                    std::lock_guard<std::mutex> lock(state.mtx_strings);
+                    state.current_file = StrMB2Wide(fileName);
+                }
+                state.is_directory = isDir;
+                state.file_total = isDir ? dirInfos[i].total_size : PanelItem[i].FindData.nFileSize;
+                state.file_complete = 0;
+
+                auto progressCb = [&](int percent) {
+                    state.file_complete = percent;
+                    if (state.file_total > 0) {
+                        state.all_complete = processedBytes + (state.file_total * percent) / 100;
+                    }
+                    INPUT_RECORD ir = {};
+                    ir.EventType = NOOP_EVENT;
+                    DWORD dw = 0;
+                    WINPORT(WriteConsoleInput)(0, &ir, 1, &dw);
+                };
+
+                auto abortCb = [&]() { return state.ShouldAbort(); };
+
+                int res = processItem(i, fileName, progressCb, abortCb, overwriteMode, isMultiple);
+                if (res == 0 && !state.ShouldAbort()) {
+                    successCount++;
+                    processedBytes += state.file_total;
+                    completedCount += isDir ? dirInfos[i].file_count : 1;
+                    state.all_complete = processedBytes;
+                    state.count_complete = completedCount;
+                } else if (res != 0) {
+                    lastErrorCode = res;
+                }
+            }
+        });
+    }
+
+    if (successCount == 0 && lastErrorCode != 0) {
+        WINPORT(SetLastError)(lastErrorCode);
+    }
+
     return (successCount > 0) ? TRUE : FALSE;
 }
 
@@ -1079,30 +1231,11 @@ int MTPPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
                 }
             }
             
-            if (objectId == 0) {
-                DBG("GetFiles: Could not get object ID for viewing");
+            if (objectId == 0 || !_mtpDevice->IsFile(objectId)) {
                 return FALSE;
             }
             
-            // Check if it's a file (not a directory)
-            if (!_mtpDevice->IsFile(objectId)) {
-                DBG("GetFiles: Object is not a file");
-                return FALSE;
-            }
-            
-            // Get file size for logging purposes
-            uint64_t fileSize = 0;
-            int sizeResult = _mtpDevice->GetMTPFileSize(objectId, fileSize);
-            if (sizeResult != 0) {
-                DBG("GetFiles: Could not get file size");
-                return FALSE;
-            }
-            
-            DBG("GetFiles: Viewing file %s (size: %llu bytes)", fileName.c_str(), (unsigned long long)fileSize);
-            
-            // Use the temporary directory provided by far2l
             if (!DestPath || !DestPath[0]) {
-                DBG("GetFiles: No destination path provided for viewing");
                 return FALSE;
             }
             
@@ -1111,171 +1244,73 @@ int MTPPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
             if (tempPath.back() != '/' && tempPath.back() != '\\') {
                 tempPath += "/";
             }
-            tempPath += fileName; // Use original filename, not prefixed
+            tempPath += fileName; 
             
-            DBG("GetFiles: Downloading file to temporary path: %s", tempPath.c_str());
+            int downloadResult = -1;
+            ProgressOperation op(L"Viewing");
+            op.Run([&](ProgressState& state) {
+                state.current_file = StrMB2Wide(fileName);
+                auto progressCb = [&](int percent) { state.file_complete = percent; };
+                auto abortCb = [&]() { return state.ShouldAbort(); };
+                downloadResult = _mtpDevice->DownloadFile(objectId, tempPath, progressCb, abortCb);
+            });
             
-            // Show progress dialog for F3 View operation
-            auto progressDialog = MTPDialogs::ShowProgress("Viewing", fileName, 1);
-            progressDialog->UpdateProgress(0, fileName);
-
-            // Download file to temporary location
-            int downloadResult = _mtpDevice->DownloadFile(objectId, tempPath);
-            if (downloadResult != 0) {
-                DBG("GetFiles: Failed to download file for viewing, error: %d", downloadResult);
-                progressDialog->SetFinished();
-                return FALSE;
-            }
-
-            // Update progress to 100% and finish
-            progressDialog->UpdateProgress(1, fileName);
-            progressDialog->SetFinished();
-            
-            DBG("GetFiles: Successfully downloaded file for viewing: %s", tempPath.c_str());
-            return TRUE; // File is now available for viewing at tempPath
+            return (downloadResult == 0) ? TRUE : FALSE;
         }
         return FALSE;
     }
     
-    // Handle F5/F6 Copy/Move operations
-    if (!DestPath) {
-        DBG("GetFiles: No destination path specified");
-        return FALSE;
-    }
-    
+    if (!DestPath) return FALSE;
     std::string destPath = StrWide2MB(DestPath[0]);
-    if (destPath.empty()) {
-        DBG("GetFiles: Empty destination path");
-        return FALSE;
-    }
+    if (destPath.empty()) return FALSE;
     
-    // Count files (skip directories)
-    int fileCount = 0;
-    for (int i = 0; i < ItemsNumber; i++) {
-        if (!(PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-            fileCount++;
-        }
-    }
-    
-    if (fileCount == 0) {
-        DBG("GetFiles: No files to download");
-        return FALSE;
-    }
-    
-    // Show confirmation dialog ONLY for device→Mac F5/F6 operations
-    // Not for silent operations, F3/F4, or QuickView
-    if (!(OpMode & OPM_SILENT) && !(OpMode & OPM_VIEW)) {
-        std::wstring operation = Move ? L"Move" : L"Copy";
-        std::wstring source = L"MTP Device";
-        std::wstring destination = StrMB2Wide(destPath);
+    // Logic for GetFiles using helper
+    return ProcessFileTransfer(PanelItem, ItemsNumber, OpMode, Move ? "Move from MTP" : "Copy from MTP", destPath, 
+                              L"MTP Device", StrMB2Wide(destPath),
+                              !(OpMode & OPM_VIEW), // confirmTransfer
+                              [&](int i, const std::string& fileName, std::function<void(int)> progress, std::function<bool()> abort, int &overwriteMode, bool isMultiple) -> int {
         
-        if (!MTPDialogs::AskTransferConfirmation(operation.c_str(), source.c_str(), 
-                                                destination.c_str(), fileCount)) {
-            DBG("GetFiles: User cancelled transfer");
-            return -1;
-        }
-    }
-    
-    int successCount = 0;
-    int lastErrorCode = 0;
-    int currentFile = 0;
-    
-    // Initialize progress dialog for F5/F6 operations
-    std::unique_ptr<MTPDialogs::MTPProgressDialog> progressDialog;
-    if (!(OpMode & OPM_SILENT) && !(OpMode & OPM_VIEW)) {
-        progressDialog = MTPDialogs::ShowProgress("Downloading", "Starting download...", fileCount);
-    }
-    
-    for (int i = 0; i < ItemsNumber; i++) {
-        // Skip directories for file download
-        if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            DBG("GetFiles: Skipping directory: %s", 
-                PanelItem[i].FindData.lpwszFileName ? StrWide2MB(PanelItem[i].FindData.lpwszFileName).c_str() : "Unknown");
-            continue;
-        }
-        
-        currentFile++;
-        
-        // Update progress for F5/F6 operations
-        if (progressDialog) {
-            std::string fileName = PanelItem[i].FindData.lpwszFileName ?
-                                 StrWide2MB(PanelItem[i].FindData.lpwszFileName) : "unknown_file";
-            
-            progressDialog->UpdateProgress(currentFile, fileName);
-            
-            // Check for cancellation
-            if (progressDialog->IsCancelled()) {
-                DBG("GetFiles: User cancelled transfer");
-                return -1;
-            }
-        }
-        
-        // Get object ID from UserData
         uint32_t objectId = 0;
         if (PanelItem[i].UserData != 0) {
-            char* encodedIdPtr = (char*)PanelItem[i].UserData;
+            const char* encodedIdPtr = reinterpret_cast<const char*>(PanelItem[i].UserData);
             if (encodedIdPtr) {
-                std::string encodedId = std::string(encodedIdPtr);
-                if (encodedId[0] == 'O') {
-                    objectId = _mtpFileSystem->DecodeObjectId(encodedId);
-                }
+                objectId = _mtpFileSystem->DecodeObjectId(encodedIdPtr);
             }
         }
         
-        if (objectId == 0) {
-            DBG("GetFiles: Could not get object ID for item %d", i);
-            lastErrorCode = EINVAL;
-            continue;
-        }
+        if (objectId == 0) return EINVAL;
         
-        // Get filename
-        std::string fileName = _mtpDevice->GetFileName(objectId);
-        if (fileName.empty()) {
-            fileName = PanelItem[i].FindData.lpwszFileName ? 
-                      StrWide2MB(PanelItem[i].FindData.lpwszFileName) : "unknown_file";
-        }
+        std::string deviceFileName = _mtpDevice->GetFileName(objectId);
+        if (deviceFileName.empty()) deviceFileName = fileName;
         
-        // Construct full destination path
         std::string fullDestPath = destPath;
         if (fullDestPath.back() != '/' && fullDestPath.back() != '\\') {
             fullDestPath += "/";
         }
-        fullDestPath += fileName;
-        
-        DBG("GetFiles: Downloading %s to %s", fileName.c_str(), fullDestPath.c_str());
-        
-        // Download the file
-        int result = _mtpDevice->DownloadFile(objectId, fullDestPath);
-        
-        if (result == 0) {
-            successCount++;
-            DBG("GetFiles: Successfully downloaded %s", fileName.c_str());
-            
-            // If this is a move operation, delete the source file
-            if (Move) {
-                DBG("GetFiles: Move operation - deleting source file %s", fileName.c_str());
-                int deleteResult = _mtpDevice->DeleteMTPFile(objectId);
-                if (deleteResult != 0) {
-                    DBG("GetFiles: Warning - failed to delete source file after move: %d", deleteResult);
-                }
-            }
-        } else {
-            lastErrorCode = result;
-            DBG("GetFiles: Failed to download %s, error: %d", fileName.c_str(), result);
+        fullDestPath += deviceFileName;
+
+        struct stat st;
+        if (stat(fullDestPath.c_str(), &st) == 0) {
+            bool isDir = (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            ProgressState dummyState;
+            int action = CheckOverwrite(StrMB2Wide(fullDestPath), isMultiple, isDir, overwriteMode, dummyState);
+            if (abort() || dummyState.ShouldAbort()) return -1;
+            if (action == 1) return 0; // Skip
         }
-    }
-    
-    // Finish progress dialog
-    if (progressDialog) {
-        progressDialog->SetFinished();
-    }
-    
-    if (successCount == 0) {
-        WINPORT(SetLastError)(lastErrorCode);
-    }
-    
-    DBG("GetFiles: Completed - %d/%d files processed successfully", successCount, fileCount);
-    return (successCount > 0) ? TRUE : FALSE;
+        
+        int result = (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            ? _mtpDevice->DownloadDirectory(objectId, fullDestPath, progress, abort)
+            : _mtpDevice->DownloadFile(objectId, fullDestPath, progress, abort);
+        
+        if (result == 0 && Move) {
+            if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                _mtpDevice->DeleteMTPDirectory(objectId);
+            else
+                _mtpDevice->DeleteMTPFile(objectId);
+        }
+        
+        return result;
+    });
 }
 
 int MTPPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, const wchar_t *SrcPath, int OpMode)
@@ -1285,114 +1320,35 @@ int MTPPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
         return FALSE;
     }
     
-    DBG("PutFiles: Processing %d items, Move=%d", ItemsNumber, Move);
-    
-    // Get source path
     std::string srcPath = StrWide2MB(SrcPath);
-    if (srcPath.empty()) {
-        DBG("PutFiles: No source path specified");
-        return FALSE;
-    }
+    if (srcPath.empty()) return FALSE;
     
-    // Count files (skip directories)
-    int fileCount = 0;
-    for (int i = 0; i < ItemsNumber; i++) {
-        if (!(PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-            fileCount++;
-        }
-    }
-    
-    if (fileCount == 0) {
-        DBG("PutFiles: No files to upload");
-        return FALSE;
-    }
-    
-    // far2l handles confirmation dialogs for Mac→device operations
-    // We don't need to show our own confirmation dialog
-    if (OpMode & OPM_SILENT) {
-        DBG("PutFiles: Silent operation - skipping confirmation dialog");
-    } else {
-        DBG("PutFiles: Non-silent operation - far2l will handle confirmation");
-    }
-    
-    int successCount = 0;
-    int lastErrorCode = 0;
-    int currentFile = 0;
-    
-    // Initialize progress dialog for Mac→Device operations
-    std::unique_ptr<MTPDialogs::MTPProgressDialog> progressDialog;
-    if (!(OpMode & OPM_SILENT)) {
-        progressDialog = MTPDialogs::ShowProgress("Uploading", "Starting upload...", fileCount);
-    }
-    
-    for (int i = 0; i < ItemsNumber; i++) {
-        // Skip directories for file upload
-        if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            DBG("PutFiles: Skipping directory: %s", 
-                PanelItem[i].FindData.lpwszFileName ? StrWide2MB(PanelItem[i].FindData.lpwszFileName).c_str() : "Unknown");
-            continue;
-        }
+    return ProcessFileTransfer(PanelItem, ItemsNumber, OpMode, Move ? "Move to MTP" : "Copy to MTP", srcPath, 
+                              StrMB2Wide(srcPath), L"MTP Device",
+                              !(OpMode & OPM_SILENT), // confirmTransfer
+                              [&](int i, const std::string& fileName, std::function<void(int)> progress, std::function<bool()> abort, int &overwriteMode, bool isMultiple) -> int {
         
-        currentFile++;
-        
-        // Update progress for Mac→Device operations
-        if (progressDialog) {
-            std::string fileName = PanelItem[i].FindData.lpwszFileName ?
-                                 StrWide2MB(PanelItem[i].FindData.lpwszFileName) : "unknown_file";
-            
-            progressDialog->UpdateProgress(currentFile, fileName);
-            
-            // Check for cancellation
-            if (progressDialog->IsCancelled()) {
-                DBG("PutFiles: User cancelled transfer");
-                return -1;
-            }
-        }
-        
-        // Get filename
-        std::string fileName = PanelItem[i].FindData.lpwszFileName ? 
-                              StrWide2MB(PanelItem[i].FindData.lpwszFileName) : "unknown_file";
-        
-        // Construct full source path
         std::string fullSrcPath = srcPath;
         if (fullSrcPath.back() != '/' && fullSrcPath.back() != '\\') {
             fullSrcPath += "/";
         }
         fullSrcPath += fileName;
         
-        DBG("PutFiles: Uploading %s from %s", fileName.c_str(), fullSrcPath.c_str());
+        // Overwrite check for MTP is complex as we don't have an easy "exists" call without listing
+        // For now, assume MTP device handles it or just overwrite
         
-        // Upload the file
-        int result = _mtpDevice->UploadFile(fullSrcPath, fileName);
+        int result = (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            ? _mtpDevice->UploadDirectory(fullSrcPath, fileName, 0, progress, abort)
+            : _mtpDevice->UploadFile(fullSrcPath, fileName, 0, progress, abort);
         
-        if (result == 0) {
-            successCount++;
-            DBG("PutFiles: Successfully uploaded %s", fileName.c_str());
-            
-            // If this is a move operation, delete the source file
-            if (Move) {
-                DBG("PutFiles: Move operation - deleting source file %s", fullSrcPath.c_str());
-                if (remove(fullSrcPath.c_str()) != 0) {
-                    DBG("PutFiles: Warning - failed to delete source file after move");
-                }
+        if (result == 0 && Move) {
+            if (!(PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+                remove(fullSrcPath.c_str());
             }
-        } else {
-            lastErrorCode = result;
-            DBG("PutFiles: Failed to upload %s, error: %d", fileName.c_str(), result);
         }
-    }
-    
-    // Finish progress dialog
-    if (progressDialog) {
-        progressDialog->SetFinished();
-    }
-    
-    if (successCount == 0) {
-        WINPORT(SetLastError)(lastErrorCode);
-    }
-    
-    DBG("PutFiles: Completed - %d/%d files processed successfully", successCount, fileCount);
-    return (successCount > 0) ? TRUE : FALSE;
+        
+        return result;
+    });
 }
 
 

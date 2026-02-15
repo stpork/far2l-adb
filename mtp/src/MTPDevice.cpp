@@ -1,5 +1,7 @@
 #include "MTPDevice.h"
 #include "MTPLog.h"
+#include <dirent.h>
+#include <sys/types.h>
 #include <thread>
 #include <atomic>
 #include <chrono>
@@ -332,7 +334,9 @@ int MTPDevice::DeleteMTPDirectory(uint32_t objectId)
     }
 }
 
-int MTPDevice::DownloadFile(uint32_t objectId, const std::string& localPath)
+int MTPDevice::DownloadFile(uint32_t objectId, const std::string& localPath, 
+                           std::function<void(int)> progress, 
+                           std::function<bool()> abort)
 {
     if (!_connected || !_device) {
         DBG("DownloadFile: Device not connected");
@@ -347,7 +351,7 @@ int MTPDevice::DownloadFile(uint32_t objectId, const std::string& localPath)
     DBG("DownloadFile: Downloading file ID %u to %s", objectId, localPath.c_str());
     
     // Get file metadata first
-    LIBMTP_file_t* file = LIBMTP_Get_Filemetadata(_device, objectId);
+    ScopedMTPFile file(LIBMTP_Get_Filemetadata(_device, objectId));
     if (!file) {
         DBG("DownloadFile: Could not get file metadata for ID %u", objectId);
         return ENOENT;
@@ -356,44 +360,67 @@ int MTPDevice::DownloadFile(uint32_t objectId, const std::string& localPath)
     // Check if it's actually a file (not a directory)
     if (file->filetype == LIBMTP_FILETYPE_FOLDER) {
         DBG("DownloadFile: Object %u is a directory, not a file", objectId);
-        LIBMTP_destroy_file_t(file);
         return EISDIR;
     }
     
     // Store file size before destroying the file metadata
     uint64_t expectedFileSize = file->filesize;
     
+    // Use progress callback if provided
+    auto cb = [](uint64_t const sent, uint64_t const total, void const * const data) -> int {
+        auto params = (std::pair<std::function<void(int)>, std::function<bool()>>*)data;
+        if (params->second && params->second()) return 1; // abort
+        if (params->first && total > 0) params->first((int)((sent * 100) / total));
+        return 0;
+    };
+    std::pair<std::function<void(int)>, std::function<bool()>> params = {progress, abort};
+
     // Download the file
-    int result = LIBMTP_Get_File_To_File(_device, objectId, localPath.c_str(), nullptr, nullptr);
-    
-    LIBMTP_destroy_file_t(file);
+    int result = LIBMTP_Get_File_To_File(_device, objectId, localPath.c_str(), cb, &params);
     
     if (result == 0) {
-        // Verify the file was actually created and has the expected size
         struct stat fileStat;
         if (stat(localPath.c_str(), &fileStat) == 0) {
             if (fileStat.st_size == expectedFileSize) {
-                DBG("DownloadFile: Successfully downloaded file ID %u to %s (size: %lld bytes)", 
-                    objectId, localPath.c_str(), (long long)fileStat.st_size);
                 return 0;
             } else {
-                DBG("DownloadFile: File size mismatch - expected %llu bytes, got %lld bytes", 
-                    (unsigned long long)expectedFileSize, (long long)fileStat.st_size);
-                // Remove the incomplete file
                 remove(localPath.c_str());
                 return EIO;
             }
         } else {
-            DBG("DownloadFile: Downloaded file ID %u but could not stat the file", objectId);
             return EIO;
         }
     } else {
-        DBG("DownloadFile: Failed to download file ID %u, error: %d", objectId, result);
         return EIO;
     }
 }
 
-int MTPDevice::UploadFile(const std::string& localPath, const std::string& remoteName, uint32_t parentId)
+int MTPDevice::DownloadDirectory(uint32_t objectId, const std::string& localPath,
+                                std::function<void(int)> progress,
+                                std::function<bool()> abort)
+{
+    if (mkdir(localPath.c_str(), 0755) != 0 && errno != EEXIST) return errno;
+
+    LIBMTP_file_t* files = LIBMTP_Get_Files_And_Folders(_device, 0, objectId);
+    while (files) {
+        if (abort && abort()) break;
+        LIBMTP_file_t* cur = files;
+        files = files->next;
+
+        std::string subPath = localPath + "/" + cur->filename;
+        if (cur->filetype == LIBMTP_FILETYPE_FOLDER) {
+            DownloadDirectory(cur->item_id, subPath, progress, abort);
+        } else {
+            DownloadFile(cur->item_id, subPath, progress, abort);
+        }
+        LIBMTP_destroy_file_t(cur);
+    }
+    return 0;
+}
+
+int MTPDevice::UploadFile(const std::string& localPath, const std::string& remoteName, uint32_t parentId,
+                         std::function<void(int)> progress,
+                         std::function<bool()> abort)
 {
     if (!_connected || !_device) {
         DBG("UploadFile: Device not connected");
@@ -449,9 +476,17 @@ int MTPDevice::UploadFile(const std::string& localPath, const std::string& remot
     file_metadata.storage_id = storageId;
     file_metadata.filetype = LIBMTP_FILETYPE_UNKNOWN; // Will be determined by libmtp
     
+    auto cb = [](uint64_t const sent, uint64_t const total, void const * const data) -> int {
+        auto params = (std::pair<std::function<void(int)>, std::function<bool()>>*)data;
+        if (params->second && params->second()) return 1; // abort
+        if (params->first && total > 0) params->first((int)((sent * 100) / total));
+        return 0;
+    };
+    std::pair<std::function<void(int)>, std::function<bool()>> params = {progress, abort};
+
     // Upload the file
     int result = LIBMTP_Send_File_From_File(_device, localPath.c_str(), 
-                                           &file_metadata, nullptr, nullptr);
+                                           &file_metadata, cb, &params);
     
     if (result == 0) {
         DBG("UploadFile: Successfully uploaded %s as %s", localPath.c_str(), remoteName.c_str());
@@ -460,6 +495,38 @@ int MTPDevice::UploadFile(const std::string& localPath, const std::string& remot
         DBG("UploadFile: Failed to upload %s, error: %d", localPath.c_str(), result);
         return EIO;
     }
+}
+
+int MTPDevice::UploadDirectory(const std::string& localPath, const std::string& remoteName, uint32_t parentId,
+                              std::function<void(int)> progress,
+                              std::function<bool()> abort)
+{
+    uint32_t storageId = _currentStorageId ? _currentStorageId : (_storage ? _storage->id : 0);
+    uint32_t realParentId = parentId ? parentId : (_currentDirId ? _currentDirId : LIBMTP_FILES_AND_FOLDERS_ROOT);
+    
+    uint32_t newFolderId = LIBMTP_Create_Folder(_device, const_cast<char*>(remoteName.c_str()), realParentId, storageId);
+    if (newFolderId == 0) return EIO;
+
+    DIR* dir = opendir(localPath.c_str());
+    if (!dir) return errno;
+
+    struct dirent* entry;
+    while ((entry = readdir(dir))) {
+        if (abort && abort()) break;
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
+        std::string subLocalPath = localPath + "/" + entry->d_name;
+        struct stat st;
+        if (stat(subLocalPath.c_str(), &st) == 0) {
+            if (S_ISDIR(st.st_mode)) {
+                UploadDirectory(subLocalPath, entry->d_name, newFolderId, progress, abort);
+            } else {
+                UploadFile(subLocalPath, entry->d_name, newFolderId, progress, abort);
+            }
+        }
+    }
+    closedir(dir);
+    return 0;
 }
 
 int MTPDevice::GetFileContent(uint32_t objectId, void* buffer, size_t bufferSize, size_t& bytesRead)
@@ -477,7 +544,7 @@ int MTPDevice::GetFileContent(uint32_t objectId, void* buffer, size_t bufferSize
     DBG("GetFileContent: Getting content for file ID %u, buffer size %zu", objectId, bufferSize);
     
     // Get file metadata first
-    LIBMTP_file_t* file = LIBMTP_Get_Filemetadata(_device, objectId);
+    ScopedMTPFile file(LIBMTP_Get_Filemetadata(_device, objectId));
     if (!file) {
         DBG("GetFileContent: Could not get file metadata for ID %u", objectId);
         return ENOENT;
@@ -486,7 +553,6 @@ int MTPDevice::GetFileContent(uint32_t objectId, void* buffer, size_t bufferSize
     // Check if it's actually a file (not a directory)
     if (file->filetype == LIBMTP_FILETYPE_FOLDER) {
         DBG("GetFileContent: Object %u is a directory, not a file", objectId);
-        LIBMTP_destroy_file_t(file);
         return EISDIR;
     }
     
@@ -518,7 +584,6 @@ int MTPDevice::GetFileContent(uint32_t objectId, void* buffer, size_t bufferSize
             return EIO;
         }
     } else {
-        LIBMTP_destroy_file_t(file);
         DBG("GetFileContent: Failed to download file ID %u, error: %d", objectId, result);
         return EIO;
     }
@@ -536,14 +601,13 @@ int MTPDevice::GetMTPFileSize(uint32_t objectId, uint64_t& fileSize)
         return EINVAL;
     }
     
-    LIBMTP_file_t* file = LIBMTP_Get_Filemetadata(_device, objectId);
+    ScopedMTPFile file(LIBMTP_Get_Filemetadata(_device, objectId));
     if (!file) {
         DBG("GetFileSize: Could not get file metadata for ID %u", objectId);
         return ENOENT;
     }
     
     fileSize = file->filesize;
-    LIBMTP_destroy_file_t(file);
     
     DBG("GetFileSize: File ID %u size: %llu bytes", objectId, (unsigned long long)fileSize);
     return 0;
@@ -555,15 +619,12 @@ bool MTPDevice::IsFile(uint32_t objectId)
         return false;
     }
     
-    LIBMTP_file_t* file = LIBMTP_Get_Filemetadata(_device, objectId);
+    ScopedMTPFile file(LIBMTP_Get_Filemetadata(_device, objectId));
     if (!file) {
         return false;
     }
     
-    bool isFile = (file->filetype != LIBMTP_FILETYPE_FOLDER);
-    LIBMTP_destroy_file_t(file);
-    
-    return isFile;
+    return (file->filetype != LIBMTP_FILETYPE_FOLDER);
 }
 
 std::string MTPDevice::GetFileName(uint32_t objectId)
@@ -572,14 +633,34 @@ std::string MTPDevice::GetFileName(uint32_t objectId)
         return "";
     }
     
-    LIBMTP_file_t* file = LIBMTP_Get_Filemetadata(_device, objectId);
+    ScopedMTPFile file(LIBMTP_Get_Filemetadata(_device, objectId));
     if (!file) {
         return "";
     }
     
-    std::string fileName = file->filename ? std::string(file->filename) : "";
-    LIBMTP_destroy_file_t(file);
-    
-    return fileName;
+    return file->filename ? std::string(file->filename) : "";
+}
+
+DirectoryInfo MTPDevice::GetDirectoryInfo(uint32_t objectId)
+{
+    DirectoryInfo info;
+    if (!_connected || !_device || objectId == 0) return info;
+
+    LIBMTP_file_t* files = LIBMTP_Get_Files_And_Folders(_device, 0, objectId);
+    while (files) {
+        LIBMTP_file_t* cur = files;
+        files = files->next;
+
+        if (cur->filetype == LIBMTP_FILETYPE_FOLDER) {
+            DirectoryInfo subDir = GetDirectoryInfo(cur->item_id);
+            info.total_size += subDir.total_size;
+            info.file_count += subDir.file_count;
+        } else {
+            info.total_size += cur->filesize;
+            info.file_count++;
+        }
+        LIBMTP_destroy_file_t(cur);
+    }
+    return info;
 }
 

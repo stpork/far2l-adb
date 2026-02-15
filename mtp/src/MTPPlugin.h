@@ -6,6 +6,7 @@
 #include <libmtp.h>
 #include "MTPDevice.h"
 #include "MTPFileSystem.h"
+#include <functional>
 
 extern PluginStartupInfo g_Info;
 extern FarStandardFunctions g_FSF;
@@ -38,6 +39,13 @@ private:
 	// MTP components
 	std::shared_ptr<class MTPDevice> _mtpDevice;
 	std::shared_ptr<class MTPFileSystem> _mtpFileSystem;
+    
+    // Internal helpers
+    int ProcessFileTransfer(PluginPanelItem *PanelItem, int ItemsNumber, int OpMode,
+                           const std::string& opName, const std::string& destPath,
+                           const std::wstring& srcName, const std::wstring& dstName,
+                           bool confirmTransfer,
+                           std::function<int(int index, const std::string& itemName, std::function<void(int)>, std::function<bool()>, int&, bool)> processItem);
 
 public:
 	MTPPlugin(const wchar_t *path = nullptr, bool path_is_standalone_config = false, int OpMode = 0);

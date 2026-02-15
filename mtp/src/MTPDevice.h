@@ -4,8 +4,44 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <libmtp.h>
+#include <memory>
+#include <functional>
 
 struct PluginPanelItem;
+
+// RAII wrapper for LIBMTP_file_t
+class ScopedMTPFile {
+public:
+    ScopedMTPFile(LIBMTP_file_t* file) : _file(file) {}
+    ~ScopedMTPFile() { if (_file) LIBMTP_destroy_file_t(_file); }
+    
+    // Non-copyable
+    ScopedMTPFile(const ScopedMTPFile&) = delete;
+    ScopedMTPFile& operator=(const ScopedMTPFile&) = delete;
+    
+    // Moveable
+    ScopedMTPFile(ScopedMTPFile&& other) noexcept : _file(other._file) { other._file = nullptr; }
+    ScopedMTPFile& operator=(ScopedMTPFile&& other) noexcept {
+        if (this != &other) {
+            if (_file) LIBMTP_destroy_file_t(_file);
+            _file = other._file;
+            other._file = nullptr;
+        }
+        return *this;
+    }
+    
+    LIBMTP_file_t* get() const { return _file; }
+    LIBMTP_file_t* operator->() const { return _file; }
+    operator bool() const { return _file != nullptr; }
+    
+private:
+    LIBMTP_file_t* _file;
+};
+
+struct DirectoryInfo {
+    uint64_t total_size = 0;
+    uint64_t file_count = 0;
+};
 
 class MTPDevice {
 private:
@@ -72,10 +108,22 @@ public:
     int DeleteMTPDirectory(uint32_t objectId);
     
     // File transfer operations
-    int DownloadFile(uint32_t objectId, const std::string& localPath);
-    int UploadFile(const std::string& localPath, const std::string& remoteName, uint32_t parentId = 0);
+    int DownloadFile(uint32_t objectId, const std::string& localPath, 
+                    std::function<void(int)> progress = nullptr, 
+                    std::function<bool()> abort = nullptr);
+    int DownloadDirectory(uint32_t objectId, const std::string& localPath,
+                         std::function<void(int)> progress = nullptr,
+                         std::function<bool()> abort = nullptr);
+    int UploadFile(const std::string& localPath, const std::string& remoteName, uint32_t parentId = 0,
+                  std::function<void(int)> progress = nullptr,
+                  std::function<bool()> abort = nullptr);
+    int UploadDirectory(const std::string& localPath, const std::string& remoteName, uint32_t parentId = 0,
+                       std::function<void(int)> progress = nullptr,
+                       std::function<bool()> abort = nullptr);
     int GetFileContent(uint32_t objectId, void* buffer, size_t bufferSize, size_t& bytesRead);
     int GetMTPFileSize(uint32_t objectId, uint64_t& fileSize);
     bool IsFile(uint32_t objectId);
     std::string GetFileName(uint32_t objectId);
+
+    DirectoryInfo GetDirectoryInfo(uint32_t objectId);
 };

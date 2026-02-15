@@ -26,14 +26,9 @@
 #endif
 
 
-static std::string _adbPath;
+#include "ADBDevice.h"
 
-// Helper function to trim trailing newlines/carriage returns from a string
-static void trimTrailingNewlines(std::string& s) {
-    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) {
-        s.pop_back();
-    }
-}
+static std::string _adbPath;
 
 // Get current time in microseconds
 inline uint64_t nowMicros() {
@@ -49,7 +44,6 @@ ADBShell::ADBShell(const std::string& device_serial)
     , _shell_stdin(-1)
     , _shell_pid(-1)
     , _is_running(false)
-    , _session_id(getpid())  // Use process PID as session ID
     , _command_counter(0)
 {
 }
@@ -180,6 +174,31 @@ std::string ADBShell::generateMarker() {
     return "__MARK_" + std::to_string(micros) + "_" + std::to_string(current_counter) + "__";
 }
 
+// Internal helper to prepare argv for exec
+static std::vector<char*> PrepareArgv(const std::string& adbPath, const std::string& serial, const std::vector<std::string>& args, std::vector<std::string>& storage) {
+    storage.clear();
+    storage.push_back(adbPath);
+    if (!serial.empty()) {
+        storage.push_back("-s");
+        storage.push_back(serial);
+    }
+    storage.insert(storage.end(), args.begin(), args.end());
+
+    std::vector<char*> argv;
+    for (auto& s : storage) {
+        argv.push_back(const_cast<char*>(s.c_str()));
+    }
+    argv.push_back(nullptr);
+    return argv;
+}
+
+static void SetupChildEnv() {
+    setenv("TERM", "xterm-256color", 1);
+    setenv("TERM_PROGRAM", "far2l", 1);
+    setenv("LANG", "en_US.UTF-8", 1);
+    setenv("LC_ALL", "en_US.UTF-8", 1);
+}
+
 bool ADBShell::start() {
     if (_is_running) {
         return true; // Already running
@@ -225,17 +244,10 @@ bool ADBShell::start() {
         close(pipe_stdin[0]);
         close(pipe_stdout[1]);
 
-        setenv("LANG", "en_US.UTF-8", 1);
-        setenv("LC_ALL", "en_US.UTF-8", 1);
-        setenv("TERM", "xterm", 1);
-
-        if (_device_serial.empty()) {
-            execlp(_adbPath.c_str(), "adb", "shell", (char*)nullptr);
-        } else {
-            execlp(_adbPath.c_str(), "adb", "-s", _device_serial.c_str(), "shell", (char*)nullptr);
-        }
-
-        // Only reached if execlp failed
+        SetupChildEnv();
+        std::vector<std::string> storage;
+        std::vector<char*> argv = PrepareArgv(_adbPath, _device_serial, {"shell"}, storage);
+        execvp(_adbPath.c_str(), argv.data());
         _exit(127);
     }
     else if (pid > 0) {
@@ -307,7 +319,7 @@ std::string ADBShell::readResponse(const std::string& marker) {
     }
 
     std::string response;
-    char buffer[1024];
+    char buffer[4096];
     bool marker_found = false;
 
     constexpr int kReadTimeoutMs = 30000;
@@ -328,22 +340,18 @@ std::string ADBShell::readResponse(const std::string& marker) {
             break;
         }
 
-        ssize_t bytes_read = read(fd, buffer, sizeof(buffer) - 1);
+        ssize_t bytes_read = read(fd, buffer, sizeof(buffer));
         if (bytes_read > 0) {
-            buffer[bytes_read] = '\0';
-            response += buffer;
+            size_t old_size = response.size();
+            response.append(buffer, static_cast<size_t>(bytes_read));
 
-            // Check for marker
-            size_t pos = response.find(marker);
+            // Efficiency: Only search in the tail of the response where the marker could be
+            size_t search_start = (old_size > marker.size()) ? (old_size - marker.size()) : 0;
+            size_t pos = response.find(marker, search_start);
+            
             if (pos != std::string::npos) {
                 response = response.substr(0, pos);
-
-                // Trim trailing newlines
-                while (!response.empty() &&
-                       (response.back() == '\n' || response.back() == '\r')) {
-                    response.pop_back();
-                }
-
+                ADBUtils::TrimTrailingNewlines(response);
                 marker_found = true;
             }
         } else if (bytes_read == 0) {
@@ -495,18 +503,9 @@ std::string ADBShell::runAdbProcess(const std::vector<std::string>& args, const 
         dup2(pipefd[1], STDERR_FILENO);
         close(pipefd[1]);
 
-        std::vector<std::string> argv_storage;
-        argv_storage.reserve(args.size() + 1);
-        argv_storage.push_back(_adbPath);
-        argv_storage.insert(argv_storage.end(), args.begin(), args.end());
-
-        std::vector<char*> argv;
-        argv.reserve(argv_storage.size() + 1);
-        for (auto& s : argv_storage) {
-            argv.push_back(const_cast<char*>(s.c_str()));
-        }
-        argv.push_back(nullptr);
-
+        SetupChildEnv();
+        std::vector<std::string> storage;
+        std::vector<char*> argv = PrepareArgv(_adbPath, "", args, storage);
         execvp(_adbPath.c_str(), argv.data());
         _exit(127);
     }
@@ -523,89 +522,47 @@ std::string ADBShell::runAdbProcess(const std::vector<std::string>& args, const 
             }
             continue;
         }
-        if (n == 0) {
-            break;
-        }
-        if (errno == EINTR) {
-            continue;
-        }
+        if (n == 0) break;
+        if (errno == EINTR) continue;
         break;
     }
     close(pipefd[0]);
 
     int status = 0;
-    if (waitpid(pid, &status, 0) < 0) {
-        DBG("runAdbProcess: waitpid failed, errno=%d\n", errno);
-        return "";
-    }
-    if (!WIFEXITED(status)) {
-        DBG("runAdbProcess: Child did not exit normally, status=%d\n", status);
-        return "";
-    }
-
-    int exit_code = WEXITSTATUS(status);
-    DBG("runAdbProcess: Exit code=%d, output length=%zu\n", exit_code, output.length());
-
-    trimTrailingNewlines(output);
+    waitpid(pid, &status, 0);
+    ADBUtils::TrimTrailingNewlines(output);
     return output;
 }
 
 std::string ADBShell::runAdbProcessWithPty(const std::vector<std::string>& args, const std::function<void(const std::string&)>& on_chunk, const std::function<bool()>& abort_check) {
     if (_adbPath.empty()) {
         _adbPath = findAdbExecutable();
-        if (_adbPath.empty()) {
-            return "";
-        }
+        if (_adbPath.empty()) return "";
     }
 
-    // Set up terminal size for PTY - some programs require this for progress output
     struct winsize win = {};
-    win.ws_col = 80;    // Terminal width
-    win.ws_row = 24;    // Terminal height
-    win.ws_xpixel = 0;  // Horizontal pixels (unused)
-    win.ws_ypixel = 0;  // Vertical pixels (unused)
+    win.ws_col = 80; win.ws_row = 24;
 
     int master_fd = -1;
     pid_t pid = forkpty(&master_fd, nullptr, nullptr, &win);
-    if (pid < 0) {
-        return "";
-    }
+    if (pid < 0) return "";
 
     if (pid == 0) {
-        // Child process
-        // Set TERM to enable progress output
-        setenv("TERM", "xterm-256color", 1);
-        setenv("TERM_PROGRAM", "far2l", 1);
-        setenv("LANG", "en_US.UTF-8", 1);
-        setenv("LC_ALL", "en_US.UTF-8", 1);
-
-        std::vector<std::string> argv_storage;
-        argv_storage.reserve(args.size() + 1);
-        argv_storage.push_back(_adbPath);
-        argv_storage.insert(argv_storage.end(), args.begin(), args.end());
-
-        std::vector<char*> argv;
-        argv.reserve(argv_storage.size() + 1);
-        for (auto& s : argv_storage) {
-            argv.push_back(const_cast<char*>(s.c_str()));
-        }
-        argv.push_back(nullptr);
-
+        SetupChildEnv();
+        std::vector<std::string> storage;
+        std::vector<char*> argv = PrepareArgv(_adbPath, "", args, storage);
         execvp(_adbPath.c_str(), argv.data());
         _exit(127);
     }
 
-    // Parent process - read from PTY
     std::string output;
     char buffer[4096];
     bool aborted = false;
 
-    // Set non-blocking mode
     int flags = fcntl(master_fd, F_GETFL, 0);
     fcntl(master_fd, F_SETFL, flags | O_NONBLOCK);
 
     while (true) {
-        // Check for abort request
         if (abort_check && abort_check()) {
             aborted = true;
             break;
@@ -614,26 +571,19 @@ std::string ADBShell::runAdbProcessWithPty(const std::vector<std::string>& args,
         struct pollfd pfd{};
         pfd.fd = master_fd;
         pfd.events = POLLIN | POLLHUP | POLLERR;
-        int poll_result = poll(&pfd, 1, 200); // 200ms timeout for responsive abort
+        int poll_result = poll(&pfd, 1, 200);
 
-        if (poll_result == 0) {
-            continue; // Timeout - loop back to check abort
-        }
+        if (poll_result == 0) continue;
         if (poll_result < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
+            if (errno == EINTR) continue;
             break;
         }
 
-        if (pfd.revents & (POLLHUP | POLLERR)) {
-            break;
-        }
+        if (pfd.revents & (POLLHUP | POLLERR)) break;
 
         if (pfd.revents & POLLIN) {
-            ssize_t n = read(master_fd, buffer, sizeof(buffer) - 1);
+            ssize_t n = read(master_fd, buffer, sizeof(buffer));
             if (n > 0) {
-                buffer[n] = '\0';
                 output.append(buffer, static_cast<size_t>(n));
                 on_chunk(std::string(buffer, static_cast<size_t>(n)));
             } else if (n == 0) {
@@ -645,20 +595,15 @@ std::string ADBShell::runAdbProcessWithPty(const std::vector<std::string>& args,
     }
 
     close(master_fd);
-
-    // If aborted, kill the child process
     if (aborted) {
         kill(pid, SIGTERM);
-        // Give it a moment to terminate gracefully
-        usleep(100000); // 100ms
-        // Force kill if still running
+        usleep(100000);
         kill(pid, SIGKILL);
     }
 
     int status = 0;
     waitpid(pid, &status, 0);
-
-    trimTrailingNewlines(output);
+    ADBUtils::TrimTrailingNewlines(output);
     return output;
 }
 

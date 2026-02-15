@@ -7,15 +7,13 @@
 #include <sys/stat.h>
 #include "farplug-wide.h"
 #include <libmtp.h>
+#include "MTPDevice.h"
 
-class MTPDevice;
 struct PluginPanelItem;
 
 class MTPFileSystem {
 private:
     std::shared_ptr<MTPDevice> _mtpDevice;
-    LIBMTP_mtpdevice_t* _device;
-    LIBMTP_devicestorage_t* _storage;
     std::string _currentPath;
     uint32_t _currentObjectId;
     std::string _lastError;
@@ -51,6 +49,7 @@ public:
     // Helper function to find object by filename
     uint32_t FindObjectByFilename(const std::string& filename);
     uint32_t FindStorageForObject(uint32_t objectId) const;
+    DirectoryInfo GetDirectoryInfo(const std::string& encodedId);
     
     // MTP bulk enumeration for better performance
     struct MTPObjectProperties {
@@ -83,8 +82,11 @@ public:
     
 private:
     // Helper methods
+    static PluginPanelItem CreatePanelItem(const std::string& name, const std::string& description, 
+                                          uint64_t size, bool isDir, uint32_t modificationTime, 
+                                          const std::string& userData);
+                                          
     PluginPanelItem CreateStorageItem(LIBMTP_devicestorage_t* storage);
     PluginPanelItem CreateFileItem(LIBMTP_file_t* file);
-    // Removed duplicate declarations - using public ones
-    FILETIME ConvertMTPTimeToFILETIME(uint32_t mtpTime);
+    static FILETIME ConvertMTPTimeToFILETIME(uint32_t mtpTime);
 };
