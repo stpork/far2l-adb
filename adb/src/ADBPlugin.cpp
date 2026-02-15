@@ -924,13 +924,25 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 				state.file_total = dirTotalSize;
 				state.file_complete = 0;
 				state.is_directory = isDir;
+				state.count_complete = i;  // Current file being processed (0-based)
 
 				// Progress callback: updates percentage and estimates bytes
+				// Also sends NOOP event to trigger UI update
 				const uint64_t bytesBefore = processedBytes;
+				int lastReportedPercent = -1;
 				auto progressCallback = [&](int percent) {
 					state.file_complete = percent;
 					if (dirTotalSize > 0) {
 						state.all_complete = bytesBefore + (dirTotalSize * percent) / 100;
+					}
+					// Send NOOP event to trigger DN_ENTERIDLE -> UI update
+					// Only send when percent changes to avoid flooding
+					if (percent != lastReportedPercent) {
+						lastReportedPercent = percent;
+						INPUT_RECORD ir = {};
+						ir.EventType = NOOP_EVENT;
+						DWORD dw = 0;
+						WINPORT(WriteConsoleInput)(0, &ir, 1, &dw);
 					}
 				};
 
@@ -1130,13 +1142,25 @@ int ADBPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 				state.file_total = dirTotalSize;
 				state.file_complete = 0;
 				state.is_directory = isDir;
+				state.count_complete = i;  // Current file being processed (0-based)
 
 				// Progress callback: updates percentage and estimates bytes
+				// Also sends NOOP event to trigger UI update
 				const uint64_t bytesBefore = processedBytes;
+				int lastReportedPercent = -1;
 				auto progressCallback = [&](int percent) {
 					state.file_complete = percent;
 					if (dirTotalSize > 0) {
 						state.all_complete = bytesBefore + (dirTotalSize * percent) / 100;
+					}
+					// Send NOOP event to trigger DN_ENTERIDLE -> UI update
+					// Only send when percent changes to avoid flooding
+					if (percent != lastReportedPercent) {
+						lastReportedPercent = percent;
+						INPUT_RECORD ir = {};
+						ir.EventType = NOOP_EVENT;
+						DWORD dw = 0;
+						WINPORT(WriteConsoleInput)(0, &ir, 1, &dw);
 					}
 				};
 

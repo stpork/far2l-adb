@@ -14,6 +14,7 @@
 // System includes
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/ioctl.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <errno.h>
@@ -557,14 +558,27 @@ std::string ADBShell::runAdbProcessWithPty(const std::vector<std::string>& args,
         }
     }
 
+    // Set up terminal size for PTY - some programs require this for progress output
+    struct winsize win = {};
+    win.ws_col = 80;    // Terminal width
+    win.ws_row = 24;    // Terminal height
+    win.ws_xpixel = 0;  // Horizontal pixels (unused)
+    win.ws_ypixel = 0;  // Vertical pixels (unused)
+
     int master_fd = -1;
-    pid_t pid = forkpty(&master_fd, nullptr, nullptr, nullptr);
+    pid_t pid = forkpty(&master_fd, nullptr, nullptr, &win);
     if (pid < 0) {
         return "";
     }
 
     if (pid == 0) {
         // Child process
+        // Set TERM to enable progress output
+        setenv("TERM", "xterm-256color", 1);
+        setenv("TERM_PROGRAM", "far2l", 1);
+        setenv("LANG", "en_US.UTF-8", 1);
+        setenv("LC_ALL", "en_US.UTF-8", 1);
+
         std::vector<std::string> argv_storage;
         argv_storage.reserve(args.size() + 1);
         argv_storage.push_back(_adbPath);

@@ -78,7 +78,7 @@ ProgressParser::ProgressParser(std::function<void(int)> on_progress, bool debug_
 
 void ProgressParser::operator()(const std::string &chunk) {
     if (_debug_log) {
-        DBG("PTY chunk received (%zu bytes): [", chunk.size());
+        DBG(" PTY chunk received (%zu bytes): [", chunk.size());
         for (unsigned char c : chunk) {
             if (c >= 32 && c < 127) {
                 DBG("%c", c);
@@ -542,7 +542,7 @@ int ADBDevice::PullFile(const std::string &devicePath, const std::string &localP
     ProgressParser parser(on_progress, true);
     parser.start();
 
-    std::vector<std::string> command = {"pull", devicePath, localPath};
+    std::vector<std::string> command = {"pull", "-p", devicePath, localPath};
     std::string result = RunAdbCommandWithProgress(command, std::ref(parser), abort_check);
     DBG("PTY result: [%s]\n", result.c_str());
 
@@ -572,7 +572,7 @@ int ADBDevice::PushFile(const std::string &localPath, const std::string &deviceP
     ProgressParser parser(on_progress);
     parser.start();
 
-    std::vector<std::string> command = {"push", localPath, devicePath};
+    std::vector<std::string> command = {"push", "-p", localPath, devicePath};
     std::string result = RunAdbCommandWithProgress(command, std::ref(parser), abort_check);
 
     parser.drain();
@@ -601,7 +601,7 @@ int ADBDevice::PullDirectory(const std::string &devicePath, const std::string &l
     ProgressParser parser(on_progress);
     parser.start();
 
-    std::vector<std::string> command = {"pull", devicePath, localPath};
+    std::vector<std::string> command = {"pull", "-p", devicePath, localPath};
     std::string result = RunAdbCommandWithProgress(command, std::ref(parser), abort_check);
 
     parser.drain();
@@ -630,7 +630,7 @@ int ADBDevice::PushDirectory(const std::string &localPath, const std::string &de
     ProgressParser parser(on_progress);
     parser.start();
 
-    std::vector<std::string> command = {"push", localPath, devicePath};
+    std::vector<std::string> command = {"push", "-p", localPath, devicePath};
     std::string result = RunAdbCommandWithProgress(command, std::ref(parser), abort_check);
 
     parser.drain();
