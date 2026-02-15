@@ -549,16 +549,6 @@ else()
         " COMPONENT system)
 endif()
 
-if (NOT DEFINED ADB OR ADB)
-    message(STATUS "ADB plugin enabled")
-    add_subdirectory (adb)
-else()
-    message(STATUS "${ColorRed}ADB plugin disabled due to ADB=${ADB}${ColorNormal}")
-    install(CODE "
-        execute_process(COMMAND rm -f ${CMAKE_INSTALL_PREFIX}/lib/far2l/Plugins/adb/plug/adb.far-plug-wide)
-        " COMPONENT system)
-endif()
-
 if (NOT DEFINED MTP OR MTP)
     message(STATUS "MTP plugin enabled")
     add_subdirectory (mtp)
