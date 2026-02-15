@@ -120,6 +120,9 @@ SHAREDSYMBOL int WINAPI ProcessKeyW(HANDLE hPlugin, int Key, unsigned int Contro
 SHAREDSYMBOL int WINAPI ProcessEventW(HANDLE hPlugin, int Event, void *Param)
 {
 	DBG("ProcessEventW called: hPlugin=%p, Event=%d, Param=%p\n", hPlugin, Event, Param);
+	if (!hPlugin || hPlugin == INVALID_HANDLE_VALUE) {
+		return 0;
+	}
 	switch (Event) {
 		case FE_COMMAND:
 			if (Param) {

@@ -29,6 +29,17 @@ target_include_directories(adb PRIVATE .)
 target_include_directories(adb PRIVATE ../far2l/far2sdk)
 target_include_directories(adb PRIVATE ../WinPort)
 
+# Release optimizations
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_compile_options(adb PRIVATE -Os -fomit-frame-pointer)
+    if(APPLE)
+        add_custom_command(TARGET adb POST_BUILD
+            COMMAND strip -x "$<TARGET_FILE:adb>"
+            COMMENT "Stripping debug symbols from adb plugin"
+        )
+    endif()
+endif()
+
 # Set output properties
 set_target_properties(adb PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${INSTALL_DIR}/Plugins/adb/plug"

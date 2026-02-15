@@ -9,14 +9,30 @@
 #include <cstdarg>
 #include <algorithm>
 #include <fstream>
+#include <vector>
 
 // System includes
 #include <unistd.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <errno.h>
+#include <signal.h>
+#ifdef __APPLE__
+#include <util.h>
+#else
+#include <pty.h>
+#endif
 
 
-static std::string _adbPath;    
+static std::string _adbPath;
+
+// Helper function to trim trailing newlines/carriage returns from a string
+static void trimTrailingNewlines(std::string& s) {
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) {
+        s.pop_back();
+    }
+}
 
 // Get current time in microseconds
 inline uint64_t nowMicros() {
@@ -41,66 +57,117 @@ ADBShell::~ADBShell() {
     stop();
 }
 
-std::string ADBShell::findAdbExecutable() {
-    // First, try to use 'which' to find adb in PATH
-    FILE *which_pipe = popen("which adb 2>/dev/null", "r");
-    if (which_pipe) {
-        char buffer[512];
-        if (fgets(buffer, sizeof(buffer), which_pipe)) {
-            std::string path(buffer);
-            // Remove trailing newline
-            while (!path.empty() && (path.back() == '\n' || path.back() == '\r')) {
-                path.pop_back();
-            }
-            if (!path.empty()) {
-                // Verify it's actually ADB
-                std::string test_command = path + " version 2>&1";
-                FILE *test_pipe = popen(test_command.c_str(), "r");
-                if (test_pipe) {
-                    char test_buffer[256];
-                    if (fgets(test_buffer, sizeof(test_buffer), test_pipe)) {
-                        std::string output(test_buffer);
-                        if (output.find("Android Debug Bridge") != std::string::npos || 
-                            output.find("version") != std::string::npos) {
-                            pclose(test_pipe);
-                            pclose(which_pipe);
-                            _adbPath = path;
-                            return path;
-                        }
-                    }
-                    pclose(test_pipe);
-                }
-            }
-        }
-        pclose(which_pipe);
+// Helper function to test if a path is a working ADB executable
+static bool tryAdbPath(const std::string& path) {
+    if (path.empty()) return false;
+    DBG("Trying ADB path: %s\n", path.c_str());
+
+    // Create temporary pipe for testing
+    int pipefd[2] = {-1, -1};
+    if (pipe(pipefd) < 0) {
+        DBG("tryAdbPath: Failed to create pipe\n");
+        return false;
     }
-    
-    // Fallback to hardcoded paths
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        DBG("tryAdbPath: Failed to fork\n");
+        return false;
+    }
+
+    if (pid == 0) {
+        // Child process
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+        close(pipefd[1]);
+        execlp(path.c_str(), "adb", "version", (char*)nullptr);
+        _exit(127);
+    }
+
+    // Parent process
+    close(pipefd[1]);
+    std::string output;
+    char buffer[1024];
+    while (true) {
+        ssize_t n = read(pipefd[0], buffer, sizeof(buffer) - 1);
+        if (n > 0) {
+            buffer[n] = '\0';
+            output += buffer;
+        } else if (n == 0 || errno != EINTR) {
+            break;
+        }
+    }
+    close(pipefd[0]);
+
+    int status = 0;
+    waitpid(pid, &status, 0);
+
+    DBG("Output from %s version: [%s]\n", path.c_str(), output.c_str());
+    if (output.find("Android Debug Bridge") != std::string::npos ||
+        output.find("Version") != std::string::npos ||
+        output.find("version") != std::string::npos) {
+        DBG("Found working ADB at: %s\n", path.c_str());
+        return true;
+    }
+    return false;
+}
+
+std::string ADBShell::findAdbExecutable() {
+    DBG("Starting ADB executable search...\n");
+
+    // Standard paths
     const char* adb_paths[] = {
+        "adb",
         "/opt/homebrew/bin/adb",
         "/usr/local/bin/adb",
-        "/Users/C5370280/Android/sdk/platform-tools/adb",
-        "adb"
+        nullptr
     };
-    
+
     for (const char* path : adb_paths) {
-        std::string test_command = std::string(path) + " version 2>&1";
-        FILE *test_pipe = popen(test_command.c_str(), "r");
-        if (test_pipe) {
-            char buffer[256];
-            if (fgets(buffer, sizeof(buffer), test_pipe)) {
-                std::string output(buffer);
-                if (output.find("Android Debug Bridge") != std::string::npos || 
-                    output.find("version") != std::string::npos) {
-                    _adbPath = path;
-                    pclose(test_pipe);
-                    return path;
-                }
-            }
-            pclose(test_pipe);
+        if (path && path[0] && tryAdbPath(path)) {
+            _adbPath = path;
+            return path;
         }
     }
-    
+
+    // Try ANDROID_HOME environment variable
+    const char* android_home = getenv("ANDROID_HOME");
+    DBG("ANDROID_HOME = %s\n", android_home ? android_home : "(not set)");
+    if (android_home) {
+        std::string sdk_path = std::string(android_home) + "/platform-tools/adb";
+        if (tryAdbPath(sdk_path)) {
+            _adbPath = sdk_path;
+            return sdk_path;
+        }
+    }
+
+    // Try ANDROID_SDK_ROOT environment variable
+    const char* android_sdk_root = getenv("ANDROID_SDK_ROOT");
+    DBG("ANDROID_SDK_ROOT = %s\n", android_sdk_root ? android_sdk_root : "(not set)");
+    if (android_sdk_root) {
+        std::string sdk_path = std::string(android_sdk_root) + "/platform-tools/adb";
+        if (tryAdbPath(sdk_path)) {
+            _adbPath = sdk_path;
+            return sdk_path;
+        }
+    }
+
+    // Try default Android SDK location: ~/Android/sdk/platform-tools/adb
+    const char* home = getenv("HOME");
+    DBG("HOME = %s\n", home ? home : "(not set)");
+    if (home) {
+        std::string home_adb = std::string(home) + "/Android/sdk/platform-tools/adb";
+        if (tryAdbPath(home_adb)) {
+            _adbPath = home_adb;
+            return home_adb;
+        }
+    }
+
+    DBG("ERROR: Could not find ADB executable anywhere!\n");
+    _adbPath.clear();
     return "";
 }
 
@@ -118,8 +185,11 @@ bool ADBShell::start() {
     }
 
     if (_adbPath.empty()) {
-        setError("ADB executable not found");
-        return false;
+        _adbPath = findAdbExecutable();
+        if (_adbPath.empty()) {
+            setError("ADB executable not found");
+            return false;
+        }
     }
 
     int pipe_stdin[2] = {-1, -1};
@@ -239,7 +309,24 @@ std::string ADBShell::readResponse(const std::string& marker) {
     char buffer[1024];
     bool marker_found = false;
 
+    constexpr int kReadTimeoutMs = 30000;
     while (!marker_found) {
+        struct pollfd pfd{};
+        pfd.fd = fd;
+        pfd.events = POLLIN | POLLHUP | POLLERR;
+        int poll_result = poll(&pfd, 1, kReadTimeoutMs);
+        if (poll_result == 0) {
+            setError("Timeout waiting for ADB shell response");
+            break;
+        }
+        if (poll_result < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            setError("Poll failed while reading ADB shell response");
+            break;
+        }
+
         ssize_t bytes_read = read(fd, buffer, sizeof(buffer) - 1);
         if (bytes_read > 0) {
             buffer[bytes_read] = '\0';
@@ -286,13 +373,31 @@ std::string ADBShell::shellCommand(const std::string& command) {
 }
 
 void ADBShell::stop() {
-    if (_shell_pipe) {
-        pclose(_shell_pipe);
-        _shell_pipe = nullptr;
-    }
     if (_shell_stdin != -1) {
         close(_shell_stdin);
         _shell_stdin = -1;
+    }
+    if (_shell_pipe) {
+        fclose(_shell_pipe);
+        _shell_pipe = nullptr;
+    }
+    if (_shell_pid > 0) {
+        int status = 0;
+        pid_t waited = waitpid(_shell_pid, &status, WNOHANG);
+        if (waited == 0) {
+            kill(_shell_pid, SIGTERM);
+            for (int i = 0; i < 10; ++i) {
+                waited = waitpid(_shell_pid, &status, WNOHANG);
+                if (waited == _shell_pid) {
+                    break;
+                }
+                usleep(10000);
+            }
+            if (waited == 0) {
+                kill(_shell_pid, SIGKILL);
+                waitpid(_shell_pid, &status, 0);
+            }
+        }
     }
     _is_running = false;
     _shell_pid = -1;
@@ -304,54 +409,247 @@ void ADBShell::setError(const std::string& error) {
 
 // Static version for global ADB commands (e.g., "adb devices -l")
 std::string ADBShell::adbExec(const std::string& command) {
-    
-    // Ensure ADB path is available
+    std::vector<std::string> args = splitCommandArgs(command);
+    return adbExec(args);
+}
+
+std::string ADBShell::adbExec(const std::vector<std::string>& args) {
+    return runAdbProcess(args);
+}
+
+std::string ADBShell::adbExec(const std::vector<std::string>& args, const std::function<void(const std::string&)>& on_chunk) {
+    return runAdbProcess(args, &on_chunk);
+}
+
+std::vector<std::string> ADBShell::splitCommandArgs(const std::string& command) {
+    std::vector<std::string> args;
+    std::string current;
+    bool in_single = false;
+    bool in_double = false;
+    bool escaped = false;
+
+    for (char ch : command) {
+        if (escaped) {
+            current.push_back(ch);
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (ch == '\'' && !in_double) {
+            in_single = !in_single;
+            continue;
+        }
+        if (ch == '"' && !in_single) {
+            in_double = !in_double;
+            continue;
+        }
+        if (!in_single && !in_double && (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r')) {
+            if (!current.empty()) {
+                args.push_back(current);
+                current.clear();
+            }
+            continue;
+        }
+        current.push_back(ch);
+    }
+    if (escaped) {
+        current.push_back('\\');
+    }
+    if (!current.empty()) {
+        args.push_back(current);
+    }
+    return args;
+}
+
+std::string ADBShell::runAdbProcess(const std::vector<std::string>& args, const std::function<void(const std::string&)>* on_chunk) {
+    if (_adbPath.empty()) {
+        _adbPath = findAdbExecutable();
+        if (_adbPath.empty()) {
+            DBG("runAdbProcess: ADB path is empty, cannot execute\n");
+            return "";
+        }
+    }
+
+    DBG("runAdbProcess: executing %s with %zu args\n", _adbPath.c_str(), args.size());
+
+    int pipefd[2] = {-1, -1};
+    if (pipe(pipefd) < 0) {
+        DBG("runAdbProcess: Failed to create pipe, errno=%d\n", errno);
+        return "";
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        DBG("runAdbProcess: Failed to fork, errno=%d\n", errno);
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return "";
+    }
+    if (pid == 0) {
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+        close(pipefd[1]);
+
+        std::vector<std::string> argv_storage;
+        argv_storage.reserve(args.size() + 1);
+        argv_storage.push_back(_adbPath);
+        argv_storage.insert(argv_storage.end(), args.begin(), args.end());
+
+        std::vector<char*> argv;
+        argv.reserve(argv_storage.size() + 1);
+        for (auto& s : argv_storage) {
+            argv.push_back(const_cast<char*>(s.c_str()));
+        }
+        argv.push_back(nullptr);
+
+        execvp(_adbPath.c_str(), argv.data());
+        _exit(127);
+    }
+
+    close(pipefd[1]);
+    std::string output;
+    char buffer[4096];
+    while (true) {
+        ssize_t n = read(pipefd[0], buffer, sizeof(buffer));
+        if (n > 0) {
+            output.append(buffer, static_cast<size_t>(n));
+            if (on_chunk) {
+                (*on_chunk)(std::string(buffer, static_cast<size_t>(n)));
+            }
+            continue;
+        }
+        if (n == 0) {
+            break;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        break;
+    }
+    close(pipefd[0]);
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        DBG("runAdbProcess: waitpid failed, errno=%d\n", errno);
+        return "";
+    }
+    if (!WIFEXITED(status)) {
+        DBG("runAdbProcess: Child did not exit normally, status=%d\n", status);
+        return "";
+    }
+
+    int exit_code = WEXITSTATUS(status);
+    DBG("runAdbProcess: Exit code=%d, output length=%zu\n", exit_code, output.length());
+
+    trimTrailingNewlines(output);
+    return output;
+}
+
+std::string ADBShell::runAdbProcessWithPty(const std::vector<std::string>& args, const std::function<void(const std::string&)>& on_chunk, const std::function<bool()>& abort_check) {
     if (_adbPath.empty()) {
         _adbPath = findAdbExecutable();
         if (_adbPath.empty()) {
             return "";
         }
     }
-    
 
-    // Construct full command with stderr redirection
-    std::string full_command = _adbPath + " " + command + " 2>&1";
-
-    // Execute ADB command using popen
-    FILE* pipe = popen(full_command.c_str(), "r");
-    if (!pipe) {
+    int master_fd = -1;
+    pid_t pid = forkpty(&master_fd, nullptr, nullptr, nullptr);
+    if (pid < 0) {
         return "";
     }
 
-    // Read output
-    std::string output;
-    char buffer[1024];
-    while (fgets(buffer, sizeof(buffer), pipe)) {
-        output += buffer;
-    }
+    if (pid == 0) {
+        // Child process
+        std::vector<std::string> argv_storage;
+        argv_storage.reserve(args.size() + 1);
+        argv_storage.push_back(_adbPath);
+        argv_storage.insert(argv_storage.end(), args.begin(), args.end());
 
-    // Close pipe and check exit status
-    int status = pclose(pipe);
-    if (status == -1) {
-        return "";
-    }
-    
-    if (WIFEXITED(status)) {
-        int exitCode = WEXITSTATUS(status);
-        if (exitCode != 0) {
-            return output; // Return output even on error for debugging
+        std::vector<char*> argv;
+        argv.reserve(argv_storage.size() + 1);
+        for (auto& s : argv_storage) {
+            argv.push_back(const_cast<char*>(s.c_str()));
         }
-    } else {
-        return "";
+        argv.push_back(nullptr);
+
+        execvp(_adbPath.c_str(), argv.data());
+        _exit(127);
     }
 
-    // Trim trailing newline(s)
-    while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) {
-        output.pop_back();
+    // Parent process - read from PTY
+    std::string output;
+    char buffer[4096];
+    bool aborted = false;
+
+    // Set non-blocking mode
+    int flags = fcntl(master_fd, F_GETFL, 0);
+    fcntl(master_fd, F_SETFL, flags | O_NONBLOCK);
+
+    while (true) {
+        // Check for abort request
+        if (abort_check && abort_check()) {
+            aborted = true;
+            break;
+        }
+
+        struct pollfd pfd{};
+        pfd.fd = master_fd;
+        pfd.events = POLLIN | POLLHUP | POLLERR;
+        int poll_result = poll(&pfd, 1, 200); // 200ms timeout for responsive abort
+
+        if (poll_result == 0) {
+            continue; // Timeout - loop back to check abort
+        }
+        if (poll_result < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+
+        if (pfd.revents & (POLLHUP | POLLERR)) {
+            break;
+        }
+
+        if (pfd.revents & POLLIN) {
+            ssize_t n = read(master_fd, buffer, sizeof(buffer) - 1);
+            if (n > 0) {
+                buffer[n] = '\0';
+                output.append(buffer, static_cast<size_t>(n));
+                on_chunk(std::string(buffer, static_cast<size_t>(n)));
+            } else if (n == 0) {
+                break;
+            } else if (errno != EINTR && errno != EAGAIN) {
+                break;
+            }
+        }
     }
 
+    close(master_fd);
 
+    // If aborted, kill the child process
+    if (aborted) {
+        kill(pid, SIGTERM);
+        // Give it a moment to terminate gracefully
+        usleep(100000); // 100ms
+        // Force kill if still running
+        kill(pid, SIGKILL);
+    }
+
+    int status = 0;
+    waitpid(pid, &status, 0);
+
+    trimTrailingNewlines(output);
     return output;
+}
+
+std::string ADBShell::adbExecWithProgress(const std::vector<std::string>& args, const std::function<void(const std::string&)>& on_chunk, const std::function<bool()>& abort_check) {
+    return runAdbProcessWithPty(args, on_chunk, abort_check);
 }
 
 // Instance version for device-specific ADB commands with -s <device_serial>
