@@ -5,6 +5,8 @@
 #include <memory>
 #include <cstdint>
 #include <atomic>
+#include <vector>
+#include <functional>
 
 
 class ADBShell {
@@ -24,6 +26,9 @@ public:
     std::string adbCommand(const std::string& command) const;
     // Execute a global ADB command (e.g., "adb devices -l") - static version
     static std::string adbExec(const std::string& command);
+    static std::string adbExec(const std::vector<std::string>& args);
+    static std::string adbExec(const std::vector<std::string>& args, const std::function<void(const std::string&)>& on_chunk);
+    static std::string adbExecWithProgress(const std::vector<std::string>& args, const std::function<void(const std::string&)>& on_chunk, const std::function<bool()>& abort_check = {});
     // Stop the shell process
     void stop();
 
@@ -41,6 +46,9 @@ private:
     
     // Private methods
     static std::string findAdbExecutable();
+    static std::vector<std::string> splitCommandArgs(const std::string& command);
+    static std::string runAdbProcess(const std::vector<std::string>& args, const std::function<void(const std::string&)>* on_chunk = nullptr);
+    static std::string runAdbProcessWithPty(const std::vector<std::string>& args, const std::function<void(const std::string&)>& on_chunk, const std::function<bool()>& abort_check = {});
     std::string generateMarker();
     bool writeCommand(const std::string& command, const std::string& marker);
     std::string readResponse(const std::string& marker);

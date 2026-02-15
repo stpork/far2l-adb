@@ -45,6 +45,9 @@ class ADBPlugin
 	// Helper method to get current device path
 	std::string GetCurrentDevicePath() const;
 
+	// Helper method to update panel title with device serial and path
+	void UpdatePanelTitle(const std::string& deviceSerial, const std::string& path);
+
 public:
 	ADBPlugin(const wchar_t *path = nullptr, bool path_is_standalone_config = false, int OpMode = 0);
 	virtual ~ADBPlugin();

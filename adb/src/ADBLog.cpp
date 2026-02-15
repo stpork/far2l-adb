@@ -1,11 +1,12 @@
 #include "ADBLog.h"
-#include <string.h>
 #include <time.h>
+
+#ifndef NDEBUG
 
 void DebugLog(const char *format, ...)
 {
     static FILE *logFile = nullptr;
-    
+
     if (!logFile) {
         logFile = fopen("/tmp/adb_plugin_debug.log", "a");
         if (!logFile) {
@@ -13,14 +14,14 @@ void DebugLog(const char *format, ...)
             return;
         }
     }
-    
+
     if (logFile) {
         // Get current time
         time_t now = time(nullptr);
         struct tm *tm_info = localtime(&now);
         char timestamp[64];
         strftime(timestamp, sizeof(timestamp), "%H:%M:%S", tm_info);
-        
+
         // Write timestamp and check if it succeeded
         if (fprintf(logFile, "[%s] ", timestamp) < 0) {
             // File was deleted or has an error
@@ -28,7 +29,7 @@ void DebugLog(const char *format, ...)
             logFile = nullptr;
             return;
         }
-        
+
         // Write the actual log message and check if it succeeded
         va_list args;
         va_start(args, format);
@@ -40,8 +41,10 @@ void DebugLog(const char *format, ...)
             return;
         }
         va_end(args);
-        
+
         // Ensure it's written to disk
         fflush(logFile);
     }
 }
+
+#endif // NDEBUG

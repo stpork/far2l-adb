@@ -60,6 +60,8 @@ SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int OpenFrom, INT_PTR Item)
 		// Create new plugin instance
 		impl = new ADBPlugin();
 		return (HANDLE)impl;
+	} catch (const std::exception& e) {
+		return INVALID_HANDLE_VALUE;
 	} catch (...) {
 		return INVALID_HANDLE_VALUE;
 	}
@@ -82,7 +84,8 @@ SHAREDSYMBOL int WINAPI GetFindDataW(HANDLE hPlugin, PluginPanelItem **pPanelIte
 		return 0;
 	}
 	ADBPlugin *plugin = (ADBPlugin*)hPlugin;
-	return plugin->GetFindData(pPanelItem, pItemsNumber, OpMode);
+	int result = plugin->GetFindData(pPanelItem, pItemsNumber, OpMode);
+	return result;
 }
 
 SHAREDSYMBOL void WINAPI FreeFindDataW(HANDLE hPlugin, PluginPanelItem *PanelItem, int ItemsNumber)
@@ -117,6 +120,9 @@ SHAREDSYMBOL int WINAPI ProcessKeyW(HANDLE hPlugin, int Key, unsigned int Contro
 SHAREDSYMBOL int WINAPI ProcessEventW(HANDLE hPlugin, int Event, void *Param)
 {
 	DBG("ProcessEventW called: hPlugin=%p, Event=%d, Param=%p\n", hPlugin, Event, Param);
+	if (!hPlugin || hPlugin == INVALID_HANDLE_VALUE) {
+		return 0;
+	}
 	switch (Event) {
 		case FE_COMMAND:
 			if (Param) {

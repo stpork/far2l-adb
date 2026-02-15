@@ -11,11 +11,153 @@
 #include <wchar.h>
 #include <errno.h>
 #include <utils.h>
+#include <fstream>
+#include <chrono>
+#include <cctype>
+
+// ============================================================================
+// Utility functions
+// ============================================================================
+
+static std::string ShellQuote(const std::string &value)
+{
+    std::string quoted = "'";
+    for (char c : value) {
+        if (c == '\'') {
+            quoted += "'\"'\"'";
+        } else {
+            quoted.push_back(c);
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+// ============================================================================
+// ADBUtils namespace implementation
+// ============================================================================
+
+namespace ADBUtils {
+
+std::string JoinPath(const std::string& base, const std::string& component)
+{
+    if (base.empty()) return component;
+    if (component.empty()) return base;
+
+    bool baseEndsSep = (!base.empty() && (base.back() == '/' || base.back() == '\\'));
+    bool compStartsSep = (!component.empty() && (component.front() == '/' || component.front() == '\\'));
+
+    if (baseEndsSep && compStartsSep) {
+        return base + component.substr(1);
+    } else if (!baseEndsSep && !compStartsSep) {
+        return base + "/" + component;
+    }
+    return base + component;
+}
+
+void TrimTrailingNewlines(std::string& s)
+{
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) {
+        s.pop_back();
+    }
+}
+
+int CheckConnection(bool connected)
+{
+    return connected ? 0 : EIO;
+}
+
+} // namespace ADBUtils
+
+// ============================================================================
+// ProgressParser implementation
+// ============================================================================
+
+ProgressParser::ProgressParser(std::function<void(int)> on_progress, bool debug_log)
+    : _on_progress(std::move(on_progress)), _debug_log(debug_log), _last_percent(-1) {}
+
+void ProgressParser::operator()(const std::string &chunk) {
+    if (_debug_log) {
+        DBG(" PTY chunk received (%zu bytes): [", chunk.size());
+        for (unsigned char c : chunk) {
+            if (c >= 32 && c < 127) {
+                DBG("%c", c);
+            } else {
+                DBG("\\x%02X", c);
+            }
+        }
+        DBG("]\n");
+    }
+
+    _pending += chunk;
+    size_t split = 0;
+    while ((split = _pending.find_first_of("\r\n")) != std::string::npos) {
+        std::string line = _pending.substr(0, split);
+        _pending.erase(0, split + 1);
+        if (_debug_log) {
+            DBG("Parsing line: [%s]\n", line.c_str());
+        }
+        const int percent = ExtractPercent(line);
+        if (_debug_log) {
+            DBG("Extracted percent: %d\n", percent);
+        }
+        if (percent >= 0 && percent != _last_percent) {
+            _last_percent = percent;
+            if (_debug_log) {
+                DBG("Calling on_progress(%d)\n", percent);
+            }
+            _on_progress(percent);
+        }
+    }
+}
+
+void ProgressParser::drain() {
+    if (!_pending.empty()) {
+        if (_debug_log) {
+            DBG("Pending tail: [%s]\n", _pending.c_str());
+        }
+        const int tail_percent = ExtractPercent(_pending);
+        if (tail_percent >= 0 && tail_percent != _last_percent) {
+            _on_progress(tail_percent);
+        }
+        _pending.clear();
+    }
+}
+
+void ProgressParser::complete() {
+    _on_progress(100);
+}
+
+void ProgressParser::start() {
+    _on_progress(0);
+}
+
+int ProgressParser::ExtractPercent(const std::string &s) {
+    size_t p = s.find('%');
+    if (p == std::string::npos || p == 0) {
+        return -1;
+    }
+    size_t start = p;
+    while (start > 0 && std::isdigit(static_cast<unsigned char>(s[start - 1]))) {
+        --start;
+    }
+    if (start == p) {
+        return -1;
+    }
+    int percent = std::atoi(s.substr(start, p - start).c_str());
+    if (percent < 0 || percent > 100) {
+        return -1;
+    }
+    return percent;
+}
 
 ADBDevice::ADBDevice(const std::string &device_serial)
     : _device_serial(device_serial), _current_path("/"), _adb_shell(nullptr), _connected(false)
 {
+    
+    
     Connect();
+    
 }
 
 ADBDevice::~ADBDevice()
@@ -25,21 +167,31 @@ ADBDevice::~ADBDevice()
 
 bool ADBDevice::Connect()
 {
+    
     if (_connected) {
         return true;
     }
     
     try {
+        
         _adb_shell = std::make_unique<ADBShell>(_device_serial);
+        
+        
         if (!_adb_shell->start()) {
             return false;
         }
+        
+        
         std::string pwd_response = _adb_shell->shellCommand("pwd");
+        
+        
         if (pwd_response.empty()) {
             return false;
         }
         _current_path = ExtractPathFromPwd(pwd_response);
         _connected = true;
+        
+        
         return true;
         
     } catch (const std::exception& e) {
@@ -65,19 +217,48 @@ void ADBDevice::EnsureConnection()
     }
 }
 
-std::string ADBDevice::RunAdbCommand(const std::string &command) {
-    if (!_adb_shell) {
-        return "";
-    }
-
-    std::string full_command;
+std::vector<std::string> ADBDevice::BuildArgs(const std::vector<std::string>& args) const
+{
+    std::vector<std::string> full_args;
     if (!_device_serial.empty()) {
-        full_command = "-s " + _device_serial + " " + command;
-    } else {
-        full_command = command;
+        full_args.emplace_back("-s");
+        full_args.emplace_back(_device_serial);
     }
-    
-    return ADBShell::adbExec(full_command);
+    full_args.insert(full_args.end(), args.begin(), args.end());
+    return full_args;
+}
+
+std::string ADBDevice::RunAdbCommand(const std::string &command) {
+    if (_device_serial.empty()) {
+        return ADBShell::adbExec(command);
+    }
+    return ADBShell::adbExec("-s " + _device_serial + " " + command);
+}
+
+std::string ADBDevice::RunAdbCommand(const std::vector<std::string> &args) {
+    return ADBShell::adbExec(BuildArgs(args));
+}
+
+std::string ADBDevice::RunAdbCommand(const std::vector<std::string> &args, const std::function<void(const std::string&)> &on_chunk) {
+    return ADBShell::adbExec(BuildArgs(args), on_chunk);
+}
+
+std::string ADBDevice::RunAdbCommandWithProgress(const std::vector<std::string> &args, const std::function<void(const std::string&)> &on_chunk, const std::function<bool()> &abort_check) {
+    return ADBShell::adbExecWithProgress(BuildArgs(args), on_chunk, abort_check);
+}
+
+bool ADBDevice::IsSuccessResult(const std::string& result, bool is_push) const
+{
+    if (result.empty()) return true;
+    if (result.find("skipped") != std::string::npos) return true;
+
+    if (is_push) {
+        return result.find("file pushed") != std::string::npos ||
+               result.find("files pushed") != std::string::npos;
+    } else {
+        return result.find("file pulled") != std::string::npos ||
+               result.find("files pulled") != std::string::npos;
+    }
 }
 
 std::string ADBDevice::RunShellCommand(const std::string &command)
@@ -123,7 +304,7 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
 
     // Bulk command: cd, pwd, ls -la, then symlink info (properly quote path for spaces)
     std::ostringstream bulk_cmd;
-    bulk_cmd << "cd \"" << path << "\" 2>/dev/null; pwd; ls -la; echo \"" << separator << "\";"
+    bulk_cmd << "cd " << ShellQuote(path) << " 2>/dev/null; pwd; ls -la; echo \"" << separator << "\";"
              << "for f in *; do "
              << "[ -L \"$f\" ] && ([ -d \"$f\" ] && echo \"$f" << arrow << "D\" "
              << "|| ([ -f \"$f\" ] && echo \"$f" << arrow << "F\" || echo \"$f" << arrow << "B\")); "
@@ -188,18 +369,45 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
         if (filename.empty() || filename == "." || filename == "..") continue;
 
         PluginPanelItem item{};
-        item.FindData.lpwszFileName = wcsdup(StrMB2Wide(filename).c_str());
+        // Use malloc + wcscpy for compatibility with free()
+        std::wstring wfilename = StrMB2Wide(filename);
+        size_t len = wfilename.length() + 1;
+        wchar_t* filename_buf = (wchar_t*)malloc(len * sizeof(wchar_t));
+        if (filename_buf) {
+            wcscpy(filename_buf, wfilename.c_str());
+            item.FindData.lpwszFileName = filename_buf;
+        }
         item.FindData.dwUnixMode = (perms[0] == 'd') ? (S_IFDIR | 0755) : (is_symlink ? (S_IFLNK | 0644) : (S_IFREG | 0644));
         item.FindData.dwFileAttributes = WINPORT(EvaluateAttributesA)(item.FindData.dwUnixMode, filename.c_str());
         if (perms[0] == 'd') item.FindData.dwFileAttributes |= FILE_ATTRIBUTE_DIRECTORY;
 
-        if (is_symlink)
-            item.Description = wcsdup(symlink_target.empty() ? L"Symlink (no target)" : StrMB2Wide(symlink_target).c_str());
+        if (is_symlink) {
+            std::wstring wtarget = symlink_target.empty() ? L"Symlink (no target)" : StrMB2Wide(symlink_target);
+            size_t len = wtarget.length() + 1;
+            wchar_t* desc_buf = (wchar_t*)malloc(len * sizeof(wchar_t));
+            if (desc_buf) {
+                wcscpy(desc_buf, wtarget.c_str());
+                item.Description = desc_buf;
+            }
+        }
 
         try { item.FindData.nFileSize = item.FindData.nPhysicalSize = std::stoull(size); } catch (...) { item.FindData.nFileSize = item.FindData.nPhysicalSize = 0; }
 
-        item.Owner = wcsdup(StrMB2Wide(owner).c_str());
-        item.Group = wcsdup(StrMB2Wide(group).c_str());
+        // Use malloc + wcscpy for compatibility with free()
+        std::wstring wowner = StrMB2Wide(owner);
+        size_t owner_len = wowner.length() + 1;
+        wchar_t* owner_buf = (wchar_t*)malloc(owner_len * sizeof(wchar_t));
+        if (owner_buf) {
+            wcscpy(owner_buf, wowner.c_str());
+            item.Owner = owner_buf;
+        }
+        std::wstring wgroup = StrMB2Wide(group);
+        size_t group_len = wgroup.length() + 1;
+        wchar_t* group_buf = (wchar_t*)malloc(group_len * sizeof(wchar_t));
+        if (group_buf) {
+            wcscpy(group_buf, wgroup.c_str());
+            item.Group = group_buf;
+        }
         try { item.NumberOfLinks = std::stoi(links); } catch (...) { item.NumberOfLinks = 1; }
 
         FILETIME ft{};
@@ -297,7 +505,7 @@ bool ADBDevice::SetDirectory(const std::string &path) {
     }
     
     // Execute cd command and get new working directory (properly quote path for spaces)
-    std::string cd_command = "cd \"" + path + "\" 2>/dev/null && pwd";
+    std::string cd_command = "cd " + ShellQuote(path) + " 2>/dev/null && pwd";
     std::string result = RunShellCommand(cd_command);
     
     if (result.empty()) {
@@ -318,129 +526,207 @@ bool ADBDevice::SetDirectory(const std::string &path) {
 int ADBDevice::PullFile(const std::string &devicePath, const std::string &localPath) {
     DBG("devicePath='%s', localPath='%s'\n", devicePath.c_str(), localPath.c_str());
     EnsureConnection();
-    if (!_connected) {
-        DBG("Not connected, returning EIO\n");
-        return EIO; // Input/output error for device not connected
-    }
-    
-    std::string command = "pull \"" + devicePath + "\" \"" + localPath + "\"";
-    DBG("command='%s'\n", command.c_str());
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    std::vector<std::string> command = {"pull", devicePath, localPath};
     std::string result = RunAdbCommand(command);
     DBG("result='%s'\n", result.c_str());
-    
-    if (result.find("file pulled") != std::string::npos || 
-        result.find("skipped") != std::string::npos ||
-        result.empty()) {
-        DBG("Success\n");
+
+    return IsSuccessResult(result, false) ? 0 : Str2Errno(result);
+}
+
+int ADBDevice::PullFile(const std::string &devicePath, const std::string &localPath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check) {
+    EnsureConnection();
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    ProgressParser parser(on_progress, true);
+    parser.start();
+
+    std::vector<std::string> command = {"pull", "-p", devicePath, localPath};
+    std::string result = RunAdbCommandWithProgress(command, std::ref(parser), abort_check);
+    DBG("PTY result: [%s]\n", result.c_str());
+
+    parser.drain();
+
+    if (IsSuccessResult(result, false)) {
+        parser.complete();
         return 0;
-    } else {
-        int err = Str2Errno(result);
-        DBG("Error %d\n", err);
-        return err;
     }
+    return Str2Errno(result);
 }
 
 int ADBDevice::PushFile(const std::string &localPath, const std::string &devicePath) {
     EnsureConnection();
-    if (!_connected) {
-        return EIO; // Input/output error for device not connected
-    }
-    
-    std::string command = "push \"" + localPath + "\" \"" + devicePath + "\"";
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    std::vector<std::string> command = {"push", localPath, devicePath};
     std::string result = RunAdbCommand(command);
-    
-    if (result.empty()) {
+
+    return IsSuccessResult(result, true) ? 0 : Str2Errno(result);
+}
+
+int ADBDevice::PushFile(const std::string &localPath, const std::string &devicePath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check) {
+    EnsureConnection();
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    ProgressParser parser(on_progress);
+    parser.start();
+
+    std::vector<std::string> command = {"push", "-p", localPath, devicePath};
+    std::string result = RunAdbCommandWithProgress(command, std::ref(parser), abort_check);
+
+    parser.drain();
+
+    if (IsSuccessResult(result, true)) {
+        parser.complete();
         return 0;
-    } else {
-        return Str2Errno(result);
     }
+    return Str2Errno(result);
 }
 
 int ADBDevice::PullDirectory(const std::string &devicePath, const std::string &localPath) {
     EnsureConnection();
-    if (!_connected) {
-        return EIO; // Input/output error for device not connected
-    }
-    
-    std::string command = "pull \"" + devicePath + "\" \"" + localPath + "\"";
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    std::vector<std::string> command = {"pull", devicePath, localPath};
     std::string result = RunAdbCommand(command);
-    
-    if (result.find("file pulled") != std::string::npos || 
-        result.find("skipped") != std::string::npos ||
-        result.find("files pulled") != std::string::npos ||
-        result.empty()) {
+
+    return IsSuccessResult(result, false) ? 0 : Str2Errno(result);
+}
+
+int ADBDevice::PullDirectory(const std::string &devicePath, const std::string &localPath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check) {
+    EnsureConnection();
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    ProgressParser parser(on_progress);
+    parser.start();
+
+    std::vector<std::string> command = {"pull", "-p", devicePath, localPath};
+    std::string result = RunAdbCommandWithProgress(command, std::ref(parser), abort_check);
+
+    parser.drain();
+
+    if (IsSuccessResult(result, false)) {
+        parser.complete();
         return 0;
-    } else {
-        return Str2Errno(result);
     }
+    return Str2Errno(result);
 }
 
 int ADBDevice::PushDirectory(const std::string &localPath, const std::string &devicePath) {
     EnsureConnection();
-    if (!_connected) {
-        return EIO; // Input/output error for device not connected
-    }
-    
-    std::string command = "push \"" + localPath + "\" \"" + devicePath + "\"";
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    std::vector<std::string> command = {"push", localPath, devicePath};
     std::string result = RunAdbCommand(command);
-    
-    if (result.find("file pushed") != std::string::npos || 
-        result.find("skipped") != std::string::npos ||
-        result.find("files pushed") != std::string::npos ||
-        result.empty()) {
+
+    return IsSuccessResult(result, true) ? 0 : Str2Errno(result);
+}
+
+int ADBDevice::PushDirectory(const std::string &localPath, const std::string &devicePath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check) {
+    EnsureConnection();
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    ProgressParser parser(on_progress);
+    parser.start();
+
+    std::vector<std::string> command = {"push", "-p", localPath, devicePath};
+    std::string result = RunAdbCommandWithProgress(command, std::ref(parser), abort_check);
+
+    parser.drain();
+
+    if (IsSuccessResult(result, true)) {
+        parser.complete();
         return 0;
-    } else {
-        return Str2Errno(result);
     }
+    return Str2Errno(result);
 }
 
 
 int ADBDevice::DeleteFile(const std::string &devicePath) {
     EnsureConnection();
-    if (!_connected) {
-        return EIO; // Input/output error for device not connected
-    }
-    
-    std::string command = "rm \"" + devicePath + "\"";
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    std::string command = "rm -- " + ShellQuote(devicePath);
     std::string result = RunShellCommand(command);
-    
-    if (result.empty()) {
-        return 0;
-    } else {
-        return Str2Errno(result);
-    }
+
+    return result.empty() ? 0 : Str2Errno(result);
 }
 
 int ADBDevice::DeleteDirectory(const std::string &devicePath) {
     EnsureConnection();
-    if (!_connected) {
-        return EIO; // Input/output error for device not connected
-    }
-    
-    std::string command = "rm -rf \"" + devicePath + "\"";
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    std::string command = "rm -rf -- " + ShellQuote(devicePath);
     std::string result = RunShellCommand(command);
-    
-    if (result.empty()) {
-        return 0;
-    } else {
-        return Str2Errno(result);
-    }
+
+    return result.empty() ? 0 : Str2Errno(result);
 }
 
 int ADBDevice::CreateDirectory(const std::string &devicePath) {
     EnsureConnection();
-    if (!_connected) {
-        return EIO; // Input/output error for device not connected
-    }
-    
-    std::string command = "mkdir -p \"" + devicePath + "\"";
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    std::string command = "mkdir -p -- " + ShellQuote(devicePath);
     std::string result = RunShellCommand(command);
-    
-    if (result.empty()) {
-        return 0;
-    } else {
-        return Str2Errno(result);
+
+    return result.empty() ? 0 : Str2Errno(result);
+}
+
+bool ADBDevice::FileExists(const std::string &devicePath) {
+    EnsureConnection();
+    if (!_connected) return false;
+
+    std::string command = "test -e " + ShellQuote(devicePath) + " && echo 1 || echo 0";
+    std::string result = RunShellCommand(command);
+
+    ADBUtils::TrimTrailingNewlines(result);
+    // Also trim spaces
+    while (!result.empty() && result.back() == ' ') {
+        result.pop_back();
     }
+
+    return result == "1";
+}
+
+ADBDevice::DirectoryInfo ADBDevice::GetDirectoryInfo(const std::string &devicePath) {
+    DirectoryInfo info = {0, 0};
+    EnsureConnection();
+    if (!_connected) {
+        return info;
+    }
+
+    // Get file count and total size in one command
+    // Output format: "count size" where size is in bytes
+    std::string command = "find " + ShellQuote(devicePath) +
+        " -type f -exec stat -c '%s ' {} \\; 2>/dev/null | awk '{c++;s+=$1}END{print c,s}'";
+    std::string result = RunShellCommand(command);
+
+    // Trim whitespace
+    ADBUtils::TrimTrailingNewlines(result);
+    while (!result.empty() && result.front() == ' ') result.erase(0, 1);
+    while (!result.empty() && result.back() == ' ') result.pop_back();
+
+    // Parse result: "count size"
+    // Validate that we have two numbers separated by space
+    size_t space = result.find(' ');
+    if (space != std::string::npos && space > 0 && space < result.size() - 1) {
+        std::string count_str = result.substr(0, space);
+        std::string size_str = result.substr(space + 1);
+
+        // Validate both strings contain only digits
+        bool count_valid = !count_str.empty() && std::all_of(count_str.begin(), count_str.end(),
+            [](unsigned char c) { return std::isdigit(c); });
+        bool size_valid = !size_str.empty() && std::all_of(size_str.begin(), size_str.end(),
+            [](unsigned char c) { return std::isdigit(c); });
+
+        if (count_valid && size_valid) {
+            info.file_count = strtoull(count_str.c_str(), nullptr, 10);
+            info.total_size = strtoull(size_str.c_str(), nullptr, 10);
+        }
+    }
+
+    return info;
 }
 
 int ADBDevice::Str2Errno(const std::string &adbError) {

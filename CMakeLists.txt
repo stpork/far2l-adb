@@ -1,9 +1,9 @@
-set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules)
-include(${CMAKE_SOURCE_DIR}/cmake/FuncCopyResources.cmake)
-
 cmake_minimum_required (VERSION 3.5.0)
 
 project (far2l)
+
+set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules)
+include(${CMAKE_SOURCE_DIR}/cmake/FuncCopyResources.cmake)
 
 set(APP_NAME "far2l")
 set(APP_IDENTIFIER "com.far2l")
@@ -52,7 +52,7 @@ if(NOT "${GIT_TAG}" STREQUAL "v_${VERSION}")
                 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
                 OUTPUT_VARIABLE GIT_DATE
                 OUTPUT_STRIP_TRAILING_WHITESPACE)
-            string(SUBSTRING ${GIT_DATE} 0 10 GIT_DATE)
+            string(SUBSTRING "" 0 10 GIT_DATE)
             execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
                 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
                 OUTPUT_VARIABLE GIT_HASH
@@ -536,6 +536,16 @@ else()
     message(STATUS "${ColorRed}TMPPANEL plugin disabled due to TMPPANEL=${TMPPANEL}${ColorNormal}")
     install(CODE "
         execute_process(COMMAND rm -f ${CMAKE_INSTALL_PREFIX}/lib/far2l/Plugins/tmppanel/plug/tmppanel.far-plug-wide)
+        " COMPONENT system)
+endif()
+
+if (NOT DEFINED ADB OR ADB)
+    message(STATUS "ADB plugin enabled")
+    add_subdirectory (adb)
+else()
+    message(STATUS "${ColorRed}ADB plugin disabled due to ADB=${ADB}${ColorNormal}")
+    install(CODE "
+        execute_process(COMMAND rm -f ${CMAKE_INSTALL_PREFIX}/lib/far2l/Plugins/adb/plug/adb.far-plug-wide)
         " COMPONENT system)
 endif()
 
