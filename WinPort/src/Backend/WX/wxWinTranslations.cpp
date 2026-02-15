@@ -223,8 +223,13 @@ static int wxKeyCode2WinKeyCode(int code)
 	case L'(': return '9';
 	case L')': return '0';
 	}
-	//fprintf(stderr, "not translated %u %lc", code, code);
-	return code;
+
+	//fprintf(stderr, "not translated %u %lc\n", code, code);
+
+	if ((code >= '0' && code <= '9') || (code >= 'A' && code <= 'Z')) {
+		return code;
+	}
+	return VK_NONAME;
 }
 
 static int wxKeyCode2WinScanCode(int code, int code_raw)
