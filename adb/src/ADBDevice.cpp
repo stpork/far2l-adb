@@ -16,10 +16,12 @@
 #include <cctype>
 
 // ============================================================================
-// Utility functions
+// ADBUtils namespace implementation
 // ============================================================================
 
-static std::string ShellQuote(const std::string &value)
+namespace ADBUtils {
+
+std::string ShellQuote(const std::string &value)
 {
     std::string quoted = "'";
     for (char c : value) {
@@ -32,12 +34,6 @@ static std::string ShellQuote(const std::string &value)
     quoted += "'";
     return quoted;
 }
-
-// ============================================================================
-// ADBUtils namespace implementation
-// ============================================================================
-
-namespace ADBUtils {
 
 std::string JoinPath(const std::string& base, const std::string& component)
 {
@@ -68,6 +64,7 @@ int CheckConnection(bool connected)
 }
 
 } // namespace ADBUtils
+
 
 // ============================================================================
 // ProgressParser implementation
@@ -292,6 +289,17 @@ std::string ADBDevice::GetCurrentWorkingDirectory()
     }
 }
 
+wchar_t* ADBDevice::AllocateItemString(const std::string& s) {
+    if (s.empty()) return nullptr;
+    std::wstring ws = StrMB2Wide(s);
+    size_t len = ws.length() + 1;
+    wchar_t* buf = (wchar_t*)malloc(len * sizeof(wchar_t));
+    if (buf) {
+        wcscpy(buf, ws.c_str());
+    }
+    return buf;
+}
+
 std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<PluginPanelItem> &files)
 {
 
@@ -304,7 +312,7 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
 
     // Bulk command: cd, pwd, ls -la, then symlink info (properly quote path for spaces)
     std::ostringstream bulk_cmd;
-    bulk_cmd << "cd " << ShellQuote(path) << " 2>/dev/null; pwd; ls -la; echo \"" << separator << "\";"
+    bulk_cmd << "cd " << ADBUtils::ShellQuote(path) << " 2>/dev/null; pwd; ls -la; echo \"" << separator << "\";"
              << "for f in *; do "
              << "[ -L \"$f\" ] && ([ -d \"$f\" ] && echo \"$f" << arrow << "D\" "
              << "|| ([ -f \"$f\" ] && echo \"$f" << arrow << "F\" || echo \"$f" << arrow << "B\")); "
@@ -369,45 +377,20 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
         if (filename.empty() || filename == "." || filename == "..") continue;
 
         PluginPanelItem item{};
-        // Use malloc + wcscpy for compatibility with free()
-        std::wstring wfilename = StrMB2Wide(filename);
-        size_t len = wfilename.length() + 1;
-        wchar_t* filename_buf = (wchar_t*)malloc(len * sizeof(wchar_t));
-        if (filename_buf) {
-            wcscpy(filename_buf, wfilename.c_str());
-            item.FindData.lpwszFileName = filename_buf;
-        }
+        item.FindData.lpwszFileName = AllocateItemString(filename);
         item.FindData.dwUnixMode = (perms[0] == 'd') ? (S_IFDIR | 0755) : (is_symlink ? (S_IFLNK | 0644) : (S_IFREG | 0644));
         item.FindData.dwFileAttributes = WINPORT(EvaluateAttributesA)(item.FindData.dwUnixMode, filename.c_str());
         if (perms[0] == 'd') item.FindData.dwFileAttributes |= FILE_ATTRIBUTE_DIRECTORY;
 
         if (is_symlink) {
-            std::wstring wtarget = symlink_target.empty() ? L"Symlink (no target)" : StrMB2Wide(symlink_target);
-            size_t len = wtarget.length() + 1;
-            wchar_t* desc_buf = (wchar_t*)malloc(len * sizeof(wchar_t));
-            if (desc_buf) {
-                wcscpy(desc_buf, wtarget.c_str());
-                item.Description = desc_buf;
-            }
+            item.Description = AllocateItemString(symlink_target.empty() ? "Symlink (no target)" : symlink_target);
         }
 
         try { item.FindData.nFileSize = item.FindData.nPhysicalSize = std::stoull(size); } catch (...) { item.FindData.nFileSize = item.FindData.nPhysicalSize = 0; }
 
-        // Use malloc + wcscpy for compatibility with free()
-        std::wstring wowner = StrMB2Wide(owner);
-        size_t owner_len = wowner.length() + 1;
-        wchar_t* owner_buf = (wchar_t*)malloc(owner_len * sizeof(wchar_t));
-        if (owner_buf) {
-            wcscpy(owner_buf, wowner.c_str());
-            item.Owner = owner_buf;
-        }
-        std::wstring wgroup = StrMB2Wide(group);
-        size_t group_len = wgroup.length() + 1;
-        wchar_t* group_buf = (wchar_t*)malloc(group_len * sizeof(wchar_t));
-        if (group_buf) {
-            wcscpy(group_buf, wgroup.c_str());
-            item.Group = group_buf;
-        }
+        item.Owner = AllocateItemString(owner);
+        item.Group = AllocateItemString(group);
+        
         try { item.NumberOfLinks = std::stoi(links); } catch (...) { item.NumberOfLinks = 1; }
 
         FILETIME ft{};
@@ -505,7 +488,7 @@ bool ADBDevice::SetDirectory(const std::string &path) {
     }
     
     // Execute cd command and get new working directory (properly quote path for spaces)
-    std::string cd_command = "cd " + ShellQuote(path) + " 2>/dev/null && pwd";
+    std::string cd_command = "cd " + ADBUtils::ShellQuote(path) + " 2>/dev/null && pwd";
     std::string result = RunShellCommand(cd_command);
     
     if (result.empty()) {
@@ -523,131 +506,75 @@ bool ADBDevice::SetDirectory(const std::string &path) {
     return true;
 }
 
-int ADBDevice::PullFile(const std::string &devicePath, const std::string &localPath) {
-    DBG("devicePath='%s', localPath='%s'\n", devicePath.c_str(), localPath.c_str());
+int ADBDevice::TransferItem(const std::string& src, const std::string& dst, bool is_push, bool recursive,
+                           const std::function<void(int)>& on_progress,
+                           const std::function<bool()>& abort_check)
+{
     EnsureConnection();
     if (int err = ADBUtils::CheckConnection(_connected)) return err;
 
-    std::vector<std::string> command = {"pull", devicePath, localPath};
-    std::string result = RunAdbCommand(command);
-    DBG("result='%s'\n", result.c_str());
+    std::vector<std::string> args = {is_push ? "push" : "pull"};
+    if (on_progress) args.push_back("-p");
+    args.push_back(src);
+    args.push_back(dst);
 
-    return IsSuccessResult(result, false) ? 0 : Str2Errno(result);
+    std::string result;
+    if (on_progress) {
+        ProgressParser parser(on_progress);
+        parser.start();
+        result = RunAdbCommandWithProgress(args, std::ref(parser), abort_check);
+        parser.drain();
+        if (IsSuccessResult(result, is_push)) {
+            parser.complete();
+            return 0;
+        }
+    } else {
+        result = RunAdbCommand(args);
+        if (IsSuccessResult(result, is_push)) return 0;
+    }
+
+    return Str2Errno(result);
+}
+
+int ADBDevice::PullFile(const std::string &devicePath, const std::string &localPath) {
+    return TransferItem(devicePath, localPath, false, false);
 }
 
 int ADBDevice::PullFile(const std::string &devicePath, const std::string &localPath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check) {
-    EnsureConnection();
-    if (int err = ADBUtils::CheckConnection(_connected)) return err;
-
-    ProgressParser parser(on_progress, true);
-    parser.start();
-
-    std::vector<std::string> command = {"pull", "-p", devicePath, localPath};
-    std::string result = RunAdbCommandWithProgress(command, std::ref(parser), abort_check);
-    DBG("PTY result: [%s]\n", result.c_str());
-
-    parser.drain();
-
-    if (IsSuccessResult(result, false)) {
-        parser.complete();
-        return 0;
-    }
-    return Str2Errno(result);
+    return TransferItem(devicePath, localPath, false, false, on_progress, abort_check);
 }
 
 int ADBDevice::PushFile(const std::string &localPath, const std::string &devicePath) {
-    EnsureConnection();
-    if (int err = ADBUtils::CheckConnection(_connected)) return err;
-
-    std::vector<std::string> command = {"push", localPath, devicePath};
-    std::string result = RunAdbCommand(command);
-
-    return IsSuccessResult(result, true) ? 0 : Str2Errno(result);
+    return TransferItem(localPath, devicePath, true, false);
 }
 
 int ADBDevice::PushFile(const std::string &localPath, const std::string &devicePath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check) {
-    EnsureConnection();
-    if (int err = ADBUtils::CheckConnection(_connected)) return err;
-
-    ProgressParser parser(on_progress);
-    parser.start();
-
-    std::vector<std::string> command = {"push", "-p", localPath, devicePath};
-    std::string result = RunAdbCommandWithProgress(command, std::ref(parser), abort_check);
-
-    parser.drain();
-
-    if (IsSuccessResult(result, true)) {
-        parser.complete();
-        return 0;
-    }
-    return Str2Errno(result);
+    return TransferItem(localPath, devicePath, true, false, on_progress, abort_check);
 }
 
 int ADBDevice::PullDirectory(const std::string &devicePath, const std::string &localPath) {
-    EnsureConnection();
-    if (int err = ADBUtils::CheckConnection(_connected)) return err;
-
-    std::vector<std::string> command = {"pull", devicePath, localPath};
-    std::string result = RunAdbCommand(command);
-
-    return IsSuccessResult(result, false) ? 0 : Str2Errno(result);
+    return TransferItem(devicePath, localPath, false, true);
 }
 
 int ADBDevice::PullDirectory(const std::string &devicePath, const std::string &localPath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check) {
-    EnsureConnection();
-    if (int err = ADBUtils::CheckConnection(_connected)) return err;
-
-    ProgressParser parser(on_progress);
-    parser.start();
-
-    std::vector<std::string> command = {"pull", "-p", devicePath, localPath};
-    std::string result = RunAdbCommandWithProgress(command, std::ref(parser), abort_check);
-
-    parser.drain();
-
-    if (IsSuccessResult(result, false)) {
-        parser.complete();
-        return 0;
-    }
-    return Str2Errno(result);
+    return TransferItem(devicePath, localPath, false, true, on_progress, abort_check);
 }
 
 int ADBDevice::PushDirectory(const std::string &localPath, const std::string &devicePath) {
-    EnsureConnection();
-    if (int err = ADBUtils::CheckConnection(_connected)) return err;
-
-    std::vector<std::string> command = {"push", localPath, devicePath};
-    std::string result = RunAdbCommand(command);
-
-    return IsSuccessResult(result, true) ? 0 : Str2Errno(result);
+    return TransferItem(localPath, devicePath, true, true);
 }
 
 int ADBDevice::PushDirectory(const std::string &localPath, const std::string &devicePath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check) {
-    EnsureConnection();
-    if (int err = ADBUtils::CheckConnection(_connected)) return err;
-
-    ProgressParser parser(on_progress);
-    parser.start();
-
-    std::vector<std::string> command = {"push", "-p", localPath, devicePath};
-    std::string result = RunAdbCommandWithProgress(command, std::ref(parser), abort_check);
-
-    parser.drain();
-
-    if (IsSuccessResult(result, true)) {
-        parser.complete();
-        return 0;
-    }
-    return Str2Errno(result);
+    return TransferItem(localPath, devicePath, true, true, on_progress, abort_check);
 }
+
 
 
 int ADBDevice::DeleteFile(const std::string &devicePath) {
     EnsureConnection();
     if (int err = ADBUtils::CheckConnection(_connected)) return err;
 
-    std::string command = "rm -- " + ShellQuote(devicePath);
+    std::string command = "rm -- " + ADBUtils::ShellQuote(devicePath);
     std::string result = RunShellCommand(command);
 
     return result.empty() ? 0 : Str2Errno(result);
@@ -657,7 +584,7 @@ int ADBDevice::DeleteDirectory(const std::string &devicePath) {
     EnsureConnection();
     if (int err = ADBUtils::CheckConnection(_connected)) return err;
 
-    std::string command = "rm -rf -- " + ShellQuote(devicePath);
+    std::string command = "rm -rf -- " + ADBUtils::ShellQuote(devicePath);
     std::string result = RunShellCommand(command);
 
     return result.empty() ? 0 : Str2Errno(result);
@@ -667,9 +594,30 @@ int ADBDevice::CreateDirectory(const std::string &devicePath) {
     EnsureConnection();
     if (int err = ADBUtils::CheckConnection(_connected)) return err;
 
-    std::string command = "mkdir -p -- " + ShellQuote(devicePath);
+    std::string command = "mkdir -p -- " + ADBUtils::ShellQuote(devicePath);
     std::string result = RunShellCommand(command);
 
+    return result.empty() ? 0 : Str2Errno(result);
+}
+
+int ADBDevice::CopyRemote(const std::string &srcDevicePath, const std::string &dstDeviceDir) {
+    EnsureConnection();
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    // Try cp -a first (preserve attrs where possible), then fallback to cp -r for older toolboxes.
+    std::string command =
+        "cp -a -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDeviceDir) +
+        " 2>/dev/null || cp -r -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDeviceDir);
+    std::string result = RunShellCommand(command);
+    return result.empty() ? 0 : Str2Errno(result);
+}
+
+int ADBDevice::MoveRemote(const std::string &srcDevicePath, const std::string &dstDeviceDir) {
+    EnsureConnection();
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    std::string command = "mv -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDeviceDir);
+    std::string result = RunShellCommand(command);
     return result.empty() ? 0 : Str2Errno(result);
 }
 
@@ -677,7 +625,7 @@ bool ADBDevice::FileExists(const std::string &devicePath) {
     EnsureConnection();
     if (!_connected) return false;
 
-    std::string command = "test -e " + ShellQuote(devicePath) + " && echo 1 || echo 0";
+    std::string command = "test -e " + ADBUtils::ShellQuote(devicePath) + " && echo 1 || echo 0";
     std::string result = RunShellCommand(command);
 
     ADBUtils::TrimTrailingNewlines(result);
@@ -698,7 +646,7 @@ ADBDevice::DirectoryInfo ADBDevice::GetDirectoryInfo(const std::string &devicePa
 
     // Get file count and total size in one command
     // Output format: "count size" where size is in bytes
-    std::string command = "find " + ShellQuote(devicePath) +
+    std::string command = "find " + ADBUtils::ShellQuote(devicePath) +
         " -type f -exec stat -c '%s ' {} \\; 2>/dev/null | awk '{c++;s+=$1}END{print c,s}'";
     std::string result = RunShellCommand(command);
 

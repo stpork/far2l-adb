@@ -21,8 +21,7 @@ extern FarStandardFunctions g_FSF;
 
 class ADBPlugin
 {
-	friend class AllADB;
-
+private:
 	// Panel state
 	wchar_t _PanelTitle[64];
 	wchar_t _mk_dir[1024];
@@ -42,11 +41,24 @@ class ADBPlugin
 	// ADBDevice for file operations
 	std::shared_ptr<class ADBDevice> _adbDevice;
 	
+	// Cache for device friendly names to avoid N+1 process spawns
+	std::map<std::string, std::string> _friendlyNamesCache;
+
 	// Helper method to get current device path
 	std::string GetCurrentDevicePath() const;
 
 	// Helper method to update panel title with device serial and path
 	void UpdatePanelTitle(const std::string& deviceSerial, const std::string& path);
+
+	struct DeviceInfo {
+		std::string serial;
+		std::string status;
+		std::string model;
+		std::string name;
+		std::string usb;
+	};
+	std::vector<DeviceInfo> EnumerateDevices();
+	bool CrossPanelCopyMoveSameDevice(bool move);
 
 public:
 	ADBPlugin(const wchar_t *path = nullptr, bool path_is_standalone_config = false, int OpMode = 0);

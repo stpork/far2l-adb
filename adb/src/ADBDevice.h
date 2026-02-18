@@ -41,6 +41,11 @@ private:
     // Helper to check if result indicates success
     bool IsSuccessResult(const std::string& result, bool is_push = false) const;
 
+    // Unified transfer helper (DRY)
+    int TransferItem(const std::string& src, const std::string& dst, bool is_push, bool recursive,
+                    const std::function<void(int)>& on_progress = {},
+                    const std::function<bool()>& abort_check = {});
+
 public:
     // Public methods for command execution
     std::string RunAdbCommand(const std::string &command);
@@ -72,6 +77,8 @@ public:
 
     // Directory creation operations
     int CreateDirectory(const std::string &devicePath);
+    int CopyRemote(const std::string &srcDevicePath, const std::string &dstDeviceDir);
+    int MoveRemote(const std::string &srcDevicePath, const std::string &dstDeviceDir);
 
     // File existence check
     bool FileExists(const std::string &devicePath);
@@ -95,6 +102,9 @@ public:
 
     // Error mapping
     static int Str2Errno(const std::string &adbError);
+
+    // Static helper for PluginPanelItem memory management
+    static wchar_t* AllocateItemString(const std::string& s);
 };
 
 // Path utility functions (shared across ADB classes)
@@ -104,6 +114,9 @@ namespace ADBUtils {
 
     // Trims trailing newlines/carriage returns
     void TrimTrailingNewlines(std::string& s);
+
+    // Shell quoting for paths with spaces
+    std::string ShellQuote(const std::string& s);
 
     // Check if connection is available, returns EIO if not
     int CheckConnection(bool connected);
