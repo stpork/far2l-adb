@@ -1,1354 +1,1468 @@
 #include "MTPPlugin.h"
 #include "MTPLog.h"
-#include "MTPDialogs.h"
-#include "farplug-wide.h"
-#include <thread>
-#include <atomic>
-#include <chrono>
-#include <WideMB.h>
-#include <cstring>
-#include <cstdlib>
-#include <cctype>
+
 #include <IntStrConv.h>
+#include <WideMB.h>
 
-static MTPPlugin* g_plugin = nullptr;
-PluginStartupInfo g_Info;
-FarStandardFunctions g_FSF;
+#include <cerrno>
+#include <climits>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <array>
 
-MTPPlugin::MTPPlugin(const wchar_t *path, bool path_is_standalone_config, int OpMode)
-    : _standalone_config(path ? path : L"")
-    , _allow_remember_location_dir(true)
-    , _isConnected(false)
-    , _currentStorageID(0)
-    , _currentDirID(0)
-{
-    wcscpy(_PanelTitle, L"MTP Device");
-    _mtpDevice = std::make_shared<MTPDevice>("");
-    _mtpFileSystem = std::make_shared<MTPFileSystem>(_mtpDevice);
-    g_plugin = this;
-    
-    // Auto-connect to first available MTP device (similar to ADB plugin)
-    DBG("MTPPlugin: Auto-connecting to first available MTP device");
-    LIBMTP_Init();
-    
-    LIBMTP_raw_device_t* rawdevices;
-    int numrawdevices;
-    LIBMTP_error_number_t err = LIBMTP_Detect_Raw_Devices(&rawdevices, &numrawdevices);
-    
-    if (err != LIBMTP_ERROR_NONE) {
-        DBG("MTPPlugin: Failed to detect MTP devices: %d", err);
-        LIBMTP_FreeMemory(rawdevices);
-        return;
-    }
-    
-    if (numrawdevices == 0) {
-        DBG("MTPPlugin: No MTP devices found");
-        LIBMTP_FreeMemory(rawdevices);
-        return;
-    }
-    
-    // Connect to first available device
-    std::string deviceId = std::to_string(rawdevices[0].bus_location) + "_" + std::to_string(rawdevices[0].devnum);
-    DBG("MTPPlugin: Attempting to connect to first device: %s", deviceId.c_str());
-    
-    if (ConnectToDevice(deviceId)) {
-        DBG("MTPPlugin: Successfully auto-connected to MTP device");
-    } else {
-        DBG("MTPPlugin: Failed to auto-connect to MTP device");
-    }
-    
-    LIBMTP_FreeMemory(rawdevices);
-}
+PluginStartupInfo g_Info = {};
+FarStandardFunctions g_FSF = {};
 
-MTPPlugin::~MTPPlugin()
-{
-    if (_mtpDevice) {
-        _mtpDevice->Disconnect();
-    }
-    g_plugin = nullptr;
-}
-
-int MTPPlugin::GetFindData(PluginPanelItem **pPanelItem, int *pItemsNumber, int OpMode)
-{
-    if (!_isConnected) {
-        return GetDeviceData(pPanelItem, pItemsNumber);
-    } else {
-        return GetFileData(pPanelItem, pItemsNumber);
+namespace {
+std::string BackendTag(proto::BackendKind kind) {
+    switch (kind) {
+        case proto::BackendKind::MTP: return "MTP";
+        case proto::BackendKind::PTP: return "PTP";
+        default: return "UNKNOWN";
     }
 }
 
-void MTPPlugin::FreeFindData(PluginPanelItem *PanelItem, int ItemsNumber)
-{
-    DBG("FreeFindData called with %d items", ItemsNumber);
-    if (PanelItem) {
-        for (int i = 0; i < ItemsNumber; i++) {
-            DBG("FreeFindData item %d: UserData=%p, lpwszFileName=%p", i, (void*)PanelItem[i].UserData, PanelItem[i].FindData.lpwszFileName);
-            if (PanelItem[i].FindData.lpwszFileName) {
-                free((void*)PanelItem[i].FindData.lpwszFileName);
-            }
-            if (PanelItem[i].Description) {
-                free((void*)PanelItem[i].Description);
-            }
-            if (PanelItem[i].UserData) {
-                free((void*)PanelItem[i].UserData);
-            }
+std::string JoinPath(const std::string& base, const std::string& name) {
+    if (base.empty()) return name;
+    if (base.back() == '/' || base.back() == '\\') {
+        return base + name;
+    }
+    return base + "/" + name;
+}
+
+bool RemoveLocalPathRecursively(const std::string& path) {
+    struct stat st = {};
+    if (lstat(path.c_str(), &st) != 0) {
+        return false;
+    }
+    if (S_ISDIR(st.st_mode)) {
+        DIR* dir = opendir(path.c_str());
+        if (!dir) {
+            return false;
         }
-        free(PanelItem);
-    }
-}
-
-void MTPPlugin::GetOpenPluginInfo(OpenPluginInfo *Info)
-{
-    Info->StructSize = sizeof(OpenPluginInfo);
-    Info->Flags = OPIF_SHOWPRESERVECASE | OPIF_USEHIGHLIGHTING | OPIF_ADDDOTS;
-    Info->HostFile = nullptr;
-    
-    // Set CurDir for cursor position restoration
-    if (_currentDirID != 0 && _mtpDevice) {
-        LIBMTP_file_t* objectFile = LIBMTP_Get_Filemetadata(_mtpDevice->GetDevice(), _currentDirID);
-        if (objectFile && objectFile->filename) {
-            std::string dirName = std::string(objectFile->filename);
-            std::wstring wideDir = StrMB2Wide(dirName);
-            Info->CurDir = (wchar_t*)malloc((wideDir.length() + 1) * sizeof(wchar_t));
-            if (Info->CurDir) {
-                const wchar_t* src = wideDir.c_str();
-                wchar_t* dst = const_cast<wchar_t*>(Info->CurDir);
-                while (*src) *dst++ = *src++;
-                *dst = L'\0';
-            } else {
-                Info->CurDir = L"/";
-            }
-            LIBMTP_destroy_file_t(objectFile);
-        } else {
-            Info->CurDir = L"/";
-        }
-    } else if (_currentStorageID != 0 && _mtpDevice) {
-        LIBMTP_devicestorage_t* storage = _mtpDevice->GetDevice()->storage;
-        while (storage) {
-            if (storage->id == _currentStorageID) {
-                std::string storageName = _mtpFileSystem->GetStorageDisplayName(storage);
-                std::wstring wideStorage = StrMB2Wide(storageName);
-                Info->CurDir = (wchar_t*)malloc((wideStorage.length() + 1) * sizeof(wchar_t));
-                if (Info->CurDir) {
-                    const wchar_t* src = wideStorage.c_str();
-                    wchar_t* dst = const_cast<wchar_t*>(Info->CurDir);
-                    while (*src) *dst++ = *src++;
-                    *dst = L'\0';
-                } else {
-                    Info->CurDir = L"/";
-                }
+        bool ok = true;
+        while (true) {
+            dirent* ent = readdir(dir);
+            if (!ent) {
                 break;
             }
-            storage = storage->next;
+            if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+                continue;
+            }
+            if (!RemoveLocalPathRecursively(path + "/" + ent->d_name)) {
+                ok = false;
+                break;
+            }
         }
-        if (!storage) {
-            Info->CurDir = L"/";
+        closedir(dir);
+        if (!ok) {
+            return false;
         }
-    } else if (_isConnected && _mtpDevice) {
-        std::string deviceName = _mtpDevice->GetFriendlyName();
-        if (deviceName.empty()) {
-            deviceName = "MTP Device";
-        }
-        std::wstring wideDevice = StrMB2Wide(deviceName);
-        Info->CurDir = (wchar_t*)malloc((wideDevice.length() + 1) * sizeof(wchar_t));
-        if (Info->CurDir) {
-            const wchar_t* src = wideDevice.c_str();
-            wchar_t* dst = const_cast<wchar_t*>(Info->CurDir);
-            while (*src) *dst++ = *src++;
-            *dst = L'\0';
-        } else {
-            Info->CurDir = L"/";
-        }
-    } else {
-        Info->CurDir = L"/";
+        return rmdir(path.c_str()) == 0;
     }
-    
-    Info->Format = L"MTP";
-    _dynamicPanelTitle = GeneratePanelTitle();
-    Info->PanelTitle = _dynamicPanelTitle.c_str();
-    Info->InfoLines = nullptr;
-    Info->DescrFiles = nullptr;
-    Info->PanelModesArray = nullptr;
-    Info->PanelModesNumber = 0;
-    Info->StartPanelMode = 0;
-    Info->StartSortMode = 0;
-    Info->StartSortOrder = 0;
-    Info->KeyBar = nullptr;
-    Info->ShortcutData = nullptr;
+    return unlink(path.c_str()) == 0;
 }
 
-int MTPPlugin::SetDirectory(const wchar_t *Dir, int OpMode)
-{
-    std::string dir = Dir ? StrWide2MB(Dir) : "";
-    DBG("SetDirectory: Setting directory to: %s", dir.c_str());
-    
-    if (!_isConnected) {
-        if (dir == ".." || dir == "/") {
-            _currentStorageID = 0;
-            _currentDirID = 0;
-            wcscpy(_PanelTitle, L"MTP Devices");
-            return TRUE;
-        }
-        return ByKey_TryEnterSelectedDevice() ? TRUE : FALSE;
+FILETIME EpochToFileTime(uint64_t unix_epoch) {
+    FILETIME ft{};
+    if (unix_epoch == 0) {
+        return ft;
     }
-    
-    try {
-        if (dir == "..") {
-            DBG("SetDirectory: Processing '..' navigation");
-            if (_currentDirID == 0) {
-                if (_currentStorageID != 0) {
-                    _currentStorageID = 0;
-                    _currentDirID = 0;
-                    if (_mtpDevice) {
-                        _mtpDevice->NavigateToRoot();
-                    }
-                    DBG("SetDirectory: Back to device root (showing storages)");
-                    return TRUE;
-                } else {
-                    _isConnected = false;
-                    _currentStorageID = 0;
-                    _currentDirID = 0;
-                    DBG("SetDirectory: Back to device selection");
-                    return TRUE;
-                }
-            } else {
-                LIBMTP_file_t* currentObject = LIBMTP_Get_Filemetadata(_mtpDevice->GetDevice(), _currentDirID);
-                if (currentObject) {
-                    uint32_t parentId = currentObject->parent_id;
-                    LIBMTP_destroy_file_t(currentObject);
-                    
-                    if (parentId == 0) {
-                        _currentDirID = 0;
-                        if (_mtpDevice) {
-                            std::string storageName = _mtpFileSystem->GetStorageName();
-                            _mtpDevice->SetCurrentStorage(_currentStorageID, storageName);
-                        }
-                        _lastEnteredDirName.clear();
-                        DBG("SetDirectory: Navigated to storage root");
-                    } else {
-                        _currentDirID = parentId;
-                        if (_mtpDevice) {
-                            LIBMTP_file_t* parentFile = LIBMTP_Get_Filemetadata(_mtpDevice->GetDevice(), parentId);
-                            if (parentFile && parentFile->filename) {
-                                std::string parentName = std::string(parentFile->filename);
-                                _mtpDevice->SetCurrentDir(parentId, parentName);
-                                LIBMTP_destroy_file_t(parentFile);
-                            }
-                        }
-                        DBG("SetDirectory: Navigated to parent directory: ID=%u", parentId);
-                    }
-                    return TRUE;
-                } else {
-                    DBG("SetDirectory: Failed to get current object metadata");
-                    return FALSE;
-                }
-            }
+    constexpr uint64_t kEpochDiff = 11644473600ULL;
+    uint64_t t = (unix_epoch + kEpochDiff) * 10000000ULL;
+    ft.dwLowDateTime = static_cast<DWORD>(t & 0xffffffffULL);
+    ft.dwHighDateTime = static_cast<DWORD>((t >> 32) & 0xffffffffULL);
+    return ft;
+}
+
+const char* FormatCodeName(uint16_t format) {
+    struct Entry {
+        uint16_t code;
+        const char* name;
+    };
+    static constexpr Entry kTable[] = {
+        {0x3000, "Undefined Object"},
+        {0x3001, "Association (Folder)"},
+        {0x3002, "Script"},
+        {0x3003, "Executable"},
+        {0x3004, "Text"},
+        {0x3005, "HTML"},
+        {0x3006, "DPOF"},
+        {0x3007, "AIFF"},
+        {0x3008, "WAV"},
+        {0x3009, "MP3"},
+        {0x300A, "AVI"},
+        {0x300B, "MPEG"},
+        {0x300C, "ASF"},
+        {0x300D, "Undefined Video"},
+        {0x300E, "Undefined Audio"},
+        {0x300F, "Undefined Collection"},
+        {0x3800, "Undefined Image"},
+        {0x3801, "EXIF/JPEG"},
+        {0x3802, "TIFF/EP"},
+        {0x3803, "FlashPix"},
+        {0x3804, "BMP"},
+        {0x3805, "CIFF"},
+        {0x3807, "GIF"},
+        {0x3808, "JFIF"},
+        {0x3809, "PCD"},
+        {0x380A, "PICT"},
+        {0x380B, "PNG"},
+        {0x380D, "TIFF"},
+        {0x380E, "TIFF/IT"},
+        {0x380F, "JP2"},
+        {0x3810, "JPX"},
+        {0xBA10, "Abstract Audio Album"},
+        {0xBA11, "Abstract Audio Video Playlist"},
+        {0xBA12, "Abstract Mediastream"},
+        {0xBA13, "Abstract Audio Playlist"},
+        {0xBA14, "Abstract Video Playlist"},
+        {0xBA15, "Abstract Audio Album Playlist"},
+        {0xBA16, "Abstract Image Album"},
+        {0xBA17, "Abstract Image Album Playlist"},
+        {0xBA18, "Abstract Video Album"},
+        {0xBA19, "Abstract Video Album Playlist"},
+        {0xBA1A, "Abstract Audio Video Album"},
+        {0xBA1B, "Abstract Audio Video Album Playlist"},
+        {0xBA1C, "Abstract Contact Group"},
+        {0xBA1D, "Abstract Message Folder"},
+        {0xBA1E, "Abstract Chaptered Production"},
+        {0xBA1F, "Abstract Audio Podcast"},
+        {0xBA20, "Abstract Video Podcast"},
+        {0xBA21, "Abstract Audio Video Podcast"},
+        {0xBA22, "Abstract Chaptered Production Playlist"},
+        {0xBA81, "XML Document"},
+        {0xBA82, "MS Word Document"},
+        {0xBA83, "MHT Document"},
+        {0xBA84, "MS Excel Spreadsheet"},
+        {0xBA85, "MS PowerPoint Presentation"},
+        {0xBB00, "vCard 2"},
+        {0xBB01, "vCard 3"},
+        {0xBB02, "vCalendar 1"},
+        {0xBB03, "vCalendar 2"},
+        {0xBB04, "vMessage"},
+        {0xBB05, "Contact Database"},
+        {0xBB06, "Message Database"},
+        {0xB901, "WMA"},
+        {0xB902, "OGG"},
+        {0xB903, "AAC"},
+        {0xB905, "FLAC"},
+        {0xB906, "FLAC"},
+        {0xB981, "WMV"},
+        {0xB982, "MP4"},
+        {0xB983, "3GP"},
+        {0xB984, "3G2"},
+    };
+    for (const auto& e : kTable) {
+        if (e.code == format) {
+            return e.name;
         }
-        if (IsEncodedId(dir)) {
-            DBG("SetDirectory: Navigating to encoded ID: %s", dir.c_str());
-            SetCurrentFromEncodedId(dir);
-            
-            if (_currentDirID != 0) {
-                LIBMTP_file_t* objectFile = LIBMTP_Get_Filemetadata(_mtpDevice->GetDevice(), _currentDirID);
-                if (objectFile) {
-                    if (objectFile->filetype == LIBMTP_FILETYPE_FOLDER) {
-                        if (objectFile->filename) {
-                            _lastEnteredDirName = std::string(objectFile->filename);
-                        }
-                        LIBMTP_destroy_file_t(objectFile);
-                        DBG("SetDirectory: Successfully navigated to directory: ID=%u, Name='%s'", _currentDirID, _lastEnteredDirName.c_str());
-                        return TRUE;
-                    } else {
-                        LIBMTP_destroy_file_t(objectFile);
-                        DBG("SetDirectory: Object is not a directory: ID=%u", _currentDirID);
-                        return FALSE;
-                    }
-                } else {
-                    DBG("SetDirectory: Object not found: ID=%u", _currentDirID);
-                    return FALSE;
-                }
-            } else if (_currentStorageID != 0) {
-                _lastEnteredDirName.clear();
-                DBG("SetDirectory: Successfully navigated to storage: ID=%u", _currentStorageID);
-                return TRUE;
-            } else {
-                DBG("SetDirectory: Invalid encoded ID: %s", dir.c_str());
-                return FALSE;
-            }
-        } else {
-            DBG("SetDirectory: Looking for selected item with filename: %s", dir.c_str());
-            intptr_t size = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, 0);
-            if (size >= (intptr_t)sizeof(PluginPanelItem)) {
-                PluginPanelItem* item = (PluginPanelItem*)malloc(size + 0x100);
-                if (item) {
-                    memset(item, 0, size + 0x100);
-                    g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, (LONG_PTR)(void*)item);
-                    
-                    std::string encodedId;
-                    if (item->UserData != 0) {
-                        char* encodedIdPtr = (char*)item->UserData;
-                        encodedId = std::string(encodedIdPtr);
-                        DBG("SetDirectory: Found encoded ID in UserData: %s", encodedId.c_str());
-                    } else {
-                        std::wstring wideDir(dir.c_str(), dir.c_str() + dir.length());
-                        std::string cleanName = StrWide2MB(wideDir);
-                        encodedId = _mtpFileSystem->GetEncodedIdForName(cleanName);
-                        DBG("SetDirectory: Found encoded ID via shadow mechanism: %s -> %s", cleanName.c_str(), encodedId.c_str());
-                    }
-                    
-                    if (!encodedId.empty()) {
-                        _lastEnteredDirName = dir;
-                        DBG("SetDirectory: Stored directory name for cursor restoration: %s", _lastEnteredDirName.c_str());
-                        SetCurrentFromEncodedId(encodedId);
-                        free(item);
-                        return TRUE;
-                    }
-                    free(item);
-                }
-            }
-            
-            DBG("SetDirectory: Fallback - looking for object by filename: %s", dir.c_str());
-            uint32_t objectId = _mtpFileSystem->FindObjectByFilename(dir);
-            if (objectId != 0) {
-                std::string encodedId = _mtpFileSystem->EncodeObjectId(objectId);
-                DBG("SetDirectory: Found object ID %u, encoded as: %s", objectId, encodedId.c_str());
-                _lastEnteredDirName = dir;
-                DBG("SetDirectory: Stored directory name for cursor restoration: %s", _lastEnteredDirName.c_str());
-                SetCurrentFromEncodedId(encodedId);
-                return TRUE;
-            }
-        }
-        return FALSE;
-    } catch (const std::exception& e) {
-        DBG("Exception in SetDirectory: %s", e.what());
-        return FALSE;
+    }
+    return nullptr;
+}
+
+bool NoControls(unsigned int control_state) {
+    return (control_state & (PKF_CONTROL | PKF_ALT | PKF_SHIFT)) == 0;
+}
+
+uint32_t PackDeviceTriplet(uint8_t bus, uint8_t addr, uint8_t iface) {
+    return (static_cast<uint32_t>(bus) << 16) |
+           (static_cast<uint32_t>(addr) << 8) |
+           static_cast<uint32_t>(iface);
+}
+
+bool UnpackDeviceTriplet(uint32_t packed, uint8_t& bus, uint8_t& addr, uint8_t& iface) {
+    bus = static_cast<uint8_t>((packed >> 16) & 0xFFu);
+    addr = static_cast<uint8_t>((packed >> 8) & 0xFFu);
+    iface = static_cast<uint8_t>(packed & 0xFFu);
+    return true;
+}
+
+uint32_t PackDeviceFromKey(const std::string& key) {
+    int bus = -1;
+    int addr = -1;
+    int iface = -1;
+    if (sscanf(key.c_str(), "%d:%d:%d", &bus, &addr, &iface) == 3 &&
+        bus >= 0 && bus <= 255 &&
+        addr >= 0 && addr <= 255 &&
+        iface >= 0 && iface <= 255) {
+        return PackDeviceTriplet(static_cast<uint8_t>(bus),
+                                 static_cast<uint8_t>(addr),
+                                 static_cast<uint8_t>(iface));
+    }
+    return 0;
+}
+
+std::string DeviceKeyFromPacked(uint32_t packed) {
+    uint8_t bus = 0;
+    uint8_t addr = 0;
+    uint8_t iface = 0;
+    if (!UnpackDeviceTriplet(packed, bus, addr, iface)) {
+        return std::string();
+    }
+    return std::to_string(static_cast<int>(bus)) + ":" +
+           std::to_string(static_cast<int>(addr)) + ":" +
+           std::to_string(static_cast<int>(iface));
+}
+}
+
+MTPPlugin::MTPPlugin(const wchar_t* path, bool path_is_standalone_config, int)
+    : _transfer(new proto::TransferManager(nullptr)) {
+    if (path && path_is_standalone_config) {
+        _standalone_config = path;
+    }
+    _panel_title = L"MTP/PTP Devices";
+    DBG("MTPPlugin constructed");
+}
+
+MTPPlugin::~MTPPlugin() {
+    DBG("MTPPlugin destructed, current_device_key=%s", _current_device_key.c_str());
+    if (_backend) {
+        _backend->Disconnect();
+        _router.Release(_current_device_key);
     }
 }
 
-int MTPPlugin::ProcessKey(int Key, unsigned int ControlState)
-{
-    if (!_isConnected && Key == VK_RETURN && ControlState == 0) {
-        return ByKey_TryEnterSelectedDevice() ? TRUE : FALSE;
+int MTPPlugin::GetFindData(PluginPanelItem** panel_items, int* items_number, int) {
+    DBG("GetFindData mode=%d", static_cast<int>(_view_mode));
+    if (!panel_items || !items_number) {
+        return FALSE;
+    }
+
+    switch (_view_mode) {
+        case ViewMode::Devices:
+            return ListDevices(panel_items, items_number);
+        case ViewMode::Storages:
+            return ListStorages(panel_items, items_number);
+        case ViewMode::Objects:
+            return ListObjects(panel_items, items_number);
     }
     return FALSE;
 }
 
-bool MTPPlugin::IsEncodedId(const std::string& str)
-{
-    if (str.length() != 9 || (str[0] != 'S' && str[0] != 'O')) {
-        return false;
+void MTPPlugin::FreeFindData(PluginPanelItem* panel_items, int items_number) {
+    if (!panel_items || items_number <= 0) {
+        return;
     }
-    for (size_t i = 1; i < 9; i++) {
-        if (!std::isxdigit(str[i])) {
-            return false;
-        }
+
+    for (int i = 0; i < items_number; ++i) {
+        free((void*)panel_items[i].FindData.lpwszFileName);
+        free((void*)panel_items[i].Description);
     }
-    try {
-        uint32_t value = std::stoul(str.substr(1), nullptr, 16);
-        return value != 0;
-    } catch (const std::exception&) {
-        return false;
-    }
+    free(panel_items);
 }
 
-std::string MTPPlugin::GetCurrentEncodedId() const
-{
-    if (_currentDirID == 0) {
-        // At storage root, return storage encoded ID
-        if (_currentStorageID != 0) {
-            return _mtpFileSystem->EncodeStorageId(_currentStorageID);
-        } else {
-            return ""; // At device root
-        }
-    } else {
-        // In a directory, return object encoded ID
-        return _mtpFileSystem->EncodeObjectId(_currentDirID);
+void MTPPlugin::GetOpenPluginInfo(OpenPluginInfo* info) {
+    if (!info) {
+        return;
     }
+
+    info->StructSize = sizeof(OpenPluginInfo);
+    info->Flags = OPIF_SHOWPRESERVECASE | OPIF_USEHIGHLIGHTING | OPIF_ADDDOTS;
+    info->HostFile = nullptr;
+    info->CurDir = L"/";
+    info->Format = L"libusb-mtp-ptp";
+    info->PanelTitle = _panel_title.c_str();
+    info->InfoLines = nullptr;
+    info->DescrFiles = nullptr;
+    info->PanelModesArray = nullptr;
+    info->PanelModesNumber = 0;
+    info->StartPanelMode = 0;
+    info->StartSortMode = SM_NAME;
+    info->StartSortOrder = 0;
+    info->KeyBar = nullptr;
+    info->ShortcutData = nullptr;
 }
 
-void MTPPlugin::SetCurrentFromEncodedId(const std::string& encodedId)
-{
-    if (encodedId.empty()) {
-        _currentStorageID = 0;
-        _currentDirID = 0;
-        // Update MTPDevice to device root
-        if (_mtpDevice) {
-            _mtpDevice->NavigateToRoot();
+void MTPPlugin::UpdateObjectsPanelTitle() {
+    std::string title = _current_storage_name.empty() ? "Objects" : _current_storage_name;
+    for (const auto& part : _dir_stack) {
+        if (part.empty()) {
+            continue;
         }
-    } else if (encodedId[0] == 'S') {
-        // Storage ID
-        _currentStorageID = _mtpFileSystem->DecodeStorageId(encodedId);
-        _currentDirID = 0; // At storage root
-        // Update MTPDevice to storage root
-        if (_mtpDevice) {
-            std::string storageName = _mtpFileSystem->GetStorageName();
-            _mtpDevice->SetCurrentStorage(_currentStorageID, storageName);
+        if (!title.empty()) {
+            title += "/";
         }
-    } else if (encodedId[0] == 'O') {
-        // Object ID (directory)
-        _currentDirID = _mtpFileSystem->DecodeObjectId(encodedId);
-        // Find which storage this object belongs to
-        _currentStorageID = _mtpFileSystem->FindStorageForObject(_currentDirID);
-        // Update MTPDevice with directory info
-        if (_mtpDevice) {
-            // Get directory name from MTP
-            LIBMTP_file_t* objectFile = LIBMTP_Get_Filemetadata(_mtpDevice->GetDevice(), _currentDirID);
-            if (objectFile && objectFile->filename) {
-                std::string dirName = std::string(objectFile->filename);
-                _mtpDevice->SetCurrentDir(_currentDirID, dirName);
-                LIBMTP_destroy_file_t(objectFile);
+        title += part;
+    }
+    if (title.empty()) {
+        title = "Objects";
+    }
+    _panel_title = StrMB2Wide(title);
+}
+
+int MTPPlugin::SetDirectory(const wchar_t* dir, int) {
+    DBG("SetDirectory dir=%s view_mode=%d cur_dev=%s cur_storage=%u cur_parent=%u",
+        dir ? StrWide2MB(dir).c_str() : "(null)",
+        static_cast<int>(_view_mode),
+        _current_device_key.c_str(),
+        _current_storage_id,
+        _current_parent);
+    if (!dir) {
+        return FALSE;
+    }
+
+    std::string d = StrWide2MB(dir);
+    if (d == "/") {
+        _view_mode = ViewMode::Devices;
+        _current_storage_id = 0;
+        _current_parent = 0;
+        _current_storage_name.clear();
+        _current_device_name.clear();
+        _dir_stack.clear();
+        _name_token_index.clear();
+        if (_backend) {
+            _backend->Disconnect();
+            _router.Release(_current_device_key);
+            _backend.reset();
+            _transfer->SetBackend(nullptr);
+        }
+        _current_device_key.clear();
+        _panel_title = L"MTP/PTP Devices";
+        return TRUE;
+    }
+
+    if (d == "..") {
+        if (_view_mode == ViewMode::Objects && _current_parent != 0) {
+            const uint32_t prev = _current_parent;
+            auto st = _backend->Stat(_current_parent);
+            if (st.ok) {
+                _current_parent = st.value.parent;
+            } else {
+                _current_parent = 0;
             }
+            if (!_dir_stack.empty()) {
+                _dir_stack.pop_back();
+            }
+            UpdateObjectsPanelTitle();
+            DBG("SetDirectory back object=%u new_parent=%u", prev, _current_parent);
+            return TRUE;
         }
+        if (_view_mode == ViewMode::Objects && _current_storage_id != 0) {
+            _view_mode = ViewMode::Storages;
+            _current_parent = 0;
+            _current_storage_id = 0;
+            _current_storage_name.clear();
+            _dir_stack.clear();
+            _panel_title = StrMB2Wide(_current_device_name.empty() ? "Storages" : _current_device_name);
+            return TRUE;
+        }
+        if (_view_mode == ViewMode::Storages) {
+            _view_mode = ViewMode::Devices;
+            _current_storage_id = 0;
+            _current_parent = 0;
+            _name_token_index.clear();
+            _current_storage_name.clear();
+            _current_device_name.clear();
+            _dir_stack.clear();
+            if (_backend) {
+                _backend->Disconnect();
+                _router.Release(_current_device_key);
+                _backend.reset();
+                _transfer->SetBackend(nullptr);
+            }
+            _current_device_key.clear();
+            _panel_title = L"MTP/PTP Devices";
+            return TRUE;
+        }
+        return TRUE;
     }
+
+    auto it = _name_token_index.find(d);
+    if (it == _name_token_index.end() || it->second.empty()) {
+        DBG("SetDirectory unresolved dir=%s", d.c_str());
+        return FALSE;
+    }
+    DBG("SetDirectory dir=%s token=%s", d.c_str(), it->second.c_str());
+    return EnterByToken(it->second) ? TRUE : FALSE;
 }
 
+int MTPPlugin::ProcessKey(int key, unsigned int control_state) {
+    DBG("ProcessKey key=%d ctrl=0x%x mode=%d", key, control_state, static_cast<int>(_view_mode));
+    if (key == VK_F3 && NoControls(control_state)) {
+        return ExecuteSelected(OPM_VIEW) ? TRUE : FALSE;
+    }
+    if (key == VK_F4 && NoControls(control_state)) {
+        return ExecuteSelected(OPM_EDIT) ? TRUE : FALSE;
+    }
+    if ((key == VK_F5 || key == VK_F6) && NoControls(control_state)) {
+        if (CrossPanelCopyMoveSameDevice(key == VK_F6)) {
+            return TRUE;
+        }
+    }
+    if (key == VK_F6 && control_state == PKF_SHIFT) {
+        return RenameSelectedItem() ? TRUE : FALSE;
+    }
+    return FALSE;
+}
 
-int MTPPlugin::GetDeviceData(PluginPanelItem **pPanelItem, int *pItemsNumber)
-{
-    DBG("Getting device data...");
-    LIBMTP_Init();
-    
-    LIBMTP_raw_device_t* rawdevices;
-    int numrawdevices;
-    LIBMTP_error_number_t err = LIBMTP_Detect_Raw_Devices(&rawdevices, &numrawdevices);
-    
-    if (err != LIBMTP_ERROR_NONE) {
-        DBG("Failed to detect devices: %d - showing error message", err);
-        *pItemsNumber = 1;
-        *pPanelItem = (PluginPanelItem*)calloc(1, sizeof(PluginPanelItem));
-        PluginPanelItem& item = (*pPanelItem)[0];
-        item.FindData.lpwszFileName = (wchar_t*)calloc(50, sizeof(wchar_t));
-        wcscpy((wchar_t*)item.FindData.lpwszFileName, L"MTP detection failed");
-        item.FindData.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
-        item.FindData.nFileSize = 0;
-        item.FindData.nPhysicalSize = 0;
-        item.FindData.ftCreationTime = {0};
-        item.FindData.ftLastAccessTime = {0};
-        item.FindData.ftLastWriteTime = {0};
-        return TRUE;
+int MTPPlugin::ProcessEvent(int event, void* param) {
+    (void)param;
+    if (!_backend || !_backend->IsReady()) {
+        return FALSE;
     }
-    
-    DBG("Found %d devices", numrawdevices);
-    
-    if (numrawdevices == 0) {
-        DBG("No devices found - showing message");
-        *pItemsNumber = 1;
-        *pPanelItem = (PluginPanelItem*)calloc(1, sizeof(PluginPanelItem));
-        PluginPanelItem& item = (*pPanelItem)[0];
-        item.FindData.lpwszFileName = (wchar_t*)calloc(50, sizeof(wchar_t));
-        wcscpy((wchar_t*)item.FindData.lpwszFileName, L"No MTP devices found");
-        item.FindData.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
-        item.FindData.nFileSize = 0;
-        item.FindData.nPhysicalSize = 0;
-        item.FindData.ftCreationTime = {0};
-        item.FindData.ftLastAccessTime = {0};
-        item.FindData.ftLastWriteTime = {0};
-        LIBMTP_FreeMemory(rawdevices);
-        return TRUE;
+
+    // Poll transport events on idle redraw cycles to invalidate stale cache on device-side changes.
+    if (event == FE_IDLE) {
+        _backend->PollEvents();
     }
-    
-    *pItemsNumber = numrawdevices;
-    *pPanelItem = (PluginPanelItem*)calloc(numrawdevices, sizeof(PluginPanelItem));
-    
-    for (int i = 0; i < numrawdevices; i++) {
-        PluginPanelItem& item = (*pPanelItem)[i];
-        std::string deviceId = std::to_string(rawdevices[i].bus_location) + "_" + std::to_string(rawdevices[i].devnum);
-        DBG("Creating device item %d: ID='%s', bus=%d, dev=%d", i, deviceId.c_str(), rawdevices[i].bus_location, rawdevices[i].devnum);
-        
-        std::string friendlyName = GetDeviceFriendlyNameFromRawDevice(rawdevices[i]);
-        DBG("GetDeviceData: Got friendly name: '%s'", friendlyName.c_str());
-        
-        std::string currentDeviceId = std::to_string(rawdevices[i].bus_location) + "_" + std::to_string(rawdevices[i].devnum);
-        if (currentDeviceId == _deviceSerial && !_deviceName.empty()) {
-            friendlyName = _deviceName;
-            DBG("GetDeviceData: Using stored friendly name for previously connected device: '%s'", friendlyName.c_str());
-        }
-        
-        if (friendlyName.empty()) {
-            friendlyName = "Device " + std::to_string(i + 1);
-            DBG("GetDeviceData: Using fallback name: '%s'", friendlyName.c_str());
-        }
-        
-        std::wstring wideFriendlyName = StrMB2Wide(friendlyName);
-        item.FindData.lpwszFileName = (wchar_t*)calloc(wideFriendlyName.length() + 1, sizeof(wchar_t));
-        if (item.FindData.lpwszFileName) {
-            const wchar_t* src = wideFriendlyName.c_str();
-            wchar_t* dst = const_cast<wchar_t*>(item.FindData.lpwszFileName);
-            while (*src) *dst++ = *src++;
-            *dst = L'\0';
-        }
-        
-        char* deviceIdPtr = (char*)malloc(deviceId.length() + 1);
-        if (deviceIdPtr) {
-            strcpy(deviceIdPtr, deviceId.c_str());
-            item.UserData = (DWORD_PTR)deviceIdPtr;
-            DBG("GetDeviceData: Stored device ID in UserData: '%s' (ptr=%p, UserData=%p)", deviceIdPtr, deviceIdPtr, (void*)item.UserData);
-        } else {
-            item.UserData = 0;
-            DBG("GetDeviceData: Failed to allocate memory for device ID");
-        }
-        
-        item.FindData.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
-        item.FindData.nFileSize = 0;
-        item.FindData.nPhysicalSize = 0;
-        item.FindData.ftCreationTime = {0};
-        item.FindData.ftLastAccessTime = {0};
-        item.FindData.ftLastWriteTime = {0};
+    return FALSE;
+}
+
+int MTPPlugin::MakeDirectory(const wchar_t** name, int) {
+    if (!_backend || !_backend->IsReady() || !name || !*name) {
+        return FALSE;
     }
-    
-    LIBMTP_FreeMemory(rawdevices);
-    DBG("Successfully created %d panel items", numrawdevices);
-    DBG("GetDeviceData completed successfully");
+
+    std::string dir = StrWide2MB(*name);
+    auto st = _backend->MakeDirectory(dir, _current_storage_id, _current_parent);
+    if (!st.ok) {
+        SetErrorFromStatus(st);
+        return FALSE;
+    }
     return TRUE;
 }
 
-int MTPPlugin::GetFileData(PluginPanelItem **pPanelItem, int *pItemsNumber)
-{
-    if (!_isConnected) {
-        // Not connected - show device list
-        return GetDeviceData(pPanelItem, pItemsNumber);
-    }
-    
-    if (!_mtpFileSystem) {
-        *pPanelItem = nullptr;
-        *pItemsNumber = 0;
+int MTPPlugin::DeleteFiles(PluginPanelItem* panel_item, int items_number, int) {
+    if (!_backend || !_backend->IsReady() || !panel_item || items_number <= 0) {
         return FALSE;
     }
-    
-    try {
-        // Convert current numeric IDs to encoded ID for ListDirectory
-        std::string currentEncodedId = GetCurrentEncodedId();
-        DBG("GetFileData: Getting files for encoded ID: '%s' (storage=%u, dir=%u)", 
-            currentEncodedId.c_str(), _currentStorageID, _currentDirID);
-        
-        std::vector<PluginPanelItem> files = _mtpFileSystem->ListDirectory(currentEncodedId);
-        DBG("GetFileData: ListDirectory returned %zu files", files.size());
-        
-        if (files.empty()) {
-            DBG("GetFileData: Empty directory - returning empty result (ADDDOTS will add '..')");
-            *pPanelItem = nullptr;
-            *pItemsNumber = 0;
-            return TRUE;  // Return TRUE for empty directory - ADDDOTS will add ".."
+
+    int okCount = 0;
+    int lastErr = 0;
+    for (int i = 0; i < items_number; ++i) {
+        std::string token;
+        if (!ResolvePanelToken(panel_item[i], token)) {
+            continue;
         }
-        
-        *pItemsNumber = files.size();
-        *pPanelItem = (PluginPanelItem*)calloc(files.size(), sizeof(PluginPanelItem));
-        
-        for (size_t i = 0; i < files.size(); i++) {
-            (*pPanelItem)[i] = files[i];
+        uint32_t handle = 0;
+        if (!ParseObjectToken(token, handle)) {
+            continue;
         }
-        
-        return TRUE;
-        
-    } catch (const std::exception& e) {
-        DBG("Exception in GetFileData: %s", e.what());
-        *pPanelItem = nullptr;
-        *pItemsNumber = 0;
-        return FALSE;
+
+        auto st = _backend->Delete(handle, true);
+        if (st.ok) {
+            ++okCount;
+        } else {
+            lastErr = MapErrorToErrno(st);
+        }
     }
+
+    if (okCount == 0 && lastErr != 0) {
+        WINPORT(SetLastError)(lastErr);
+    }
+    return okCount > 0 ? TRUE : FALSE;
 }
 
-bool MTPPlugin::ByKey_TryEnterSelectedDevice()
-{
-    std::string deviceId = GetCurrentPanelItemDeviceName();
-    if (deviceId.empty()) {
-        DBG("No device selected");
+int MTPPlugin::GetFiles(PluginPanelItem* panel_item, int items_number, int, const wchar_t** dest_path, int) {
+    if (!_backend || !_backend->IsReady() || !_transfer || !panel_item || items_number <= 0 || !dest_path || !dest_path[0]) {
+        return FALSE;
+    }
+
+    const std::string baseDest = StrWide2MB(dest_path[0]);
+    proto::CancellationSource cancelSrc;
+
+    int okCount = 0;
+    int lastErr = 0;
+    for (int i = 0; i < items_number; ++i) {
+        std::string token;
+        if (!ResolvePanelToken(panel_item[i], token)) {
+            continue;
+        }
+
+        uint32_t handle = 0;
+        if (!ParseObjectToken(token, handle)) {
+            continue;
+        }
+
+        auto st = _backend->Stat(handle);
+        if (!st.ok) {
+            lastErr = MapErrorToErrno(st.code);
+            continue;
+        }
+
+        const std::string localPath = JoinPath(baseDest, st.value.name);
+        proto::Status op;
+        if (st.value.is_dir) {
+            uint64_t done = 0;
+            uint64_t total = 0;
+            op = DownloadRecursive(st.value.storage_id, st.value.handle, localPath, cancelSrc.Token(), done, total);
+        } else {
+            op = _transfer->Download(st.value.handle,
+                                     localPath,
+                                     [](uint64_t, uint64_t) {},
+                                     cancelSrc.Token());
+        }
+
+        if (op.ok) {
+            ++okCount;
+        } else {
+            lastErr = MapErrorToErrno(op);
+        }
+    }
+
+    if (okCount == 0 && lastErr != 0) {
+        WINPORT(SetLastError)(lastErr);
+    }
+
+    return okCount > 0 ? TRUE : FALSE;
+}
+
+int MTPPlugin::PutFiles(PluginPanelItem* panel_item, int items_number, int move, const wchar_t* src_path, int) {
+    if (!_backend || !_backend->IsReady() || !panel_item || items_number <= 0 || !src_path) {
+        return FALSE;
+    }
+    if (_view_mode != ViewMode::Objects || _current_storage_id == 0) {
+        WINPORT(SetLastError)(EINVAL);
+        return FALSE;
+    }
+
+    std::string baseSrc = StrWide2MB(src_path);
+    if (baseSrc.empty()) {
+        WINPORT(SetLastError)(EINVAL);
+        return FALSE;
+    }
+
+    proto::CancellationSource cancelSrc;
+    int successCount = 0;
+    int lastErr = 0;
+
+    for (int i = 0; i < items_number; ++i) {
+        if (!panel_item[i].FindData.lpwszFileName) {
+            continue;
+        }
+        std::string fileName = StrWide2MB(panel_item[i].FindData.lpwszFileName);
+        if (fileName.empty() || fileName == "." || fileName == "..") {
+            continue;
+        }
+
+        std::string localPath = JoinPath(baseSrc, fileName);
+        auto st = _backend->Upload(localPath,
+                                   fileName,
+                                   _current_storage_id,
+                                   _current_parent,
+                                   [](uint64_t, uint64_t) {},
+                                   cancelSrc.Token());
+        if (st.ok) {
+            ++successCount;
+            if (move) {
+                (void)RemoveLocalPathRecursively(localPath);
+            }
+        } else {
+            lastErr = MapErrorToErrno(st);
+        }
+    }
+
+    if (successCount == 0 && lastErr != 0) {
+        WINPORT(SetLastError)(lastErr);
+    }
+    return successCount > 0 ? TRUE : FALSE;
+}
+
+int MTPPlugin::Execute(PluginPanelItem* panel_item, int items_number, int op_mode) {
+    if (!_backend || !_backend->IsReady() || !panel_item || items_number <= 0) {
+        return FALSE;
+    }
+    const bool isView = ((op_mode & OPM_VIEW) != 0) || ((op_mode & OPM_QUICKVIEW) != 0);
+    const bool isEdit = ((op_mode & OPM_EDIT) != 0);
+    if (!isView && !isEdit) {
+        return FALSE;
+    }
+
+    std::string token;
+    if (!ResolvePanelToken(panel_item[0], token)) {
+        return FALSE;
+    }
+    uint32_t handle = 0;
+    if (!ParseObjectToken(token, handle)) {
+        return FALSE;
+    }
+
+    auto st = _backend->Stat(handle);
+    if (!st.ok || st.value.is_dir) {
+        return FALSE;
+    }
+
+    std::string localPath = "/tmp/mtp_view_" + std::to_string(st.value.handle) + "_" + st.value.name;
+    proto::CancellationSource cancelSrc;
+    auto dl = _transfer->Download(st.value.handle, localPath, [](uint64_t, uint64_t) {}, cancelSrc.Token());
+    if (!dl.ok) {
+        SetErrorFromStatus(dl);
+        return FALSE;
+    }
+
+    std::wstring wpath = StrMB2Wide(localPath);
+    std::wstring wtitle = StrMB2Wide(st.value.name);
+    if (isEdit) {
+        g_Info.Editor(wpath.c_str(),
+                      wtitle.empty() ? nullptr : wtitle.c_str(),
+                      -1, -1, -1, -1,
+                      EF_NONMODAL,
+                      -1,
+                      -1,
+                      CP_UTF8);
+    } else {
+        g_Info.Viewer(wpath.c_str(),
+                      wtitle.empty() ? nullptr : wtitle.c_str(),
+                      -1, -1, -1, -1,
+                      VF_NONMODAL | VF_DELETEONCLOSE,
+                      CP_UTF8);
+    }
+    return TRUE;
+}
+
+PluginStartupInfo* MTPPlugin::GetInfo() {
+    return &g_Info;
+}
+
+PluginPanelItem MTPPlugin::MakePanelItem(const std::string& name,
+                                         bool is_dir,
+                                         uint64_t size,
+                                         uint64_t mtime_epoch,
+                                         uint32_t object_id,
+                                         uint32_t storage_id,
+                                         uint32_t packed_device_id,
+                                         const std::string& description,
+                                         uint64_t ctime_epoch,
+                                         uint32_t file_attributes,
+                                         uint32_t unix_mode) const {
+    PluginPanelItem item = {{{0}}};
+
+    std::wstring wname = StrMB2Wide(name);
+    item.FindData.lpwszFileName = static_cast<wchar_t*>(calloc(wname.size() + 1, sizeof(wchar_t)));
+    if (item.FindData.lpwszFileName) {
+        wcscpy(const_cast<wchar_t*>(item.FindData.lpwszFileName), wname.c_str());
+    }
+
+    if (file_attributes == 0) {
+        file_attributes = is_dir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+    }
+    if (unix_mode == 0) {
+        unix_mode = is_dir ? (S_IFDIR | 0755) : (S_IFREG | 0644);
+    }
+    item.FindData.dwFileAttributes = file_attributes;
+    item.FindData.dwUnixMode = unix_mode;
+    item.FindData.nFileSize = size;
+    item.FindData.nPhysicalSize = size;
+    if (ctime_epoch == 0) {
+        ctime_epoch = mtime_epoch;
+    }
+    item.FindData.ftCreationTime = EpochToFileTime(ctime_epoch);
+    item.FindData.ftLastAccessTime = item.FindData.ftCreationTime;
+    item.FindData.ftLastWriteTime = item.FindData.ftCreationTime;
+    if (mtime_epoch != 0) {
+        item.FindData.ftLastWriteTime = EpochToFileTime(mtime_epoch);
+        item.FindData.ftLastAccessTime = item.FindData.ftLastWriteTime;
+    }
+
+    item.UserData = static_cast<DWORD_PTR>(object_id);
+
+    if (!description.empty()) {
+        std::wstring wd = StrMB2Wide(description);
+        item.Description = static_cast<wchar_t*>(calloc(wd.size() + 1, sizeof(wchar_t)));
+        if (item.Description) {
+            wcscpy(const_cast<wchar_t*>(item.Description), wd.c_str());
+        }
+    }
+    item.Reserved[0] = static_cast<DWORD_PTR>(storage_id);
+    item.Reserved[1] = static_cast<DWORD_PTR>(packed_device_id);
+
+    return item;
+}
+
+std::string MTPPlugin::BuildObjectDescription(const proto::ObjectEntry& entry) {
+    if (entry.format != 0) {
+        const char* name = FormatCodeName(entry.format);
+        if (name) {
+            return std::string(name);
+        }
+        char fmt[32] = {};
+        snprintf(fmt, sizeof(fmt), "Unknown (0x%04X)", entry.format);
+        return std::string(fmt);
+    }
+    return std::string();
+}
+
+PluginPanelItem MTPPlugin::MakeObjectPanelItem(const proto::ObjectEntry& entry,
+                                               uint32_t packed_device_id) const {
+    uint32_t attrs = entry.is_dir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+    if (entry.is_hidden || (!entry.name.empty() && entry.name[0] == '.')) {
+        attrs |= FILE_ATTRIBUTE_HIDDEN;
+    }
+    if (entry.is_readonly) {
+        attrs |= FILE_ATTRIBUTE_READONLY;
+    }
+
+    uint32_t mode = entry.is_dir ? (S_IFDIR | 0755) : (S_IFREG | 0644);
+    if (entry.is_readonly) {
+        mode = entry.is_dir ? (S_IFDIR | 0555) : (S_IFREG | 0444);
+    }
+
+    return MakePanelItem(entry.name,
+                         entry.is_dir,
+                         entry.size,
+                         entry.mtime_epoch,
+                         entry.handle,
+                         entry.storage_id,
+                         packed_device_id,
+                         BuildObjectDescription(entry),
+                         entry.ctime_epoch,
+                         attrs,
+                         mode);
+}
+
+bool MTPPlugin::GetSelectedPanelUserData(std::string& out) const {
+    out.clear();
+    intptr_t size = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, 0);
+    DBG("GetSelectedPanelUserData size=%ld", static_cast<long>(size));
+    if (size < static_cast<intptr_t>(sizeof(PluginPanelItem))) {
         return false;
     }
-    
-    DBG("Connecting to selected device: %s", deviceId.c_str());
-    wcscpy(_PanelTitle, L"Connecting to MTP device...");
-    g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
-    
-    bool connected = false;
-    try {
-        connected = ConnectToDevice(deviceId);
-    } catch (const std::exception& e) {
-        DBG("Exception during device connection: %s", e.what());
-        connected = false;
-    }
-    
-    if (!connected) {
-        DBG("Failed to connect to device: %s", deviceId.c_str());
-        const wchar_t* errorMsg[] = { L"Failed to connect to MTP device.", L"Device may be busy or not responding." };
-        g_Info.Message(g_Info.ModuleNumber, FMSG_MB_OK | FMSG_WARNING, nullptr, errorMsg, 2, 0);
+
+    PluginPanelItem* item = static_cast<PluginPanelItem*>(malloc(size + 0x100));
+    if (!item) {
         return false;
     }
-    
-    _isConnected = true;
-    _deviceSerial = deviceId;
-    _currentStorageID = 0;
-    _currentDirID = 0;
-    
-    std::wstring panel_title = L"MTP Device:/";
-    wcscpy(_PanelTitle, panel_title.c_str());
-    g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
-    
-    PanelRedrawInfo ri = {};
-    ri.CurrentItem = ri.TopPanelItem = 0;
-    g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, (LONG_PTR)&ri);
-    
-    DBG("Successfully connected to device: %s", deviceId.c_str());
+
+    memset(item, 0, size + 0x100);
+    intptr_t ok = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, reinterpret_cast<LONG_PTR>(item));
+    DBG("GetSelectedPanelUserData fetch_ok=%ld user_data=%llu storage=%llu dev=%llu name=%s",
+        static_cast<long>(ok),
+        static_cast<unsigned long long>(item->UserData),
+        static_cast<unsigned long long>(item->Reserved[0]),
+        static_cast<unsigned long long>(item->Reserved[1]),
+        item->FindData.lpwszFileName ? StrWide2MB(item->FindData.lpwszFileName).c_str() : "(null)");
+    if (ok) {
+        (void)ResolvePanelToken(*item, out);
+    }
+    DBG("GetSelectedPanelUserData token=%s", out.c_str());
+    free(item);
+    return !out.empty();
+}
+
+bool MTPPlugin::GetSelectedPanelFileName(std::string& out) const {
+    out.clear();
+    intptr_t size = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, 0);
+    if (size < static_cast<intptr_t>(sizeof(PluginPanelItem))) {
+        return false;
+    }
+
+    PluginPanelItem* item = static_cast<PluginPanelItem*>(malloc(size + 0x100));
+    if (!item) {
+        return false;
+    }
+    memset(item, 0, size + 0x100);
+
+    intptr_t ok = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, reinterpret_cast<LONG_PTR>(item));
+    if (!ok) {
+        DBG("GetSelectedPanelFileName fetch failed");
+        free(item);
+        return false;
+    }
+
+    if (item->FindData.lpwszFileName) {
+        out = StrWide2MB(item->FindData.lpwszFileName);
+    }
+    DBG("GetSelectedPanelFileName ok name=%s", out.c_str());
+    free(item);
+    return !out.empty();
+}
+
+bool MTPPlugin::EnsureConnected(const std::string& device_key) {
+    DBG("EnsureConnected device_key=%s", device_key.c_str());
+    auto it = _device_binds.find(device_key);
+    if (it == _device_binds.end()) {
+        DBG("EnsureConnected missing device bind key=%s", device_key.c_str());
+        return false;
+    }
+
+    if (_backend && _current_device_key == device_key && _backend->IsReady()) {
+        return true;
+    }
+
+    if (_backend) {
+        DBG("EnsureConnected disconnect previous key=%s", _current_device_key.c_str());
+        _backend->Disconnect();
+        _router.Release(_current_device_key);
+    }
+
+    DBG("EnsureConnected acquire backend kind=%d vid=%04x pid=%04x if=%u ep_in=0x%02x ep_out=0x%02x ep_int=0x%02x",
+        static_cast<int>(it->second.kind),
+        it->second.candidate.vendor_id,
+        it->second.candidate.product_id,
+        it->second.candidate.interface_number,
+        it->second.candidate.endpoint_bulk_in,
+        it->second.candidate.endpoint_bulk_out,
+        it->second.candidate.endpoint_interrupt_in);
+    _backend = _router.Acquire(it->second.candidate, it->second.kind);
+    if (!_backend) {
+        DBG("EnsureConnected acquire returned null");
+        return false;
+    }
+
+    auto st = _backend->Connect();
+    if (!st.ok) {
+        DBG("Connect failed code=%d msg=%s", static_cast<int>(st.code), st.message.c_str());
+        SetErrorFromStatus(st);
+        _backend.reset();
+        return false;
+    }
+
+    DBG("Connect success device_key=%s", device_key.c_str());
+    _current_device_key = device_key;
+    _transfer->SetBackend(_backend);
     return true;
 }
 
-std::string MTPPlugin::GetDeviceFriendlyName(const std::string& deviceId)
-{
-    LIBMTP_Init();
-    
-    // Parse device ID to get bus and device number
-    size_t underscore_pos = deviceId.find('_');
-    if (underscore_pos == std::string::npos) {
-        return "";
+int MTPPlugin::ListDevices(PluginPanelItem** panel_items, int* items_number) {
+    auto devices = _router.EnumerateAndClassify();
+    if (!devices.ok) {
+        DBG("EnumerateAndClassify failed code=%d msg=%s", static_cast<int>(devices.code), devices.message.c_str());
+        WINPORT(SetLastError)(MapErrorToErrno(devices.code));
+        return FALSE;
     }
-    
-    int bus_location = std::stoi(deviceId.substr(0, underscore_pos));
-    int devnum = std::stoi(deviceId.substr(underscore_pos + 1));
-    
-    // Find the raw device
-    LIBMTP_raw_device_t* rawdevices;
-    int numrawdevices;
-    LIBMTP_error_number_t err = LIBMTP_Detect_Raw_Devices(&rawdevices, &numrawdevices);
-    
-    if (err != LIBMTP_ERROR_NONE) {
-        LIBMTP_FreeMemory(rawdevices);
-        return "";
-    }
-    
-    // Find matching device
-    for (int i = 0; i < numrawdevices; i++) {
-        if (rawdevices[i].bus_location == bus_location && rawdevices[i].devnum == devnum) {
-            // Open device to get real name with timeout
-            std::atomic<bool> device_opened{false};
-            std::atomic<LIBMTP_mtpdevice_t*> device_result{nullptr};
-            
-            std::thread open_thread([&]() {
-                device_result = LIBMTP_Open_Raw_Device(&rawdevices[i]);
-                device_opened = true;
-            });
-            
-            // Wait for device opening with timeout (2 seconds)
-            auto start_time = std::chrono::steady_clock::now();
-            while (!device_opened) {
-                auto elapsed = std::chrono::steady_clock::now() - start_time;
-                if (elapsed > std::chrono::seconds(2)) {
-                    DBG("Device opening timeout for friendly name");
-                    open_thread.detach();
-                    break;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            }
-            
-            LIBMTP_mtpdevice_t* device = nullptr;
-            if (device_opened) {
-                open_thread.join();
-                device = device_result.load();
-            }
-            
-            if (device) {
-                char* manufacturer = LIBMTP_Get_Manufacturername(device);
-                char* model = LIBMTP_Get_Modelname(device);
-                
-                std::string friendly_name;
-                if (manufacturer && model) {
-                    friendly_name = std::string(manufacturer) + " " + std::string(model);
-                } else if (manufacturer) {
-                    friendly_name = std::string(manufacturer);
-                } else if (model) {
-                    friendly_name = std::string(model);
-                } else {
-                    friendly_name = "";
-                }
-                
-                if (manufacturer) free(manufacturer);
-                if (model) free(model);
-                
-                LIBMTP_Release_Device(device);
-                LIBMTP_FreeMemory(rawdevices);
-                return friendly_name;
-            } else {
-                // Device opening failed or timed out
-                LIBMTP_FreeMemory(rawdevices);
-                return "";
-            }
+    DBG("EnumerateAndClassify found=%zu", devices.value.size());
+
+    _device_binds.clear();
+
+    std::vector<PluginPanelItem> out;
+    out.reserve(devices.value.size());
+    _name_token_index.clear();
+    for (const auto& p : devices.value) {
+        DeviceBind bind;
+        bind.candidate = p.candidate;
+        bind.kind = p.device.backend;
+        _device_binds[p.device.key] = bind;
+
+        std::string name = p.device.product.empty() ? "USB Device" : p.device.product;
+        if (!p.device.serial.empty()) {
+            name += " [" + p.device.serial + "]";
+        }
+        const std::string desc = BackendTag(p.device.backend) + " " +
+                                 (p.device.manufacturer.empty() ? "" : p.device.manufacturer);
+
+        std::string token = "DEV|" + p.device.key;
+        const uint32_t packedDev = PackDeviceTriplet(static_cast<uint8_t>(p.candidate.id.bus),
+                                                     static_cast<uint8_t>(p.candidate.id.address),
+                                                     static_cast<uint8_t>(p.candidate.id.interface_number));
+        DBG("ListDevices item name=%s token=%s backend=%d vid=%04x pid=%04x serial=%s",
+            name.c_str(),
+            token.c_str(),
+            static_cast<int>(p.device.backend),
+            p.device.vendor_id,
+            p.device.product_id,
+            p.device.serial.c_str());
+        out.push_back(MakePanelItem(name, true, 0, 0, 0, 0, packedDev, desc));
+        auto em = _name_token_index.emplace(name, token);
+        if (!em.second) {
+            em.first->second.clear();
         }
     }
-    
-    LIBMTP_FreeMemory(rawdevices);
-    return "";
+
+    if (out.empty()) {
+        out.push_back(MakePanelItem("No MTP/PTP USB devices found", false, 0, 0, 0, 0, 0));
+    }
+
+    *items_number = static_cast<int>(out.size());
+    *panel_items = static_cast<PluginPanelItem*>(calloc(out.size(), sizeof(PluginPanelItem)));
+    if (!*panel_items) {
+        return FALSE;
+    }
+
+    for (size_t i = 0; i < out.size(); ++i) {
+        (*panel_items)[i] = out[i];
+    }
+    return TRUE;
 }
 
-std::string MTPPlugin::GetDeviceFriendlyNameFromRawDevice(const LIBMTP_raw_device_t& rawDevice)
-{
-    // Open the raw device to get MTP device information
-    // Need to cast away const for the libmtp function
-    LIBMTP_raw_device_t* nonConstRawDevice = const_cast<LIBMTP_raw_device_t*>(&rawDevice);
-    DBG("GetDeviceFriendlyNameFromRawDevice: Attempting to open device bus=%d, dev=%d", rawDevice.bus_location, rawDevice.devnum);
-    LIBMTP_mtpdevice_t* device = LIBMTP_Open_Raw_Device_Uncached(nonConstRawDevice);
-    if (!device) {
-        // Device can't be opened - return empty string
-        DBG("GetDeviceFriendlyNameFromRawDevice: Failed to open device bus=%d, dev=%d", rawDevice.bus_location, rawDevice.devnum);
-        return "";
+int MTPPlugin::ListStorages(PluginPanelItem** panel_items, int* items_number) {
+    if (!_backend || !_backend->IsReady()) {
+        DBG("ListStorages backend not ready backend=%p", _backend.get());
+        return FALSE;
     }
-    
-    std::string friendlyName;
-    
-    // Try to get friendly name first
-    char* friendly = LIBMTP_Get_Friendlyname(device);
-    if (friendly) {
-        friendlyName = std::string(friendly);
-        DBG("GetDeviceFriendlyNameFromRawDevice: Found friendly name: '%s'", friendlyName.c_str());
-        free(friendly);
-    } else {
-        DBG("GetDeviceFriendlyNameFromRawDevice: No friendly name available, trying manufacturer/model");
-        // If no friendly name, try to construct from manufacturer and model
-        char* manufacturer = LIBMTP_Get_Manufacturername(device);
-        char* model = LIBMTP_Get_Modelname(device);
-        
-        if (manufacturer && model) {
-            friendlyName = std::string(manufacturer) + " " + std::string(model);
-            DBG("GetDeviceFriendlyNameFromRawDevice: Using manufacturer+model: '%s'", friendlyName.c_str());
-        } else if (manufacturer) {
-            friendlyName = std::string(manufacturer);
-            DBG("GetDeviceFriendlyNameFromRawDevice: Using manufacturer: '%s'", friendlyName.c_str());
-        } else if (model) {
-            friendlyName = std::string(model);
-            DBG("GetDeviceFriendlyNameFromRawDevice: Using model: '%s'", friendlyName.c_str());
-        } else {
-            DBG("GetDeviceFriendlyNameFromRawDevice: No manufacturer or model available");
-            // No device information available
-            friendlyName = "";
+
+    auto storages = _backend->ListStorages();
+    if (!storages.ok) {
+        DBG("ListStorages failed code=%d msg=%s", static_cast<int>(storages.code), storages.message.c_str());
+        WINPORT(SetLastError)(MapErrorToErrno(storages.code));
+        return FALSE;
+    }
+    DBG("ListStorages count=%zu", storages.value.size());
+
+    std::vector<PluginPanelItem> out;
+    out.reserve(storages.value.size());
+    const uint32_t packedDev = PackDeviceFromKey(_current_device_key);
+    _name_token_index.clear();
+    for (const auto& s : storages.value) {
+        std::string name = s.description.empty() ? ("Storage " + std::to_string(s.id)) : s.description;
+        std::string token = "STO|" + std::to_string(s.id);
+        DBG("ListStorages item id=%u name=%s volume=%s free=%llu cap=%llu token=%s",
+            s.id,
+            name.c_str(),
+            s.volume.c_str(),
+            static_cast<unsigned long long>(s.free_bytes),
+            static_cast<unsigned long long>(s.max_capacity),
+            token.c_str());
+        out.push_back(MakePanelItem(name, true, s.max_capacity, 0, 0, s.id, packedDev, s.volume));
+        auto em = _name_token_index.emplace(name, token);
+        if (!em.second) {
+            em.first->second.clear();
         }
-        
-        if (manufacturer) free(manufacturer);
-        if (model) free(model);
     }
-    
-    LIBMTP_Release_Device(device);
-    return friendlyName;
+
+    *items_number = static_cast<int>(out.size());
+    *panel_items = static_cast<PluginPanelItem*>(calloc(out.size(), sizeof(PluginPanelItem)));
+    if (!*panel_items) {
+        return FALSE;
+    }
+
+    for (size_t i = 0; i < out.size(); ++i) {
+        (*panel_items)[i] = out[i];
+    }
+    return TRUE;
 }
 
-std::string MTPPlugin::GetCurrentPanelItemDeviceName()
-{
-    intptr_t size = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, 0);
-    if (size < (intptr_t)sizeof(PluginPanelItem)) {
-        DBG("No selected item or invalid size: %ld", (long)size);
-        return "";
+int MTPPlugin::ListObjects(PluginPanelItem** panel_items, int* items_number) {
+    if (!_backend || !_backend->IsReady() || _current_storage_id == 0) {
+        DBG("ListObjects precondition failed backend=%p ready=%d storage=%u parent=%u",
+            _backend.get(),
+            (_backend && _backend->IsReady()) ? 1 : 0,
+            _current_storage_id,
+            _current_parent);
+        return FALSE;
     }
-    
-    PluginPanelItem *item = (PluginPanelItem *)malloc(size + 0x100);
-    if (!item) {
-        DBG("Failed to allocate memory for panel item");
-        return "";
+
+    auto children = _backend->ListChildren(_current_storage_id, _current_parent);
+    if (!children.ok) {
+        DBG("ListChildren failed storage=%u parent=%u code=%d msg=%s",
+            _current_storage_id, _current_parent, static_cast<int>(children.code), children.message.c_str());
+        WINPORT(SetLastError)(MapErrorToErrno(children.code));
+        return FALSE;
     }
-    
-    memset(item, 0, size + 0x100);
-    g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, (LONG_PTR)(void *)item);
-    
-    if (!item->UserData) {
-        DBG("No UserData in selected item");
-        free(item);
-        return "";
+    DBG("ListChildren storage=%u parent=%u count=%zu", _current_storage_id, _current_parent, children.value.size());
+
+    std::vector<PluginPanelItem> out;
+    out.reserve(children.value.size());
+    const uint32_t packedDev = PackDeviceFromKey(_current_device_key);
+    _name_token_index.clear();
+    for (const auto& e : children.value) {
+        std::string token = "OBJ|" + std::to_string(e.handle);
+        DBG("ListObjects item handle=%u parent=%u storage=%u dir=%d size=%llu name=%s token=%s",
+            e.handle,
+            e.parent,
+            e.storage_id,
+            e.is_dir ? 1 : 0,
+            static_cast<unsigned long long>(e.size),
+            e.name.c_str(),
+            token.c_str());
+        out.push_back(MakeObjectPanelItem(e, packedDev));
+        auto em = _name_token_index.emplace(e.name, token);
+        if (!em.second) {
+            em.first->second.clear();
+        }
     }
-    
-    char* deviceIdPtr = (char*)item->UserData;
-    DBG("GetCurrentPanelItemDeviceName: UserData=%p, deviceIdPtr=%p", (void*)item->UserData, deviceIdPtr);
-    std::string deviceId;
-    if (deviceIdPtr) {
-        deviceId = std::string(deviceIdPtr);
-        DBG("Extracted device ID from UserData: '%s' (ptr=%p)", deviceId.c_str(), deviceIdPtr);
-    } else {
-        DBG("deviceIdPtr is NULL!");
-        deviceId = "";
+
+    *items_number = static_cast<int>(out.size());
+    *panel_items = static_cast<PluginPanelItem*>(calloc(out.size(), sizeof(PluginPanelItem)));
+    if (!*panel_items) {
+        return FALSE;
     }
-    
-    free(item);
-    return deviceId;
+
+    for (size_t i = 0; i < out.size(); ++i) {
+        (*panel_items)[i] = out[i];
+    }
+    return TRUE;
 }
 
-std::wstring MTPPlugin::GeneratePanelTitle()
-{
-    if (!_isConnected) {
-        // Device selection mode - show "MTP Devices"
-        return L"MTP Devices";
-    }
-    
-    if (!_mtpDevice) {
-        return L"MTP Device";
-    }
-    
-    // Use centralized state from MTPDevice
-    std::string deviceName = _mtpDevice->GetFriendlyName();
-    if (deviceName.empty()) {
-        deviceName = "MTP Device";
-    }
-    
-    std::string currentPath = _mtpDevice->GetCurrentPath();
-    DBG("GeneratePanelTitle: deviceName='%s', currentPath='%s', storageID=%u, dirID=%u", 
-        deviceName.c_str(), currentPath.c_str(), _currentStorageID, _currentDirID);
-    
-    if (_currentStorageID == 0) {
-        // At device root (showing storages) - show device name
-        return StrMB2Wide(deviceName);
-    } else if (_currentDirID == 0) {
-        // At storage root - show current path (which should be "/")
-        return StrMB2Wide(currentPath);
-    } else {
-        // In a directory - show current path
-        return StrMB2Wide(currentPath);
-    }
-}
-
-bool MTPPlugin::ConnectToDevice(const std::string &deviceId)
-{
-    DBG("ConnectToDevice: Connecting to device: %s", deviceId.c_str());
-    
-    size_t underscore_pos = deviceId.find('_');
-    if (underscore_pos == std::string::npos) {
-        DBG("ConnectToDevice: Invalid device ID format: %s", deviceId.c_str());
+bool MTPPlugin::ParseStorageToken(const std::string& token, uint32_t& storage_id) const {
+    if (token.rfind("STO|", 0) != 0) {
         return false;
     }
-    
-    int bus_location = std::stoi(deviceId.substr(0, underscore_pos));
-    int devnum = std::stoi(deviceId.substr(underscore_pos + 1));
-    DBG("ConnectToDevice: Parsed bus=%d, dev=%d", bus_location, devnum);
-    
-    LIBMTP_Init();
-    LIBMTP_raw_device_t* rawdevices;
-    int numrawdevices;
-    LIBMTP_error_number_t err = LIBMTP_Detect_Raw_Devices(&rawdevices, &numrawdevices);
-    
-    if (err != LIBMTP_ERROR_NONE) {
-        DBG("ConnectToDevice: Error detecting devices: %d", err);
-        LIBMTP_FreeMemory(rawdevices);
+    try {
+        storage_id = static_cast<uint32_t>(std::stoul(token.substr(4)));
+        return true;
+    } catch (...) {
         return false;
     }
-    
-    for (int i = 0; i < numrawdevices; i++) {
-        if (rawdevices[i].bus_location == bus_location && rawdevices[i].devnum == devnum) {
-            _mtpDevice = std::make_unique<MTPDevice>(deviceId);
-            if (_mtpDevice && _mtpDevice->Connect()) {
-                _isConnected = true;
-                _deviceSerial = deviceId;
-                _mtpFileSystem = std::make_unique<MTPFileSystem>(std::shared_ptr<MTPDevice>(_mtpDevice.get(), [](MTPDevice*){}));
-                _currentStorageID = 0;
-                _currentDirID = 0;
-                
-                _deviceName = _mtpDevice->GetFriendlyName();
-                if (_deviceName.empty()) {
-                    _deviceName = "Device " + std::to_string(i + 1);
-                }
-                DBG("ConnectToDevice: Using device friendly name: '%s'", _deviceName.c_str());
-                DBG("ConnectToDevice: Successfully connected to device: %s", _deviceName.c_str());
-                LIBMTP_FreeMemory(rawdevices);
+}
+
+bool MTPPlugin::ParseObjectToken(const std::string& token, uint32_t& handle) const {
+    if (token.rfind("OBJ|", 0) != 0) {
+        return false;
+    }
+    try {
+        handle = static_cast<uint32_t>(std::stoul(token.substr(4)));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool MTPPlugin::ResolvePanelToken(const PluginPanelItem& item, std::string& token) const {
+    token.clear();
+    const uint32_t object_id = static_cast<uint32_t>(item.UserData);
+    const uint32_t storage_id = static_cast<uint32_t>(item.Reserved[0]);
+    const uint32_t packed_dev = static_cast<uint32_t>(item.Reserved[1]);
+
+    if (_view_mode == ViewMode::Objects) {
+        if (object_id != 0) {
+            token = "OBJ|" + std::to_string(object_id);
+            return true;
+        }
+    } else if (_view_mode == ViewMode::Storages) {
+        if (storage_id != 0) {
+            token = "STO|" + std::to_string(storage_id);
+            return true;
+        }
+    } else if (_view_mode == ViewMode::Devices) {
+        if (packed_dev != 0) {
+            const std::string key = DeviceKeyFromPacked(packed_dev);
+            if (!key.empty()) {
+                token = "DEV|" + key;
                 return true;
             }
         }
     }
-    
-    DBG("ConnectToDevice: Could not find or connect to device: %s", deviceId.c_str());
-    LIBMTP_FreeMemory(rawdevices);
+
+    if (object_id != 0) {
+        token = "OBJ|" + std::to_string(object_id);
+        return true;
+    }
+    if (storage_id != 0) {
+        token = "STO|" + std::to_string(storage_id);
+        return true;
+    }
+    if (packed_dev != 0) {
+        const std::string key = DeviceKeyFromPacked(packed_dev);
+        if (!key.empty()) {
+            token = "DEV|" + key;
+            return true;
+        }
+    }
+
+    if (item.FindData.lpwszFileName) {
+        std::string name = StrWide2MB(item.FindData.lpwszFileName);
+        auto it = _name_token_index.find(name);
+        if (it != _name_token_index.end() && !it->second.empty()) {
+            token = it->second;
+            return true;
+        }
+    }
     return false;
 }
 
-PluginStartupInfo *MTPPlugin::GetInfo()
-{
-    return &g_Info;
+int MTPPlugin::MapErrorToErrno(const proto::Status& st) const {
+    return MapErrorToErrno(st.code);
 }
 
-int MTPPlugin::MakeDirectory(const wchar_t **Name, int OpMode)
-{
-    if (!_isConnected || !_mtpDevice) {
-        return FALSE;
+int MTPPlugin::MapErrorToErrno(proto::ErrorCode code) const {
+    switch (code) {
+        case proto::ErrorCode::NotFound: return ENOENT;
+        case proto::ErrorCode::AccessDenied: return EACCES;
+        case proto::ErrorCode::Busy: return EBUSY;
+        case proto::ErrorCode::Timeout: return ETIMEDOUT;
+        case proto::ErrorCode::InvalidArgument: return EINVAL;
+        case proto::ErrorCode::Unsupported: return ENOTSUP;
+        case proto::ErrorCode::Cancelled: return ECANCELED;
+        case proto::ErrorCode::Disconnected: return ENODEV;
+        default: return EIO;
     }
-    
-    std::string dir_name;
-    if (Name && *Name) {
-        dir_name = StrWide2MB(*Name);
+}
+
+void MTPPlugin::SetErrorFromStatus(const proto::Status& st) const {
+    WINPORT(SetLastError)(MapErrorToErrno(st));
+}
+
+bool MTPPlugin::PromptInput(const wchar_t* title,
+                            const wchar_t* prompt,
+                            const wchar_t* history_name,
+                            const std::string& initial_value,
+                            std::string& out) const {
+    out.clear();
+
+    wchar_t input_buffer[1024] = {0};
+    if (!initial_value.empty()) {
+        std::wstring w = StrMB2Wide(initial_value);
+        wcsncpy(input_buffer, w.c_str(), (sizeof(input_buffer) / sizeof(input_buffer[0])) - 1);
     }
-    
-    if (!(OpMode & OPM_SILENT)) {
-        if (!MTPDialogs::AskCreateDirectory(dir_name)) {
-            return -1;
+
+    const bool ok = g_Info.InputBox(title,
+                                    prompt,
+                                    history_name,
+                                    nullptr,
+                                    input_buffer,
+                                    (sizeof(input_buffer) / sizeof(input_buffer[0])) - 1,
+                                    nullptr,
+                                    FIB_BUTTONS | FIB_NOUSELASTHISTORY);
+    if (!ok) {
+        return false;
+    }
+    out = StrWide2MB(input_buffer);
+    return !out.empty();
+}
+
+void MTPPlugin::RefreshPanel() const {
+    g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
+    g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, 0);
+}
+
+bool MTPPlugin::RenameSelectedItem() {
+    if (_view_mode != ViewMode::Objects || !_backend || !_backend->IsReady()) {
+        return false;
+    }
+
+    std::string token;
+    if (!GetSelectedPanelUserData(token)) {
+        return false;
+    }
+
+    uint32_t handle = 0;
+    if (!ParseObjectToken(token, handle)) {
+        return false;
+    }
+
+    std::string old_name;
+    if (!GetSelectedPanelFileName(old_name)) {
+        old_name = "";
+    }
+    if (old_name == "." || old_name == "..") {
+        return false;
+    }
+
+    std::string new_name;
+    if (!PromptInput(L"Rename",
+                     L"Enter new name:",
+                     L"MTP_Rename",
+                     old_name,
+                     new_name)) {
+        return false;
+    }
+    if (new_name == old_name) {
+        return true;
+    }
+
+    auto st = _backend->Rename(handle, new_name);
+    if (!st.ok) {
+        SetErrorFromStatus(st);
+        return false;
+    }
+
+    RefreshPanel();
+    return true;
+}
+
+bool MTPPlugin::ExecuteSelected(int op_mode) {
+    intptr_t size = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, 0);
+    if (size < static_cast<intptr_t>(sizeof(PluginPanelItem))) {
+        size = g_Info.Control(PANEL_ACTIVE, FCTL_GETCURRENTPANELITEM, 0, 0);
+        if (size < static_cast<intptr_t>(sizeof(PluginPanelItem))) {
+            return false;
         }
-    }
-    
-    if (dir_name.empty()) {
-        return FALSE;
-    }
-    
-    int result = _mtpDevice->CreateMTPDirectory(dir_name);
-    if (result == 0) {
-        if (Name && !(OpMode & OPM_SILENT)) {
-            wcscpy(_mk_dir, StrMB2Wide(dir_name).c_str());
-            *Name = _mk_dir;
+        PluginPanelItem* item = static_cast<PluginPanelItem*>(malloc(size + 0x100));
+        if (!item) {
+            return false;
         }
-        return TRUE;
+        memset(item, 0, size + 0x100);
+        intptr_t ok = g_Info.Control(PANEL_ACTIVE, FCTL_GETCURRENTPANELITEM, 0, reinterpret_cast<LONG_PTR>(item));
+        if (!ok) {
+            free(item);
+            return false;
+        }
+        const int rc = Execute(item, 1, op_mode);
+        free(item);
+        return rc != FALSE;
+    }
+
+    PluginPanelItem* item = static_cast<PluginPanelItem*>(malloc(size + 0x100));
+    if (!item) {
+        return false;
+    }
+    memset(item, 0, size + 0x100);
+    intptr_t ok = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, reinterpret_cast<LONG_PTR>(item));
+    if (!ok) {
+        free(item);
+        return false;
+    }
+    const int rc = Execute(item, 1, op_mode);
+    free(item);
+    return rc != FALSE;
+}
+
+bool MTPPlugin::CrossPanelCopyMoveSameDevice(bool move) {
+    HANDLE active = INVALID_HANDLE_VALUE;
+    g_Info.Control(PANEL_ACTIVE, FCTL_GETPANELPLUGINHANDLE, 0, reinterpret_cast<LONG_PTR>(&active));
+    if (active != reinterpret_cast<HANDLE>(this)) {
+        return false;
+    }
+
+    HANDLE passive = INVALID_HANDLE_VALUE;
+    g_Info.Control(PANEL_PASSIVE, FCTL_GETPANELPLUGINHANDLE, 0, reinterpret_cast<LONG_PTR>(&passive));
+    if (passive == INVALID_HANDLE_VALUE || passive == nullptr) {
+        return false;
+    }
+    auto* dst = reinterpret_cast<MTPPlugin*>(passive);
+    if (!dst || dst == this) {
+        return false;
+    }
+
+    if (!_backend || !_backend->IsReady() || !dst->_backend || !dst->_backend->IsReady()) {
+        return false;
+    }
+    if (_view_mode != ViewMode::Objects || dst->_view_mode != ViewMode::Objects) {
+        return false;
+    }
+    if (_current_device_key.empty() || _current_device_key != dst->_current_device_key) {
+        DBG("CrossPanelCopyMoveSameDevice skip: different devices src=%s dst=%s",
+            _current_device_key.c_str(), dst->_current_device_key.c_str());
+        return false;
+    }
+    if (_current_storage_id == 0 || dst->_current_storage_id == 0) {
+        return false;
+    }
+
+    auto getItemByCmd = [&](HANDLE panel, int cmd, int idx, PluginPanelItem& out, std::vector<uint8_t>& buf) -> bool {
+        intptr_t sz = g_Info.Control(panel, cmd, idx, 0);
+        if (sz < static_cast<intptr_t>(sizeof(PluginPanelItem))) {
+            return false;
+        }
+        buf.assign(static_cast<size_t>(sz + 0x100), 0);
+        auto* item = reinterpret_cast<PluginPanelItem*>(buf.data());
+        intptr_t ok = g_Info.Control(panel, cmd, idx, reinterpret_cast<LONG_PTR>(item));
+        if (!ok) {
+            return false;
+        }
+        out = *item;
+        return true;
+    };
+
+    PanelInfo pi = {};
+    g_Info.Control(PANEL_ACTIVE, FCTL_GETPANELINFO, 0, reinterpret_cast<LONG_PTR>(&pi));
+
+    std::vector<uint32_t> handles;
+    std::string firstName;
+    if (pi.SelectedItemsNumber > 0) {
+        for (int i = 0; i < pi.SelectedItemsNumber; ++i) {
+            PluginPanelItem item = {};
+            std::vector<uint8_t> buf;
+            if (!getItemByCmd(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, i, item, buf)) {
+                continue;
+            }
+            std::string token;
+            if (!ResolvePanelToken(item, token)) {
+                continue;
+            }
+            uint32_t h = 0;
+            if (!ParseObjectToken(token, h)) {
+                continue;
+            }
+            auto st = _backend->Stat(h);
+            if (!st.ok || st.value.name == "." || st.value.name == "..") {
+                continue;
+            }
+            if (firstName.empty()) {
+                firstName = st.value.name;
+            }
+            handles.push_back(h);
+        }
     } else {
-        WINPORT(SetLastError)(result);
-        return FALSE;
+        PluginPanelItem item = {};
+        std::vector<uint8_t> buf;
+        if (getItemByCmd(PANEL_ACTIVE, FCTL_GETCURRENTPANELITEM, 0, item, buf)) {
+            std::string token;
+            if (ResolvePanelToken(item, token)) {
+                uint32_t h = 0;
+                if (ParseObjectToken(token, h)) {
+                    auto st = _backend->Stat(h);
+                    if (st.ok && st.value.name != "." && st.value.name != "..") {
+                        firstName = st.value.name;
+                        handles.push_back(h);
+                    }
+                }
+            }
+        }
     }
+
+    if (handles.empty()) {
+        DBG("CrossPanelCopyMoveSameDevice skip: no selected object handles");
+        return false;
+    }
+    DBG("CrossPanelCopyMoveSameDevice op=%s count=%zu dst_storage=%u dst_parent=%u",
+        move ? "move" : "copy", handles.size(), dst->_current_storage_id, dst->_current_parent);
+
+    for (uint32_t h : handles) {
+        proto::Status st;
+        if (move) {
+            st = _backend->MoveObject(h, dst->_current_storage_id, dst->_current_parent);
+        } else {
+            auto cp = _backend->CopyObject(h, dst->_current_storage_id, dst->_current_parent);
+            if (!cp.ok) {
+                st = proto::Status::Failure(cp.code, cp.message, cp.retryable);
+            } else {
+                st = proto::OkStatus();
+            }
+        }
+        if (!st.ok) {
+            DBG("CrossPanelCopyMoveSameDevice failed handle=%u code=%d msg=%s",
+                h, static_cast<int>(st.code), st.message.c_str());
+            SetErrorFromStatus(st);
+            if (st.code == proto::ErrorCode::Unsupported) {
+                const wchar_t* msg[] = {
+                    move ? L"MTP MoveObject is not supported by this device."
+                         : L"MTP CopyObject is not supported by this device."
+                };
+                g_Info.Message(g_Info.ModuleNumber, FMSG_MB_OK | FMSG_WARNING, nullptr, msg, 1, 0);
+            }
+            return true;
+        }
+    }
+
+    g_Info.Control(PANEL_ACTIVE, FCTL_CLEARSELECTION, 0, 0);
+    g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
+    g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, 0);
+    g_Info.Control(PANEL_PASSIVE, FCTL_UPDATEPANEL, 0, 0);
+    g_Info.Control(PANEL_PASSIVE, FCTL_REDRAWPANEL, 0, 0);
+    DBG("CrossPanelCopyMoveSameDevice success op=%s", move ? "move" : "copy");
+    return true;
 }
 
-int MTPPlugin::DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMode)
-{
-    if (ItemsNumber <= 0 || !_isConnected || !_mtpDevice || !PanelItem) {
-        return FALSE;
+bool MTPPlugin::EnterSelectedItem() {
+    std::string token;
+    if (!GetSelectedPanelUserData(token)) {
+        DBG("EnterSelectedItem no selected token");
+        return false;
     }
-    
-    // Check for special directory entries that cannot be deleted
-    for (int i = 0; i < ItemsNumber; i++) {
-        if (PanelItem[i].FindData.lpwszFileName) {
-            if (wcscmp(PanelItem[i].FindData.lpwszFileName, L"..") == 0) {
-                DBG("DeleteFiles: Cannot delete parent directory '..'");
-                WINPORT(SetLastError)(EACCES); // Access denied
-                return FALSE;
-            }
-            if (wcscmp(PanelItem[i].FindData.lpwszFileName, L".") == 0) {
-                DBG("DeleteFiles: Cannot delete current directory '.'");
-                WINPORT(SetLastError)(EACCES); // Access denied
-                return FALSE;
-            }
-        }
+    if (token.rfind("DEV|", 0) != 0 && token.rfind("STO|", 0) != 0 && token.rfind("OBJ|", 0) != 0) {
+        DBG("EnterSelectedItem invalid token=%s", token.c_str());
+        return false;
     }
-    
-    if (!(OpMode & OPM_SILENT)) {
-        std::wstring itemName;
-        std::wstring itemType;
-        
-        if (ItemsNumber == 1) {
-            itemName = PanelItem[0].FindData.lpwszFileName;
-            if (PanelItem[0].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                itemType = L"the folder";
-            } else {
-                itemType = L"the file";
+    DBG("EnterSelectedItem token=%s", token.c_str());
+    return EnterByToken(token);
+}
+
+bool MTPPlugin::EnterByToken(const std::string& token) {
+    DBG("EnterByToken token=%s mode=%d", token.c_str(), static_cast<int>(_view_mode));
+
+    if (token.rfind("DEV|", 0) == 0) {
+        const std::string key = token.substr(4);
+        DBG("EnterByToken device key=%s", key.c_str());
+        if (!EnsureConnected(key)) {
+            DBG("EnterByToken device connect failed key=%s", key.c_str());
+            const wchar_t* msg[] = {L"Failed to connect to selected device."};
+            g_Info.Message(g_Info.ModuleNumber, FMSG_MB_OK | FMSG_WARNING, nullptr, msg, 1, 0);
+            return false;
+        }
+        auto it = _device_binds.find(key);
+        _current_device_name.clear();
+        if (it != _device_binds.end()) {
+            _current_device_name = it->second.candidate.product;
+            if (!it->second.candidate.serial.empty()) {
+                if (!_current_device_name.empty()) {
+                    _current_device_name += " ";
+                }
+                _current_device_name += "[" + it->second.candidate.serial + "]";
             }
-        } else {
-            itemName = std::to_wstring(ItemsNumber) + L" items";
-            itemType = L"";
         }
-        
-        int result;
-        if (!itemType.empty()) {
-            result = MTPDialogs::Message(FMSG_MB_YESNO,
-                L"Delete",
-                L"Do you wish to delete",
-                itemType,
-                itemName);
-        } else {
-            result = MTPDialogs::Message(FMSG_MB_YESNO,
-                L"Delete",
-                L"Do you wish to delete",
-                itemName);
+        if (_current_device_name.empty()) {
+            _current_device_name = "Storages";
         }
-        
-        if (result != 0) {
-            return -1;
-        }
-        
-        bool needsRedDialog = false;
-        bool hasMultipleItems = (ItemsNumber > 1);
-        bool hasNonEmptyDirs = false;
-        
-        for (int i = 0; i < ItemsNumber; i++) {
-            if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                hasNonEmptyDirs = true;
+        _view_mode = ViewMode::Storages;
+        _panel_title = StrMB2Wide(_current_device_name);
+        _current_storage_name.clear();
+        _dir_stack.clear();
+        RefreshPanel();
+        return true;
+    }
+
+    uint32_t storage = 0;
+    if (ParseStorageToken(token, storage)) {
+        DBG("EnterByToken storage id=%u", storage);
+        for (const auto& kv : _name_token_index) {
+            if (kv.second == token) {
+                _last_storage_name = kv.first;
                 break;
             }
         }
-        
-        if (hasMultipleItems || hasNonEmptyDirs) {
-            needsRedDialog = true;
-        }
-        
-        if (needsRedDialog) {
-            int fileCount = 0;
-            int folderCount = 0;
-            for (int i = 0; i < ItemsNumber; i++) {
-                if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                    folderCount++;
-                } else {
-                    fileCount++;
-                }
-            }
-            
-            int redResult = 0;
-            if (hasMultipleItems && !hasNonEmptyDirs) {
-                redResult = MTPDialogs::Message(FMSG_WARNING | FMSG_MB_YESNO,
-                    L"Delete files",
-                    L"Do you wish to delete",
-                    std::to_wstring(ItemsNumber) + L" items");
-            } else if (hasNonEmptyDirs && ItemsNumber == 1) {
-                redResult = MTPDialogs::Message(FMSG_WARNING | FMSG_MB_YESNO,
-                    L"Delete folder",
-                    L"The following folder will be deleted:",
-                    L"/" + std::wstring(PanelItem[0].FindData.lpwszFileName));
-            } else if (hasNonEmptyDirs && ItemsNumber > 1) {
-                if (fileCount > 0 && folderCount > 0) {
-                    redResult = MTPDialogs::Message(FMSG_WARNING | FMSG_MB_YESNO,
-                        L"Delete items",
-                        L"The following items will be deleted:",
-                        std::to_wstring(folderCount) + L" folders",
-                        std::to_wstring(fileCount) + L" files");
-                } else {
-                    redResult = MTPDialogs::Message(FMSG_WARNING | FMSG_MB_YESNO,
-                        L"Delete folders",
-                        L"The following folders will be deleted:",
-                        std::to_wstring(ItemsNumber) + L" folders");
-                }
-            }
-            
-            if (redResult != 0) {
-                return -1;
-            }
-        }
-    }
-    
-    int successCount = 0;
-    int lastErrorCode = 0;
-
-    if (OpMode & OPM_SILENT) {
-        for (int i = 0; i < ItemsNumber; i++) {
-            uint32_t objectId = 0;
-            if (PanelItem[i].UserData != 0) {
-                const char* encodedIdPtr = reinterpret_cast<const char*>(PanelItem[i].UserData);
-                if (encodedIdPtr) {
-                    objectId = _mtpFileSystem->DecodeObjectId(encodedIdPtr);
-                }
-            }
-            if (objectId == 0) continue;
-
-            int res = (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                ? _mtpDevice->DeleteMTPDirectory(objectId)
-                : _mtpDevice->DeleteMTPFile(objectId);
-            
-            if (res == 0) successCount++;
-            else lastErrorCode = res;
-        }
-    } else {
-        ProgressOperation op(L"Delete from MTP device");
-        op.GetState().count_total = ItemsNumber;
-
-        op.Run([&](ProgressState& state) {
-            for (int i = 0; i < ItemsNumber && !state.ShouldAbort(); i++) {
-                uint32_t objectId = 0;
-                if (PanelItem[i].UserData != 0) {
-                    const char* encodedIdPtr = reinterpret_cast<const char*>(PanelItem[i].UserData);
-                    if (encodedIdPtr) {
-                        objectId = _mtpFileSystem->DecodeObjectId(encodedIdPtr);
-                    }
-                }
-                if (objectId == 0) continue;
-
-                std::string fileName = StrWide2MB(PanelItem[i].FindData.lpwszFileName);
-                {
-                    std::lock_guard<std::mutex> lock(state.mtx_strings);
-                    state.current_file = StrMB2Wide(fileName);
-                }
-                state.count_complete = i;
-
-                int res = (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                    ? _mtpDevice->DeleteMTPDirectory(objectId)
-                    : _mtpDevice->DeleteMTPFile(objectId);
-
-                if (res == 0 && !state.ShouldAbort()) {
-                    successCount++;
-                } else if (res != 0) {
-                    lastErrorCode = res;
-                }
-            }
-            state.count_complete = ItemsNumber;
-        });
+        _last_storage_id = storage;
+        _current_storage_name = _last_storage_name.empty() ? ("Storage " + std::to_string(storage)) : _last_storage_name;
+        _dir_stack.clear();
+        _current_storage_id = storage;
+        _current_parent = 0;
+        _view_mode = ViewMode::Objects;
+        UpdateObjectsPanelTitle();
+        RefreshPanel();
+        return true;
     }
 
-    if (successCount == 0 && lastErrorCode != 0) {
-        WINPORT(SetLastError)(lastErrorCode);
+    uint32_t handle = 0;
+    if (ParseObjectToken(token, handle)) {
+        DBG("EnterByToken object handle=%u", handle);
+        auto st = _backend ? _backend->Stat(handle) : proto::Result<proto::ObjectEntry>{};
+        DBG("EnterByToken object stat ok=%d code=%d is_dir=%d storage=%u parent=%u name=%s",
+            st.ok ? 1 : 0,
+            st.ok ? 0 : static_cast<int>(st.code),
+            (st.ok && st.value.is_dir) ? 1 : 0,
+            st.ok ? st.value.storage_id : 0,
+            st.ok ? st.value.parent : 0,
+            st.ok ? st.value.name.c_str() : "");
+        if (st.ok && st.value.is_dir) {
+            _current_storage_id = st.value.storage_id;
+            _current_parent = handle;
+            _view_mode = ViewMode::Objects;
+            _dir_stack.push_back(st.value.name);
+            UpdateObjectsPanelTitle();
+            RefreshPanel();
+            return true;
+        }
     }
-    
-    return (successCount > 0) ? TRUE : FALSE;
+
+    DBG("EnterByToken unhandled token=%s", token.c_str());
+    return false;
 }
 
-static int CheckOverwrite(const std::wstring &localPath, bool isMultiple, bool isDir, int &overwriteMode, ProgressState &state)
-{
-    if (overwriteMode == 1) return 0; // Overwrite all
-    if (overwriteMode == 2) return 1; // Skip all
-
-    OverwriteDialog dlg(localPath, isMultiple, isDir);
-    OverwriteDialog::Result res = dlg.Ask();
-
-    switch (res) {
-        case OverwriteDialog::OVERWRITE: return 0;
-        case OverwriteDialog::SKIP: return 1;
-        case OverwriteDialog::OVERWRITE_ALL: overwriteMode = 1; return 0;
-        case OverwriteDialog::SKIP_ALL: overwriteMode = 2; return 1;
-        default: state.SetAborting(); return 2; // Cancel
+proto::Status MTPPlugin::DownloadRecursive(uint32_t storage_id,
+                                           uint32_t handle,
+                                           const std::string& local_root,
+                                           proto::CancellationToken token,
+                                           uint64_t& downloaded,
+                                           uint64_t& total) {
+    if (mkdir(local_root.c_str(), 0755) != 0 && errno != EEXIST) {
+        return proto::Status::Failure(proto::ErrorCode::Io, "mkdir failed");
     }
-}
 
-int MTPPlugin::ProcessFileTransfer(PluginPanelItem *PanelItem, int ItemsNumber, int OpMode,
-                                  const std::string& opName, const std::string& destPath,
-                                  const std::wstring& srcName, const std::wstring& dstName,
-                                  bool confirmTransfer,
-                                  std::function<int(int index, const std::string& itemName, std::function<void(int)>, std::function<bool()>, int&, bool)> processItem)
-{
-    if (ItemsNumber <= 0 || !PanelItem) return FALSE;
+    auto children = _backend->ListChildren(storage_id, handle);
+    if (!children.ok) {
+        return proto::Status::Failure(children.code, children.message, children.retryable);
+    }
 
-    if (confirmTransfer && !(OpMode & OPM_SILENT)) {
-        std::string firstName = StrWide2MB(PanelItem[0].FindData.lpwszFileName);
-        if (!MTPDialogs::AskCopyMove(opName == "Move", opName == "Uploading", const_cast<std::string&>(destPath), firstName, ItemsNumber)) {
-            return -1;
+    for (const auto& child : children.value) {
+        if (token.IsCancelled()) {
+            return proto::Status::Failure(proto::ErrorCode::Cancelled, "Cancelled by user");
         }
-    }
 
-    uint64_t totalBytes = 0;
-    uint64_t totalFiles = 0;
-    std::map<int, DirectoryInfo> dirInfos;
-
-    // Pre-scan
-    for (int i = 0; i < ItemsNumber; i++) {
-        if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            uint32_t objectId = 0;
-            if (PanelItem[i].UserData != 0) {
-                const char* encodedIdPtr = reinterpret_cast<const char*>(PanelItem[i].UserData);
-                if (encodedIdPtr) {
-                    objectId = _mtpFileSystem->DecodeObjectId(encodedIdPtr);
-                }
-            }
-            if (objectId != 0) {
-                DirectoryInfo info = _mtpDevice->GetDirectoryInfo(objectId);
-                totalBytes += info.total_size;
-                totalFiles += info.file_count;
-                dirInfos[i] = info;
+        const std::string target = JoinPath(local_root, child.name);
+        if (child.is_dir) {
+            auto st = DownloadRecursive(child.storage_id, child.handle, target, token, downloaded, total);
+            if (!st.ok) {
+                return st;
             }
         } else {
-            totalBytes += PanelItem[i].FindData.nFileSize;
-            totalFiles++;
-        }
-    }
-
-    int successCount = 0;
-    int lastErrorCode = 0;
-
-    if (OpMode & OPM_SILENT) {
-        int overwriteMode = 1; // Overwrite all in silent mode
-        bool isMultiple = ItemsNumber > 1;
-        for (int i = 0; i < ItemsNumber; i++) {
-            std::string fileName = StrWide2MB(PanelItem[i].FindData.lpwszFileName);
-            int res = processItem(i, fileName, nullptr, nullptr, overwriteMode, isMultiple);
-            if (res == 0) successCount++;
-            else lastErrorCode = res;
-        }
-    } else {
-        ProgressOperation op(StrMB2Wide(opName));
-        op.GetState().all_total = totalBytes;
-        op.GetState().count_total = totalFiles;
-        op.GetState().source_path = srcName;
-        op.GetState().dest_path = dstName;
-
-        int overwriteMode = 0;
-        bool isMultiple = ItemsNumber > 1;
-
-        op.Run([&](ProgressState& state) {
-            uint64_t processedBytes = 0;
-            uint64_t completedCount = 0;
-
-            for (int i = 0; i < ItemsNumber && !state.ShouldAbort(); i++) {
-                std::string fileName = StrWide2MB(PanelItem[i].FindData.lpwszFileName);
-                bool isDir = (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-                
-                {
-                    std::lock_guard<std::mutex> lock(state.mtx_strings);
-                    state.current_file = StrMB2Wide(fileName);
-                }
-                state.is_directory = isDir;
-                state.file_total = isDir ? dirInfos[i].total_size : PanelItem[i].FindData.nFileSize;
-                state.file_complete = 0;
-
-                auto progressCb = [&](int percent) {
-                    state.file_complete = percent;
-                    if (state.file_total > 0) {
-                        state.all_complete = processedBytes + (state.file_total * percent) / 100;
-                    }
-                    INPUT_RECORD ir = {};
-                    ir.EventType = NOOP_EVENT;
-                    DWORD dw = 0;
-                    WINPORT(WriteConsoleInput)(0, &ir, 1, &dw);
-                };
-
-                auto abortCb = [&]() { return state.ShouldAbort(); };
-
-                int res = processItem(i, fileName, progressCb, abortCb, overwriteMode, isMultiple);
-                if (res == 0 && !state.ShouldAbort()) {
-                    successCount++;
-                    processedBytes += state.file_total;
-                    completedCount += isDir ? dirInfos[i].file_count : 1;
-                    state.all_complete = processedBytes;
-                    state.count_complete = completedCount;
-                } else if (res != 0) {
-                    lastErrorCode = res;
-                }
+            total += child.size;
+            auto st = _transfer->Download(child.handle,
+                                          target,
+                                          [&downloaded](uint64_t done, uint64_t all) {
+                                              (void)all;
+                                              downloaded += done;
+                                          },
+                                          token);
+            if (!st.ok) {
+                return st;
             }
-        });
+        }
     }
 
-    if (successCount == 0 && lastErrorCode != 0) {
-        WINPORT(SetLastError)(lastErrorCode);
-    }
-
-    return (successCount > 0) ? TRUE : FALSE;
+    return proto::OkStatus();
 }
-
-int MTPPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, const wchar_t **DestPath, int OpMode)
-{
-    if (ItemsNumber <= 0 || !_isConnected || !_mtpDevice || !PanelItem) {
-        DBG("GetFiles: Invalid parameters");
-        return FALSE;
-    }
-    
-    DBG("GetFiles: Processing %d items, Move=%d, OpMode=0x%x", ItemsNumber, Move, OpMode);
-    
-    // Handle F3 View operation (OPM_VIEW)
-    if (OpMode & OPM_VIEW) {
-        DBG("GetFiles: F3 View operation detected");
-        if (ItemsNumber > 0) {
-            std::string fileName = PanelItem[0].FindData.lpwszFileName ? 
-                                  StrWide2MB(PanelItem[0].FindData.lpwszFileName) : "unknown_file";
-            
-            if (PanelItem[0].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                DBG("GetFiles: Cannot view directory: %s", fileName.c_str());
-                return FALSE;
-            }
-            
-            // Get object ID from UserData
-            uint32_t objectId = 0;
-            if (PanelItem[0].UserData != 0) {
-                char* encodedIdPtr = (char*)PanelItem[0].UserData;
-                if (encodedIdPtr) {
-                    std::string encodedId = std::string(encodedIdPtr);
-                    if (encodedId[0] == 'O') {
-                        objectId = _mtpFileSystem->DecodeObjectId(encodedId);
-                    }
-                }
-            }
-            
-            if (objectId == 0 || !_mtpDevice->IsFile(objectId)) {
-                return FALSE;
-            }
-            
-            if (!DestPath || !DestPath[0]) {
-                return FALSE;
-            }
-            
-            std::string destPath = StrWide2MB(DestPath[0]);
-            std::string tempPath = destPath;
-            if (tempPath.back() != '/' && tempPath.back() != '\\') {
-                tempPath += "/";
-            }
-            tempPath += fileName; 
-            
-            int downloadResult = -1;
-            ProgressOperation op(L"Viewing");
-            op.Run([&](ProgressState& state) {
-                state.current_file = StrMB2Wide(fileName);
-                auto progressCb = [&](int percent) { state.file_complete = percent; };
-                auto abortCb = [&]() { return state.ShouldAbort(); };
-                downloadResult = _mtpDevice->DownloadFile(objectId, tempPath, progressCb, abortCb);
-            });
-            
-            return (downloadResult == 0) ? TRUE : FALSE;
-        }
-        return FALSE;
-    }
-    
-    if (!DestPath) return FALSE;
-    std::string destPath = StrWide2MB(DestPath[0]);
-    if (destPath.empty()) return FALSE;
-    
-    // Logic for GetFiles using helper
-    return ProcessFileTransfer(PanelItem, ItemsNumber, OpMode, Move ? "Move from MTP" : "Copy from MTP", destPath, 
-                              L"MTP Device", StrMB2Wide(destPath),
-                              !(OpMode & OPM_VIEW), // confirmTransfer
-                              [&](int i, const std::string& fileName, std::function<void(int)> progress, std::function<bool()> abort, int &overwriteMode, bool isMultiple) -> int {
-        
-        uint32_t objectId = 0;
-        if (PanelItem[i].UserData != 0) {
-            const char* encodedIdPtr = reinterpret_cast<const char*>(PanelItem[i].UserData);
-            if (encodedIdPtr) {
-                objectId = _mtpFileSystem->DecodeObjectId(encodedIdPtr);
-            }
-        }
-        
-        if (objectId == 0) return EINVAL;
-        
-        std::string deviceFileName = _mtpDevice->GetFileName(objectId);
-        if (deviceFileName.empty()) deviceFileName = fileName;
-        
-        std::string fullDestPath = destPath;
-        if (fullDestPath.back() != '/' && fullDestPath.back() != '\\') {
-            fullDestPath += "/";
-        }
-        fullDestPath += deviceFileName;
-
-        struct stat st;
-        if (stat(fullDestPath.c_str(), &st) == 0) {
-            bool isDir = (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-            ProgressState dummyState;
-            int action = CheckOverwrite(StrMB2Wide(fullDestPath), isMultiple, isDir, overwriteMode, dummyState);
-            if (abort() || dummyState.ShouldAbort()) return -1;
-            if (action == 1) return 0; // Skip
-        }
-        
-        int result = (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-            ? _mtpDevice->DownloadDirectory(objectId, fullDestPath, progress, abort)
-            : _mtpDevice->DownloadFile(objectId, fullDestPath, progress, abort);
-        
-        if (result == 0 && Move) {
-            if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                _mtpDevice->DeleteMTPDirectory(objectId);
-            else
-                _mtpDevice->DeleteMTPFile(objectId);
-        }
-        
-        return result;
-    });
-}
-
-int MTPPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, const wchar_t *SrcPath, int OpMode)
-{
-    if (ItemsNumber <= 0 || !_isConnected || !_mtpDevice || !PanelItem || !SrcPath) {
-        DBG("PutFiles: Invalid parameters");
-        return FALSE;
-    }
-    
-    std::string srcPath = StrWide2MB(SrcPath);
-    if (srcPath.empty()) return FALSE;
-    
-    return ProcessFileTransfer(PanelItem, ItemsNumber, OpMode, Move ? "Move to MTP" : "Copy to MTP", srcPath, 
-                              StrMB2Wide(srcPath), L"MTP Device",
-                              !(OpMode & OPM_SILENT), // confirmTransfer
-                              [&](int i, const std::string& fileName, std::function<void(int)> progress, std::function<bool()> abort, int &overwriteMode, bool isMultiple) -> int {
-        
-        std::string fullSrcPath = srcPath;
-        if (fullSrcPath.back() != '/' && fullSrcPath.back() != '\\') {
-            fullSrcPath += "/";
-        }
-        fullSrcPath += fileName;
-        
-        // Overwrite check for MTP is complex as we don't have an easy "exists" call without listing
-        // For now, assume MTP device handles it or just overwrite
-        
-        int result = (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-            ? _mtpDevice->UploadDirectory(fullSrcPath, fileName, 0, progress, abort)
-            : _mtpDevice->UploadFile(fullSrcPath, fileName, 0, progress, abort);
-        
-        if (result == 0 && Move) {
-            if (!(PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-                remove(fullSrcPath.c_str());
-            }
-        }
-        
-        return result;
-    });
-}
-
-

@@ -44,6 +44,43 @@ static int CheckOverwrite(const std::wstring& destPath, bool isMultiple, bool is
 	}
 }
 
+static bool RemoveLocalPathRecursively(const std::string& path) {
+	struct stat st = {};
+	if (lstat(path.c_str(), &st) != 0) {
+		return false;
+	}
+	if (S_ISDIR(st.st_mode)) {
+		DIR* dir = opendir(path.c_str());
+		if (!dir) {
+			return false;
+		}
+		bool ok = true;
+		while (true) {
+			dirent* ent = readdir(dir);
+			if (!ent) {
+				break;
+			}
+			if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+				continue;
+			}
+			if (!RemoveLocalPathRecursively(path + "/" + ent->d_name)) {
+				ok = false;
+				break;
+			}
+		}
+		closedir(dir);
+		if (!ok) {
+			return false;
+		}
+		return rmdir(path.c_str()) == 0;
+	}
+	return unlink(path.c_str()) == 0;
+}
+
+static bool NoControls(unsigned int control_state) {
+	return (control_state & (PKF_CONTROL | PKF_ALT | PKF_SHIFT)) == 0;
+}
+
 static void ShowCommandOutputMessage(const std::string &output)
 {
 	if (output.empty()) {
@@ -209,7 +246,179 @@ int ADBPlugin::ProcessKey(int Key, unsigned int ControlState)
 	if (!_isConnected && Key == VK_RETURN && ControlState == 0) {
 		return ByKey_TryEnterSelectedDevice() ? TRUE : FALSE;
 	}
+	if ((Key == VK_F5 || Key == VK_F6) && NoControls(ControlState)) {
+		return CrossPanelCopyMoveSameDevice(Key == VK_F6) ? TRUE : FALSE;
+	}
 	return FALSE;
+}
+
+bool ADBPlugin::CrossPanelCopyMoveSameDevice(bool move)
+{
+	if (!_isConnected || !_adbDevice || _deviceSerial.empty()) {
+		return false;
+	}
+
+	HANDLE active = INVALID_HANDLE_VALUE;
+	g_Info.Control(PANEL_ACTIVE, FCTL_GETPANELPLUGINHANDLE, 0, (LONG_PTR)(void*)&active);
+	if (active != (void*)this) {
+		return false;
+	}
+
+	HANDLE passive = INVALID_HANDLE_VALUE;
+	g_Info.Control(PANEL_PASSIVE, FCTL_GETPANELPLUGINHANDLE, 0, (LONG_PTR)(void*)&passive);
+	if (passive == INVALID_HANDLE_VALUE || !passive) {
+		return false;
+	}
+
+	auto* dst = (ADBPlugin*)passive;
+	if (!dst || dst == this || !dst->_isConnected || !dst->_adbDevice) {
+		return false;
+	}
+	if (dst->_deviceSerial != _deviceSerial) {
+		DBG("CrossPanelCopyMoveSameDevice skip: different serial src=%s dst=%s\n",
+			_deviceSerial.c_str(), dst->_deviceSerial.c_str());
+		return false;
+	}
+
+	std::string srcDir = GetCurrentDevicePath();
+	std::string dstDir = dst->GetCurrentDevicePath();
+	if (srcDir.empty() || dstDir.empty()) {
+		return false;
+	}
+
+	PanelInfo pi = {};
+	g_Info.Control(PANEL_ACTIVE, FCTL_GETPANELINFO, 0, (LONG_PTR)(void*)&pi);
+
+	auto getItem = [&](int cmd, int index, PluginPanelItem& out, std::vector<char>& buf) -> bool {
+		intptr_t size = g_Info.Control(PANEL_ACTIVE, cmd, index, 0);
+		if (size < (intptr_t)sizeof(PluginPanelItem)) {
+			return false;
+		}
+		buf.assign((size_t)size + 0x100, 0);
+		auto* item = (PluginPanelItem*)buf.data();
+		if (!g_Info.Control(PANEL_ACTIVE, cmd, index, (LONG_PTR)(void*)item)) {
+			return false;
+		}
+		out = *item;
+		return true;
+	};
+
+	struct SelectedItem {
+		std::string name;
+		bool is_dir = false;
+	};
+	std::vector<SelectedItem> items;
+	if (pi.SelectedItemsNumber > 0) {
+		for (int i = 0; i < pi.SelectedItemsNumber; ++i) {
+			PluginPanelItem it = {};
+			std::vector<char> buf;
+			if (!getItem(FCTL_GETSELECTEDPANELITEM, i, it, buf)) {
+				continue;
+			}
+			if (!it.FindData.lpwszFileName) {
+				continue;
+			}
+			std::string name = StrWide2MB(it.FindData.lpwszFileName);
+			if (name.empty() || name == "." || name == "..") {
+				continue;
+			}
+			items.push_back(SelectedItem{name, (it.FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0});
+		}
+	} else {
+		PluginPanelItem it = {};
+		std::vector<char> buf;
+		if (getItem(FCTL_GETCURRENTPANELITEM, 0, it, buf) && it.FindData.lpwszFileName) {
+			std::string name = StrWide2MB(it.FindData.lpwszFileName);
+			if (!name.empty() && name != "." && name != "..") {
+				items.push_back(SelectedItem{name, (it.FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0});
+			}
+		}
+	}
+
+	if (items.empty()) {
+		return false;
+	}
+
+	DBG("CrossPanelCopyMoveSameDevice op=%s count=%zu src=%s dst=%s serial=%s\n",
+		move ? "move" : "copy", items.size(), srcDir.c_str(), dstDir.c_str(), _deviceSerial.c_str());
+
+	int okCount = 0;
+	int lastErr = 0;
+	size_t failedIndex = items.size();
+	for (size_t i = 0; i < items.size(); ++i) {
+		const auto& it = items[i];
+		const std::string srcPath = ADBUtils::JoinPath(srcDir, it.name);
+		const int rc = move ? _adbDevice->MoveRemote(srcPath, dstDir)
+		                    : _adbDevice->CopyRemote(srcPath, dstDir);
+		if (rc == 0) {
+			++okCount;
+		} else {
+			lastErr = rc;
+			DBG("CrossPanelCopyMoveSameDevice failed op=%s item=%s err=%d\n",
+				move ? "move" : "copy", it.name.c_str(), rc);
+			failedIndex = i;
+			break;
+		}
+	}
+
+	if (failedIndex < items.size()) {
+		char tmpTpl[] = "/tmp/adb_crossload_XXXXXX";
+		char* tmpBase = mkdtemp(tmpTpl);
+		if (!tmpBase) {
+			WINPORT(SetLastError)(lastErr != 0 ? lastErr : EIO);
+			return TRUE;
+		}
+		const std::string tmpRoot = tmpBase;
+		DBG("CrossPanelCopyMoveSameDevice fallback via host tmp=%s from_index=%zu\n",
+			tmpRoot.c_str(), failedIndex);
+
+		for (size_t i = failedIndex; i < items.size(); ++i) {
+			const auto& it = items[i];
+			const std::string srcPath = ADBUtils::JoinPath(srcDir, it.name);
+			const std::string tmpPath = ADBUtils::JoinPath(tmpRoot, it.name);
+			const std::string dstPath = ADBUtils::JoinPath(dstDir, it.name);
+
+			const int pullRc = it.is_dir ? _adbDevice->PullDirectory(srcPath, tmpPath)
+			                             : _adbDevice->PullFile(srcPath, tmpPath);
+			if (pullRc != 0) {
+				lastErr = pullRc;
+				DBG("CrossPanelCopyMoveSameDevice fallback pull failed item=%s err=%d\n", it.name.c_str(), pullRc);
+				break;
+			}
+			const int pushRc = it.is_dir ? dst->_adbDevice->PushDirectory(tmpPath, dstPath)
+			                             : dst->_adbDevice->PushFile(tmpPath, dstPath);
+			if (pushRc != 0) {
+				lastErr = pushRc;
+				DBG("CrossPanelCopyMoveSameDevice fallback push failed item=%s err=%d\n", it.name.c_str(), pushRc);
+				break;
+			}
+			if (move) {
+				const int delRc = it.is_dir ? _adbDevice->DeleteDirectory(srcPath) : _adbDevice->DeleteFile(srcPath);
+				if (delRc != 0) {
+					lastErr = delRc;
+					DBG("CrossPanelCopyMoveSameDevice fallback delete failed item=%s err=%d\n", it.name.c_str(), delRc);
+					break;
+				}
+			}
+			(void)RemoveLocalPathRecursively(tmpPath);
+			++okCount;
+		}
+		(void)RemoveLocalPathRecursively(tmpRoot);
+	}
+
+	if (okCount > 0) {
+		g_Info.Control(PANEL_ACTIVE, FCTL_CLEARSELECTION, 0, 0);
+		g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
+		g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, 0);
+		g_Info.Control(PANEL_PASSIVE, FCTL_UPDATEPANEL, 0, 0);
+		g_Info.Control(PANEL_PASSIVE, FCTL_REDRAWPANEL, 0, 0);
+		return TRUE;
+	}
+
+	if (lastErr != 0) {
+		WINPORT(SetLastError)(lastErr);
+	}
+	return TRUE;
 }
 
 

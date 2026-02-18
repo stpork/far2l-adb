@@ -600,6 +600,27 @@ int ADBDevice::CreateDirectory(const std::string &devicePath) {
     return result.empty() ? 0 : Str2Errno(result);
 }
 
+int ADBDevice::CopyRemote(const std::string &srcDevicePath, const std::string &dstDeviceDir) {
+    EnsureConnection();
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    // Try cp -a first (preserve attrs where possible), then fallback to cp -r for older toolboxes.
+    std::string command =
+        "cp -a -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDeviceDir) +
+        " 2>/dev/null || cp -r -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDeviceDir);
+    std::string result = RunShellCommand(command);
+    return result.empty() ? 0 : Str2Errno(result);
+}
+
+int ADBDevice::MoveRemote(const std::string &srcDevicePath, const std::string &dstDeviceDir) {
+    EnsureConnection();
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    std::string command = "mv -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDeviceDir);
+    std::string result = RunShellCommand(command);
+    return result.empty() ? 0 : Str2Errno(result);
+}
+
 bool ADBDevice::FileExists(const std::string &devicePath) {
     EnsureConnection();
     if (!_connected) return false;

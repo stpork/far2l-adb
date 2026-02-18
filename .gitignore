@@ -31,3 +31,5 @@ far2l_sudoapp
 *.far-plug-wide 
 Colorer-library/
 far2l/far2ledit
+.claude/
+mtp/mtp_console

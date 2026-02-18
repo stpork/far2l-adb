@@ -77,6 +77,8 @@ public:
 
     // Directory creation operations
     int CreateDirectory(const std::string &devicePath);
+    int CopyRemote(const std::string &srcDevicePath, const std::string &dstDeviceDir);
+    int MoveRemote(const std::string &srcDevicePath, const std::string &dstDeviceDir);
 
     // File existence check
     bool FileExists(const std::string &devicePath);

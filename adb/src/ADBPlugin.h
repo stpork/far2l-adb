@@ -58,6 +58,7 @@ private:
 		std::string usb;
 	};
 	std::vector<DeviceInfo> EnumerateDevices();
+	bool CrossPanelCopyMoveSameDevice(bool move);
 
 public:
 	ADBPlugin(const wchar_t *path = nullptr, bool path_is_standalone_config = false, int OpMode = 0);
