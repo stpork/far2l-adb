@@ -589,6 +589,16 @@ else()
         " COMPONENT system)
 endif()
 
+if (NOT DEFINED IMG OR IMG)
+    message(STATUS "IMG plugin enabled")
+    add_subdirectory (img)
+else()
+    message(STATUS "${ColorRed}IMG plugin disabled due to IMG=${IMG}${ColorNormal}")
+    install(CODE "
+        execute_process(COMMAND ${CMAKE_COMMAND} -E rm -f ${CMAKE_INSTALL_PREFIX}/lib/far2l/Plugins/img/plug/img.far-plug-wide)
+        " COMPONENT system)
+endif()
+
 if (NOT DEFINED EDSORT OR EDSORT)
     message(STATUS "EDSORT plugin enabled")
     add_subdirectory (edsort)
