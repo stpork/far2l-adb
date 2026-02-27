@@ -403,8 +403,8 @@ SHAREDSYMBOL void WINAPI SetStartupInfoW(const struct PluginStartupInfo *Info) {
 
 // Return plugin info - menu items, command prefix, etc.
 SHAREDSYMBOL void WINAPI GetPluginInfoW(struct PluginInfo *Info) {
-  Info->StructSize = sizeof(struct PluginInfo);
-  Info->Flags = PF_EDITOR | PF_VIEWER | PF_DIALOG;
+  Info->StructSize = sizeof(PluginInfo);
+  Info->Flags = PF_VIEWER | PF_DIALOG;
 
   static const wchar_t *menu_strings[1];
   menu_strings[0] = L"Memo";
