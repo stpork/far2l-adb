@@ -904,10 +904,7 @@ FarEditor* FarEditorSet::addCurrentEditor()
   auto* editor = new FarEditor(&Info, parserFactory.get());
   farEditorInstances.emplace(ei.EditorID, editor);
   const auto s = getCurrentFileName();
-  // Skip chooseFileType for unnamed/empty filename (e.g., editor opened from dialog with F4)
-  if (s && !s->isEmpty()) {
-    editor->chooseFileType(s.get());
-  }
+  editor->chooseFileType(s.get());
   editor->setTrueMod(useExtendedColors);
   editor->setRegionMapper(regionMapper.get());
   editor->setDrawCross(Opt.drawCross);
