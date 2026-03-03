@@ -1,4 +1,4 @@
-#ifdef __APPLE__
+#ifdef IMG_NATIVE
 
 #include "ImageDecoder.h"
 #include <cstdio>
@@ -183,4 +183,4 @@ void CreateMacDecoders(std::vector<std::unique_ptr<ImageDecoder>>& decoders)
 	decoders.push_back(std::make_unique<MacOSImageDecoder>());
 }
 
-#endif // __APPLE__
+#endif // IMG_NATIVE
