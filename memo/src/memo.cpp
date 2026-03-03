@@ -602,6 +602,13 @@ SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int OpenFrom, INT_PTR Item) {
     return INVALID_HANDLE_VALUE;
   }
 
+  // Also reject if panels don't exist (standalone mode or restricted context).
+  // This further protects against crashes in standalone editor/viewer mode.
+  if (!g_far.Control(INVALID_HANDLE_VALUE, FCTL_CHECKPANELSEXIST, 0, 0)) {
+    DBG("invoke: REJECTED - panels don't exist (standalone mode?)");
+    return INVALID_HANDLE_VALUE;
+  }
+
   DBG("invoke: ACCEPTED - opening memo dialog");
   OpenMemoDialog();
   return INVALID_HANDLE_VALUE;

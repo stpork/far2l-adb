@@ -5,10 +5,10 @@
 #include <mutex>
 
 // Platform-specific function declarations
-#ifdef __linux__
-void CreateLinuxDecoders(std::vector<std::unique_ptr<ImageDecoder>>& decoders);
-#elif __APPLE__
+#if defined(IMG_NATIVE)
 void CreateMacDecoders(std::vector<std::unique_ptr<ImageDecoder>>& decoders);
+#else
+void CreateCrossPlatformDecoders(std::vector<std::unique_ptr<ImageDecoder>>& decoders);
 #endif
 
 // Platform-specific decoder creation
@@ -16,10 +16,10 @@ std::vector<std::unique_ptr<ImageDecoder>> DecoderFactory::CreateDecoders()
 {
 	std::vector<std::unique_ptr<ImageDecoder>> decoders;
 
-#ifdef __linux__
-	CreateLinuxDecoders(decoders);
-#elif __APPLE__
+#if defined(IMG_NATIVE)
 	CreateMacDecoders(decoders);
+#else
+	CreateCrossPlatformDecoders(decoders);
 #endif
 
 	return decoders;

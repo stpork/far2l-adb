@@ -1,14 +1,14 @@
-#ifdef __linux__
+#if !defined(IMG_NATIVE)
 
 #include "ImageDecoder.h"
 
 #if defined(__clang__) || defined(__GNUC__)
-#warning "IMG plugin: Linux decoder backend is not implemented; building with placeholder decoder factory."
+#warning "IMG plugin: decoder backend is not implemented; building with placeholder decoder factory."
 #endif
 
-void CreateLinuxDecoders(std::vector<std::unique_ptr<ImageDecoder>>& decoders)
+void CreateCrossPlatformDecoders(std::vector<std::unique_ptr<ImageDecoder>>& decoders)
 {
 	(void)decoders;
 }
 
-#endif // __linux__
+#endif // !IMG_NATIVE

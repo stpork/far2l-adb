@@ -1,5 +1,11 @@
 project(img)
 
+if(APPLE)
+    option(IMG_NATIVE "Use native macOS image decoding and processing" OFF)
+else()
+    set(IMG_NATIVE OFF)
+endif()
+
 set(SOURCES
     src/Plugin.cpp
     src/Settings.cpp
@@ -12,17 +18,20 @@ set(SOURCES
     src/decoder/ImageDecoder_common.cpp
 )
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    list(APPEND SOURCES src/decoder/ImageDecoder_linux.cpp)
-    message(WARNING "IMG plugin Linux decoder backend is not implemented yet. Building a placeholder plugin with no Linux decoders.")
-
-elseif(APPLE)
+if(APPLE AND IMG_NATIVE)
     list(APPEND SOURCES src/decoder/ImageDecoder_mac.cpp)
     find_library(IMAGEIO ImageIO REQUIRED)
     find_library(COREGRAPHICS CoreGraphics REQUIRED)
     find_library(COREFOUNDATION CoreFoundation REQUIRED)
     find_library(ACCELERATE Accelerate REQUIRED)
     set(LINK_LIBS ${IMAGEIO} ${COREGRAPHICS} ${COREFOUNDATION} ${ACCELERATE})
+    set(EXTRA_DEFINES ${EXTRA_DEFINES} -DIMG_NATIVE)
+
+else()
+    list(APPEND SOURCES src/decoder/ImageDecoder_stb.cpp)
+    if(APPLE)
+        message(STATUS "IMG plugin: Using stb_image for decoding on macOS because IMG_NATIVE=OFF")
+    endif()
 endif()
 
 add_library(img MODULE ${SOURCES})

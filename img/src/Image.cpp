@@ -12,7 +12,7 @@
 #include "Image.h"
 #include "ImgLog.h"
 
-#ifdef __APPLE__
+#ifdef IMG_NATIVE
 #include <Accelerate/Accelerate.h>
 #endif
 
@@ -328,7 +328,7 @@ void Image::RotateArbitrary(Image &dst, double angle_degrees, bool high_quality)
 		return;
 	}
 
-#ifdef __APPLE__
+#ifdef IMG_NATIVE
 	// Use vImage for arbitrary rotation on macOS
 	const double angle_rad = -angle_degrees * M_PI / 180.0;  // Negative for clockwise convention
 
