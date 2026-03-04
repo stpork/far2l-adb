@@ -17,6 +17,8 @@
 #define INI_FASTTRANSFORMS "FastTransforms"
 #define INI_COMPACTFRAME "CompactFrame"
 #define INI_IMAGEMASKS "ImageMasks"
+#define INI_ENABLED "Enabled"
+#define INI_NATIVE_IMPL "NativeImplementation"
 
 Settings g_settings;
 
@@ -36,6 +38,8 @@ Settings::Settings()
 		_autofit_on_rotate = sv->GetInt(INI_AUTOFITONROTATE, _autofit_on_rotate) != 0;
 		_fast_transforms = sv->GetInt(INI_FASTTRANSFORMS, _fast_transforms) != 0;
 		_compact_frame = sv->GetInt(INI_COMPACTFRAME, _compact_frame) != 0;
+		_enabled = sv->GetInt(INI_ENABLED, _enabled) != 0;
+		_native_implementation = sv->GetInt(INI_NATIVE_IMPL, _native_implementation) != 0;
 
 		std::string masks = sv->GetString(INI_IMAGEMASKS, "");
 		if (!masks.empty()) {
@@ -58,14 +62,14 @@ void Settings::SetDefaultScale(DefaultScale default_scale)
 
 const wchar_t *Settings::Msg(int msgId)
 {
-	const wchar_t *msg = g_far.GetMsg(g_far.ModuleNumber, msgId);
+	const wchar_t *msg = (g_far.GetMsg) ? g_far.GetMsg(g_far.ModuleNumber, msgId) : nullptr;
 	if (msg && *msg) {
 		return msg;
 	}
 	static const wchar_t *default_msgs[] = {
-		L"Image plugin",       // M_TITLE
-		L"OK",                 // M_OK
-		L"Cancel",             // M_CANCEL
+		L"Preview",            // M_TITLE
+		L"&OK",                 // M_OK
+		L"&Cancel",             // M_CANCEL
 		L"Extra commands",     // M_EXTRA_COMMANDS
 		L"Extra commands",     // M_EXTRA_COMMANDS_TITLE
 		L"Command name",       // M_INPUT_CMDNAME_TITLE
@@ -76,15 +80,19 @@ const wchar_t *Settings::Msg(int msgId)
 		L"+/-/arrows",         // M_HINT_PAN
 		L"Ins/Space/BS",       // M_HINT_SELECTION
 		L"Enter/Esc/F1",       // M_HINT_OTHER
-		L"Use EXIF orientation",
-		L"Open by Enter",
-		L"Open by Ctrl+PgDn",
-		L"Open in QuickView",
-		L"Override F3 viewer",
-		L"Auto-fit after rotation",
-		L"Fast transforms",
-		L"Compact frame",
+		L"Use EXIF &orientation",
+		L"&Open by Enter",
+		L"Open by &Ctrl+PgDn",
+		L"Open in &QuickView",
+		L"Override &F3 viewer",
+		L"&Auto-fit after rotation",
+		L"&Fast transforms",
+		L"Compact &frame",
 		L"Image masks",
+		L"&Enable Preview",
+		L"Use &OS engine",
+		L"",
+		L"",
 	};
 	if (msgId >= 0 && msgId < (int)(sizeof(default_msgs)/sizeof(default_msgs[0]))) {
 		return default_msgs[msgId];
@@ -92,56 +100,85 @@ const wchar_t *Settings::Msg(int msgId)
 	return L"";
 }
 
+enum DialogItems {
+	DI_CFG_DOUBLEBOX = 0,
+	DI_CFG_ENABLEPLUGIN,
+	DI_CFG_USEORIENTATION,
+	DI_CFG_OPENBYENTER,
+	DI_CFG_OPENBYCTRLPGDN,
+	DI_CFG_OPENINQVIEW,
+	DI_CFG_OPENINFVIEW,
+	DI_CFG_AUTOFITONROTATE,
+	DI_CFG_FASTTRANSFORMS,
+	DI_CFG_COMPACTFRAME,
+	DI_CFG_IMPLEMENTATION,
+	DI_CFG_SEPARATOR,
+	DI_CFG_IMAGEMASKS_LABEL,
+	DI_CFG_IMAGEMASKS_EDIT,
+	DI_CFG_OK,
+	DI_CFG_CANCEL,
+	DI_CFG_COUNT
+};
+
 void Settings::ConfigurationDialog()
 {
-	const int w = 50, h = 16;
+	const int w = 45, h = 19;
 
-	struct FarDialogItem fdi[] = {
-	{DI_DOUBLEBOX, 1, 1, w - 2, h - 2, 0, {}, 0, 0, Msg(M_TITLE), 0},
-	{DI_CHECKBOX, 3, 2, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_USEORIENTATION), 0},
-	{DI_SINGLEBOX, 2, 3, w - 3, 0, 0, {}, DIF_BOXCOLOR|DIF_SEPARATOR, 0, nullptr, 0},
-	{DI_CHECKBOX, 3, 4, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_OPENBYENTER), 0},
-	{DI_CHECKBOX, 3, 5, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_OPENBYCTRLPGDN), 0},
-	{DI_CHECKBOX, 3, 6, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_OPENINQVIEW), 0},
-	{DI_CHECKBOX, 3, 7, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_OPENINFVIEW), 0},
-	{DI_CHECKBOX, 3, 8, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_AUTOFITONROTATE), 0},
-	{DI_CHECKBOX, 3, 9, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_FASTTRANSFORMS), 0},
-	{DI_CHECKBOX, 3, 10, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_COMPACTFRAME), 0},
-	{DI_TEXT, 3, 11, w - 9, 0, FALSE, {}, 0, 0, Msg(M_TEXT_IMAGEMASKS), 0},
-	{DI_EDIT, 3, 12, w - 4, 0, 0, {}, 0, 0, nullptr, 0},
-	{DI_SINGLEBOX, 2, 13, w - 3, 0, 0, {}, DIF_BOXCOLOR|DIF_SEPARATOR, 0, nullptr, 0},
-	{DI_BUTTON, 27, 14, 0, 0, FALSE, {}, 0, TRUE, Msg(M_OK), 0},
-	{DI_BUTTON, 35, 14, 0, 0, FALSE, {}, 0, 0, Msg(M_CANCEL), 0}
+	struct FarDialogItem fdi[DI_CFG_COUNT] = {
+	{DI_DOUBLEBOX, 3, 1, w - 4, h - 2, 0, {}, 0, 0, Msg(M_TITLE), 0},
+	{DI_CHECKBOX, 5, 2, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_ENABLEPLUGIN), 0},
+	{DI_CHECKBOX, 5, 3, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_USEORIENTATION), 0},
+	{DI_CHECKBOX, 5, 4, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_OPENBYENTER), 0},
+	{DI_CHECKBOX, 5, 5, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_OPENBYCTRLPGDN), 0},
+	{DI_CHECKBOX, 5, 6, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_OPENINQVIEW), 0},
+	{DI_CHECKBOX, 5, 7, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_OPENINFVIEW), 0},
+	{DI_CHECKBOX, 5, 8, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_AUTOFITONROTATE), 0},
+	{DI_CHECKBOX, 5, 9, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_FASTTRANSFORMS), 0},
+	{DI_CHECKBOX, 5, 10, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_COMPACTFRAME), 0},
+	{DI_CHECKBOX, 5, 11, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_IMPLEMENTATION), 0},
+	{DI_SINGLEBOX, 4, 12, w - 5, 0, 0, {}, DIF_BOXCOLOR|DIF_SEPARATOR, 0, nullptr, 0},
+	{DI_TEXT, 5, 13, w - 11, 0, FALSE, {}, 0, 0, Msg(M_TEXT_IMAGEMASKS), 0},
+	{DI_EDIT, 5, 14, w - 6, 0, 0, {}, 0, 0, nullptr, 0},
+	{DI_BUTTON, 0, 16, 0, 0, FALSE, {}, DIF_CENTERGROUP, TRUE, Msg(M_OK), 0},
+	{DI_BUTTON, 0, 16, 0, 0, FALSE, {}, DIF_CENTERGROUP, 0, Msg(M_CANCEL), 0}
 	};
 
-	fdi[1].Param.Selected = _use_orientation;
-	fdi[3].Param.Selected = _open_by_enter;
-	fdi[4].Param.Selected = _open_by_cpgdn;
-	fdi[5].Param.Selected = _open_in_qv;
-	fdi[6].Param.Selected = _open_in_fv;
-	fdi[7].Param.Selected = _autofit_on_rotate;
-	fdi[8].Param.Selected = _fast_transforms;
-	fdi[9].Param.Selected = _compact_frame;
+	fdi[DI_CFG_ENABLEPLUGIN].Param.Selected = _enabled;
+	fdi[DI_CFG_USEORIENTATION].Param.Selected = _use_orientation;
+	fdi[DI_CFG_OPENBYENTER].Param.Selected = _open_by_enter;
+	fdi[DI_CFG_OPENBYCTRLPGDN].Param.Selected = _open_by_cpgdn;
+	fdi[DI_CFG_OPENINQVIEW].Param.Selected = _open_in_qv;
+	fdi[DI_CFG_OPENINFVIEW].Param.Selected = _open_in_fv;
+	fdi[DI_CFG_AUTOFITONROTATE].Param.Selected = _autofit_on_rotate;
+	fdi[DI_CFG_FASTTRANSFORMS].Param.Selected = _fast_transforms;
+	fdi[DI_CFG_COMPACTFRAME].Param.Selected = _compact_frame;
+	fdi[DI_CFG_IMPLEMENTATION].Param.Selected = _native_implementation;
+	
 	std::wstring image_masks;
 	StrMB2Wide(_image_masks, image_masks);
-	fdi[11].PtrData = image_masks.c_str();
+	fdi[DI_CFG_IMAGEMASKS_EDIT].PtrData = image_masks.c_str();
 
-	auto dlg = g_far.DialogInit(g_far.ModuleNumber, -1, -1, w, h, L"img", fdi, ARRAYSIZE(fdi), 0, 0, nullptr, 0);
+	auto dlg = g_far.DialogInit(g_far.ModuleNumber, -1, -1, w, h, L"img", fdi, DI_CFG_COUNT, 0, 0, nullptr, 0);
 	int r = g_far.DialogRun(dlg);
 
-	if (r == ARRAYSIZE(fdi) - 2) {
-		_use_orientation = (g_far.SendDlgMessage(dlg, DM_GETCHECK, 1, 0) == BSTATE_CHECKED);
-		_open_by_enter = (g_far.SendDlgMessage(dlg, DM_GETCHECK, 3, 0) == BSTATE_CHECKED);
-		_open_by_cpgdn = (g_far.SendDlgMessage(dlg, DM_GETCHECK, 4, 0) == BSTATE_CHECKED);
-		_open_in_qv = (g_far.SendDlgMessage(dlg, DM_GETCHECK, 5, 0) == BSTATE_CHECKED);
-		_open_in_fv = (g_far.SendDlgMessage(dlg, DM_GETCHECK, 6, 0) == BSTATE_CHECKED);
-		_autofit_on_rotate = (g_far.SendDlgMessage(dlg, DM_GETCHECK, 7, 0) == BSTATE_CHECKED);
-		_fast_transforms = (g_far.SendDlgMessage(dlg, DM_GETCHECK, 8, 0) == BSTATE_CHECKED);
-		_compact_frame = (g_far.SendDlgMessage(dlg, DM_GETCHECK, 9, 0) == BSTATE_CHECKED);
-		image_masks = (const wchar_t *)g_far.SendDlgMessage(dlg, DM_GETCONSTTEXTPTR, 11, 0);
+	if (r == DI_CFG_OK) {
+
+		_enabled = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_ENABLEPLUGIN, 0) == BSTATE_CHECKED);
+		_use_orientation = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_USEORIENTATION, 0) == BSTATE_CHECKED);
+		_open_by_enter = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_OPENBYENTER, 0) == BSTATE_CHECKED);
+		_open_by_cpgdn = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_OPENBYCTRLPGDN, 0) == BSTATE_CHECKED);
+		_open_in_qv = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_OPENINQVIEW, 0) == BSTATE_CHECKED);
+		_open_in_fv = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_OPENINFVIEW, 0) == BSTATE_CHECKED);
+		_autofit_on_rotate = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_AUTOFITONROTATE, 0) == BSTATE_CHECKED);
+		_fast_transforms = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_FASTTRANSFORMS, 0) == BSTATE_CHECKED);
+		_compact_frame = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_COMPACTFRAME, 0) == BSTATE_CHECKED);
+		_native_implementation = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_IMPLEMENTATION, 0) == BSTATE_CHECKED);
+		
+		image_masks = (const wchar_t *)g_far.SendDlgMessage(dlg, DM_GETCONSTTEXTPTR, DI_CFG_IMAGEMASKS_EDIT, 0);
 		StrWide2MB(image_masks, _image_masks);
 
 		KeyFileHelper kfh(_ini_path);
+		kfh.SetInt(INI_SETTINGS, INI_ENABLED, _enabled);
 		kfh.SetInt(INI_SETTINGS, INI_USEORIENTATION, _use_orientation);
 		kfh.SetInt(INI_SETTINGS, INI_OPENBYENTER, _open_by_enter);
 		kfh.SetInt(INI_SETTINGS, INI_OPENBYCPGDN, _open_by_cpgdn);
@@ -150,6 +187,7 @@ void Settings::ConfigurationDialog()
 		kfh.SetInt(INI_SETTINGS, INI_AUTOFITONROTATE, _autofit_on_rotate);
 		kfh.SetInt(INI_SETTINGS, INI_FASTTRANSFORMS, _fast_transforms);
 		kfh.SetInt(INI_SETTINGS, INI_COMPACTFRAME, _compact_frame);
+		kfh.SetInt(INI_SETTINGS, INI_NATIVE_IMPL, _native_implementation);
 
 		if (_image_masks != DEFAULT_IMAGE_MASKS) {
 			kfh.SetString(INI_SETTINGS, INI_IMAGEMASKS, _image_masks);
