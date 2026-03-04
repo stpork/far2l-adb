@@ -610,7 +610,6 @@ else()
     endif()
 endif()
 
-
 if (NOT DEFINED MEMO OR MEMO)
     message(STATUS "MEMO plugin enabled")
     add_subdirectory (memo)
