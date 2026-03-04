@@ -1,7 +1,7 @@
 #include "Common.h"
 #include "ImageView.h"
 #include "Settings.h"
-#include "ImgLog.h"
+#include "PreviewLog.h"
 
 PluginStartupInfo g_far;
 FarStandardFunctions g_fsf;
@@ -53,7 +53,7 @@ SHAREDSYMBOL void WINAPI GetPluginInfoW(struct PluginInfo *Info)
 	Info->PluginMenuStrings = menu_strings;
 	Info->PluginMenuStringsNumber = 1;
 
-	Info->CommandPrefix = L"img:";
+	Info->CommandPrefix = L"preview:";
 }
 
 static std::pair<std::string, bool> GetPanelItem(int cmd, int index)

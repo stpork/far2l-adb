@@ -1,5 +1,5 @@
 #include "ImageDecoder.h"
-#include "../ImgLog.h"
+#include "../PreviewLog.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>

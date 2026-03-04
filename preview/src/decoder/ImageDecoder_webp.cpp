@@ -1,5 +1,5 @@
 #include "ImageDecoder.h"
-#include "../ImgLog.h"
+#include "../PreviewLog.h"
 #include <webp/decode.h>
 #include <algorithm>
 #include <cstring>

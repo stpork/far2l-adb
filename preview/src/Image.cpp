@@ -10,7 +10,7 @@
 #include <math.h>
 
 #include "Image.h"
-#include "ImgLog.h"
+#include "PreviewLog.h"
 
 #ifdef __APPLE__
 #include <Accelerate/Accelerate.h>
