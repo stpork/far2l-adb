@@ -1,12 +1,12 @@
-project(img)
+project(preview)
 
 # Added: Find PkgConfig module to use pkg-config for finding libraries
 find_package(PkgConfig REQUIRED)
 
 if(APPLE)
-    option(IMG_NATIVE "Use native macOS image decoding and processing" ON)
+    option(PREVIEW_NATIVE "Use native macOS image decoding and processing" ON)
 else()
-    set(IMG_NATIVE OFF)
+    set(PREVIEW_NATIVE OFF)
 endif()
 
 set(SOURCES
@@ -16,14 +16,14 @@ set(SOURCES
     src/ImageView.cpp
     src/ImageAtFull.cpp
     src/ImageAtQV.cpp
-    src/ImgLog.cpp
+    src/PreviewLog.cpp
     src/decoder/ImageDecoder.cpp
     src/decoder/ImageDecoder_common.cpp
 )
 
 # Initialize library lists for both branches
-set(IMG_NATIVE_LIBS "")
-set(IMG_CROSSPLATFORM_LIBS "")
+set(PREVIEW_NATIVE_LIBS "")
+set(PREVIEW_CROSSPLATFORM_LIBS "")
 
 if(APPLE)
     list(APPEND SOURCES src/decoder/ImageDecoder_mac.cpp)
@@ -31,9 +31,7 @@ if(APPLE)
     find_library(COREGRAPHICS CoreGraphics REQUIRED)
     find_library(COREFOUNDATION CoreFoundation REQUIRED)
     find_library(ACCELERATE Accelerate REQUIRED)
-    set(IMG_NATIVE_LIBS ${IMAGEIO} ${COREGRAPHICS} ${COREFOUNDATION} ${ACCELERATE})
-    # We don't define IMG_NATIVE anymore as it's runtime choice
-    # set(EXTRA_DEFINES ${EXTRA_DEFINES} -DIMG_NATIVE) 
+    set(PREVIEW_NATIVE_LIBS ${IMAGEIO} ${COREGRAPHICS} ${COREFOUNDATION} ${ACCELERATE})
 endif()
 
 # Always include cross-platform decoders
@@ -61,35 +59,34 @@ include_directories(
 # Use full paths to libraries if possible
 foreach(lib_name ${WEBP_LIBRARIES})
     find_library(LIB_WEBP_${lib_name} NAMES ${lib_name} HINTS ${WEBP_LIBRARY_DIRS})
-    list(APPEND IMG_CROSSPLATFORM_LIBS ${LIB_WEBP_${lib_name}})
+    list(APPEND PREVIEW_CROSSPLATFORM_LIBS ${LIB_WEBP_${lib_name}})
 endforeach()
 
 foreach(lib_name ${HEIF_LIBRARIES})
     find_library(LIB_HEIF_${lib_name} NAMES ${lib_name} HINTS ${HEIF_LIBRARY_DIRS})
-    list(APPEND IMG_CROSSPLATFORM_LIBS ${LIB_HEIF_${lib_name}})
+    list(APPEND PREVIEW_CROSSPLATFORM_LIBS ${LIB_HEIF_${lib_name}})
 endforeach()
 # --- End Integration ---
 
-add_library(img MODULE ${SOURCES})
+add_library(preview MODULE ${SOURCES})
 
 # Link all libraries found for the active branch
-target_link_libraries(img utils far2l ${IMG_NATIVE_LIBS} ${IMG_CROSSPLATFORM_LIBS})
+target_link_libraries(preview utils far2l ${PREVIEW_NATIVE_LIBS} ${PREVIEW_CROSSPLATFORM_LIBS})
 
-target_compile_definitions(img PRIVATE
+target_compile_definitions(preview PRIVATE
     -DWINPORT_DIRECT
     -DUNICODE
     -D_UNICODE
-    ${EXTRA_DEFINES}
 )
 
-set_target_properties(img PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${INSTALL_DIR}/Plugins/img/plug"
+set_target_properties(preview PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${INSTALL_DIR}/Plugins/preview/plug"
     PREFIX ""
     SUFFIX ".far-plug-wide"
 )
 
 # Copy resource files (config and help)
-set(CURRENT_TARGET "img")
+set(CURRENT_TARGET "preview")
 file(GLOB_RECURSE RESOURCE_FILES
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/configs
     "${CMAKE_CURRENT_SOURCE_DIR}/configs/*"

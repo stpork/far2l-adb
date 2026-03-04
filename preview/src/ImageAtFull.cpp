@@ -1,7 +1,7 @@
 #include "Common.h"
 #include "ImageView.h"
 #include "Settings.h"
-#include "ImgLog.h"
+#include "PreviewLog.h"
 #include <unistd.h>
 
 class ImageViewAtFull : public ImageView

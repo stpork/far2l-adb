@@ -1,10 +1,10 @@
-#include "ImgLog.h"
+#include "PreviewLog.h"
 #include <ctime>
 #include <cstdio>
 #include <cstdarg>
 #include <utils.h>
 
-void ImgDebugLog(const char* format, ...) {
+void PreviewDebugLog(const char* format, ...) {
     // Timestamp
     time_t now = time(nullptr);
     struct tm tm_info;
@@ -19,10 +19,10 @@ void ImgDebugLog(const char* format, ...) {
     vsnprintf(buf, sizeof(buf), format, ap);
     va_end(ap);
 
-    std::string logPath = InMyConfig("plugins/img/debug.log");
+    std::string logPath = InMyConfig("plugins/preview/debug.log");
     FILE *f = fopen(logPath.c_str(), "a");
     if (f) {
-        fprintf(f, "[%s][img] %s\n", ts, buf);
+        fprintf(f, "[%s][preview] %s\n", ts, buf);
         fclose(f);
     }
 }

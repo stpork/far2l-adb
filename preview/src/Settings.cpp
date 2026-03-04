@@ -5,7 +5,7 @@
 #include <wchar.h>
 
 #define DEFAULT_IMAGE_MASKS "*.jpg *.jpeg *.png *.gif *.webp *.heic *.heif *.tiff *.tif *.bmp"
-#define INI_PATH "plugins/img/config.ini"
+#define INI_PATH "plugins/preview/config.ini"
 #define INI_SETTINGS "Settings"
 #define INI_DEFAULTSCALE "DefaultScale"
 #define INI_USEORIENTATION "UseOrientation"
@@ -158,7 +158,7 @@ void Settings::ConfigurationDialog()
 	StrMB2Wide(_image_masks, image_masks);
 	fdi[DI_CFG_IMAGEMASKS_EDIT].PtrData = image_masks.c_str();
 
-	auto dlg = g_far.DialogInit(g_far.ModuleNumber, -1, -1, w, h, L"img", fdi, DI_CFG_COUNT, 0, 0, nullptr, 0);
+	auto dlg = g_far.DialogInit(g_far.ModuleNumber, -1, -1, w, h, L"Preview", fdi, DI_CFG_COUNT, 0, 0, nullptr, 0);
 	int r = g_far.DialogRun(dlg);
 
 	if (r == DI_CFG_OK) {

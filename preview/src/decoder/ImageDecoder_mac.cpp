@@ -1,7 +1,7 @@
 #ifdef __APPLE__
 
 #include "ImageDecoder.h"
-#include "../ImgLog.h"
+#include "../PreviewLog.h"
 #include <cstdio>
 #include <cstring>
 #include <vector>

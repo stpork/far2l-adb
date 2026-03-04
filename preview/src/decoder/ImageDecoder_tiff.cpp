@@ -1,4 +1,4 @@
-// img/src/decoder/ImageDecoder_tiff.cpp
+// preview/src/decoder/ImageDecoder_tiff.cpp
 
 #include "ImageDecoder.h" // For ImageDecoder, Image, ExifHelpers
 #include "ImageDecoder_tiff.h" // For TIFF decoder declaration
