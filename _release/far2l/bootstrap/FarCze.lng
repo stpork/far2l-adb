@@ -1,0 +1,6154 @@
+.Language=Czech,Czech (Čeština)
+
+//Version: 2.7 build 0-2026-02-24-98fa80af-beta
+
+//[Yes]
+"Ano"
+//[No]
+"Ne"
+//[Ok]
+"Ok"
+
+//[HYes]
+"&Ano"
+//[HNo]
+"&Ne"
+//[HOk]
+"&Ok"
+
+//[Cancel]
+"Storno"
+//[Retry]
+"Znovu"
+//[Skip]
+"Přeskočit"
+//[Abort]
+"Zrušit"
+//[Ignore]
+"Ignorovat"
+//[Delete]
+"Smazat"
+//[Split]
+"Rozdělit"
+//[Remove]
+"Odstranit"
+// need translation:
+//[Change]
+"Change"
+// need translation:
+//[Reset]
+"Reset"
+
+//[HCancel]
+"&Storno"
+//[HRetry]
+"&Znovu"
+//[HSkip]
+"&Přeskočit"
+//[HSkipAll]
+"Přeskočit &vše"
+//[HAbort]
+"Zr&ušit"
+//[HExecute]
+"&Vykonat"
+//[HExecuteNoAsk]
+"Spustit &a už se neptat v této relaci"
+//[HIgnore]
+"&Ignorovat"
+//[HDelete]
+"S&mazat"
+//[HRemove]
+"&Odstranit"
+//[HSplit]
+"&Rozdělit"
+// need translation:
+//[HChange]
+"C&hange"
+
+//[Warning]
+"Varování"
+//[Error]
+"Chyba"
+
+//[Quit]
+"Konec"
+//[AskQuit]
+"Opravdu chcete ukončit FAR?"
+// need translation:
+//[AskQuitVTS]
+"THIS WILL ALSO TERMINATE %u BACKGROUND COMMAND(S)"
+//[Background]
+"&Background"
+//[GetOut]
+"&Get out"
+// need translation:
+//[CommandBackgrounded]
+" *** Command put to background, use Screen menu (F12) to switch back to it"
+// need translation:
+//[CommandTerminated]
+" *** Command forcefully terminated"
+// need translation:
+//[BackgroundCommands]
+"Background terminal commands [F3]"
+//[MultilinePaste]
+"Vložení více řádků"
+
+//functional keys - 6 characters max
+//[F1]
+"Pomoc"
+//[F2]
+"UživMn"
+//[F3]
+"Zobraz"
+//[F4]
+"Edit"
+//[F5]
+"Kopír."
+//[F6]
+"PřjPřs"
+//[F7]
+"VytAdr"
+//[F8]
+"Smazat"
+//[F9]
+"KonfMn"
+//[F10]
+"Konec"
+//[F11]
+"Plugin"
+//[F12]
+"Obraz."
+
+//[AltF1]
+"Levý"
+//[AltF2]
+"Pravý"
+//[AltF3]
+"Zobr.."
+//[AltF4]
+"Edit.."
+//[AltF5]
+"Tisk"
+//[AltF6]
+"VytLnk"
+//[AltF7]
+"Hledat"
+//[AltF8]
+"Histor"
+//[AltF9]
+"Video"
+//[AltF10]
+"Strom"
+//[AltF11]
+"ProhHs"
+//[AltF12]
+"AdrsHs"
+
+//[CtrlF1]
+"Levý"
+//[CtrlF2]
+"Pravý"
+//[CtrlF3]
+"Název "
+//[CtrlF4]
+"Přípon"
+// need translation:
+//[CtrlF5]
+"Write"
+//[CtrlF6]
+"Veliko"
+//[CtrlF7]
+"Neřadi"
+//[CtrlF8]
+"Vytvoř"
+//[CtrlF9]
+"Přístu"
+//[CtrlF10]
+"Popis"
+//[CtrlF11]
+"Vlastn"
+//[CtrlF12]
+"Třídit"
+
+//[ShiftF1]
+"Přidat"
+//[ShiftF2]
+"Rozbal"
+//[ShiftF3]
+"ArcPří"
+//[ShiftF4]
+"Edit.."
+//[ShiftF5]
+"Kopír."
+//[ShiftF6]
+"Přejme"
+//[ShiftF7]
+""
+//[ShiftF8]
+"Smazat"
+//[ShiftF9]
+"Uložit"
+//[ShiftF10]
+"Posled"
+//[ShiftF11]
+"Skupin"
+//[ShiftF12]
+"VybPrv"
+
+// Main AltShift
+//[AltShiftF1]
+""
+//[AltShiftF2]
+""
+//[AltShiftF3]
+""
+//[AltShiftF4]
+""
+//[AltShiftF5]
+""
+//[AltShiftF6]
+""
+//[AltShiftF7]
+""
+//[AltShiftF8]
+""
+//[AltShiftF9]
+"KonfPl"
+//[AltShiftF10]
+""
+//[AltShiftF11]
+""
+//[AltShiftF12]
+""
+
+//Main CtrlShift
+//[CtrlShiftF1]
+""
+//[CtrlShiftF2]
+""
+//[CtrlShiftF3]
+"Zobraz"
+//[CtrlShiftF4]
+"Edit"
+//[CtrlShiftF5]
+""
+//[CtrlShiftF6]
+""
+//[CtrlShiftF7]
+""
+//[CtrlShiftF8]
+""
+//[CtrlShiftF9]
+""
+//[CtrlShiftF10]
+""
+//[CtrlShiftF11]
+""
+//[CtrlShiftF12]
+""
+
+// Main CtrlAlt
+//[CtrlAltF1]
+""
+//[CtrlAltF2]
+""
+//[CtrlAltF3]
+""
+//[CtrlAltF4]
+""
+//[CtrlAltF5]
+""
+//[CtrlAltF6]
+""
+//[CtrlAltF7]
+""
+//[CtrlAltF8]
+""
+//[CtrlAltF9]
+""
+//[CtrlAltF10]
+""
+//[CtrlAltF11]
+""
+//[CtrlAltF12]
+""
+
+// Main CtrlAltShift
+//[CtrlAltShiftF1]
+""
+//[CtrlAltShiftF2]
+""
+//[CtrlAltShiftF3]
+""
+//[CtrlAltShiftF4]
+""
+//[CtrlAltShiftF5]
+""
+//[CtrlAltShiftF6]
+""
+//[CtrlAltShiftF7]
+""
+//[CtrlAltShiftF8]
+""
+//[CtrlAltShiftF9]
+""
+//[CtrlAltShiftF10]
+""
+//[CtrlAltShiftF11]
+""
+//[CtrlAltShiftF12]
+""
+//End of functional keys
+//[MaskGroupTitle]
+"Skupiny masek souborů"
+// need translation:
+//[MaskGroupBeforeExpand]
+"== Groups of file masks before expand nested:"
+// need translation:
+//[MaskGroupCountExpandedGroups]
+"== Correctly expanded nested Groups inside masks:"
+// need translation:
+//[MaskGroupAfterExpand]
+"== Groups of file masks after expand all nested groups:"
+//[MaskGroupBottomTitle]
+"Ins Del Enter/F4 F3 F7 Ctrl+Nahoru/Dolů Ctrl+R"
+//[MaskGroupName]
+"Jmé&no:"
+//[MaskGroupMasks]
+"&Maska nebo masky souborů:"
+//[MaskGroupAskDelete]
+"Přejete si smazat"
+//[MaskGroupTargetFilter]
+"&Cílové jméno pro masky:"
+//[MaskGroupTotal]
+"Celkem: %d"
+//[MaskGroupWarning]
+"Všechny změny budou ztraceny"
+//[MaskGroupRestore]
+"Chcete obnovit výchozí sady masek?"
+
+//[HistoryTitle]
+"Historie"
+//[FolderHistoryTitle]
+"Historie adresářů"
+//[ViewHistoryTitle]
+"Historie prohlížení souborů"
+//[ViewHistoryIsCreate]
+"Vytvořit soubor?"
+//[HistoryView]
+"Zobrazit"
+//[HistoryEdit]
+"Editovat"
+//[HistoryExt]
+"Rozšíření"
+
+// need translation:
+//[HistoryRefreshFolder]
+"History list will be refreshed: entries of non-existing folder will be deleted. Continue?"
+
+// need translation:
+//[HistoryRefreshView]
+"History list will be refreshed: entries of non-existing files will be deleted. Continue?"
+
+//[HistoryClear]
+"Všechny záznamy v historii budou smazány. Pokračovat?"
+//[Clear]
+"&Vymazat historii"
+
+//[ConfigSystemTitle]
+"Nastavení systému"
+//[ConfigRO]
+"Z&rušit atribut R/O u souborů na CD"
+// need translation:
+//[ConfigSudoEnabled]
+"Enable sudo privileges elevation"
+// need translation:
+//[ConfigSudoConfirmModify]
+"Always confirm modify operations"
+// need translation:
+//[ConfigSudoPasswordExpiration]
+"Password expiration (sec):"
+// need translation:
+//[SudoTitle]
+"Operation requires privileges elevation"
+// need translation:
+//[SudoPrompt]
+"Enter sudo password"
+// need translation:
+//[SudoConfirm]
+"Confirm elevated privileges use"
+//[ConfigRecycleBin]
+"&Mazat do Koše"
+//[ConfigRecycleBinLink]
+"Mazat symbolické &linky"
+// need translation:
+//[CopyWriteThrough]
+"Disable &write cache"
+// need translation:
+//[CopyXAttr]
+"Copy extended a&ttributes"
+// need translation:
+//[ConfigOnlyFilesSize]
+"Use only files size in estimation"
+//[ConfigScanJunction]
+"Prohledávat s&ymbolické linky"
+//[ConfigInactivity]
+"&Doba nečinnosti"
+//[ConfigInactivityMinutes]
+"minut"
+// need translation:
+//[ConfigMakeLinkSuggest]
+"When making a link the default suggestion is"
+// need translation:
+//[ConfigMakeLinkSuggestByFileDir]
+"Hardlink for files, Symlink for directories"
+// need translation:
+//[ConfigMakeLinkSuggestSymlinkAlways]
+"Symlink always"
+//[ConfigSaveHistory]
+"Ukládat historii &příkazů"
+// need translation:
+//[ConfigSaveHistoryOpt]
+"Actions recorded in commands history:"
+// need translation:
+//[ConfigSaveHistoryOptAssSys]
+"Panels: files via system types (xdg-open)"
+// need translation:
+//[ConfigSaveHistoryOptAssFar]
+"Panels: files via far2l associations"
+// need translation:
+//[ConfigSaveHistoryOptExecPanel]
+"Panels: executable files"
+// need translation:
+//[ConfigSaveHistoryOptExecCmdLine]
+"Command line: any typed command"
+//[ConfigSaveFoldersHistory]
+"Ukládat historii &adresářů"
+//[ConfigSaveViewHistory]
+"Ukládat historii Zobraz a Editu&j"
+// need translation:
+//[ConfigHistoryRemoveDupsRule]
+"&Remove duplicates in history:"
+// need translation:
+//[ConfigHistoryRemoveDupsRuleNever]
+"never"
+// need translation:
+//[ConfigHistoryRemoveDupsRuleByName]
+"by name"
+// need translation:
+//[ConfigHistoryRemoveDupsRuleByNameExtra]
+"by name and path"
+// need translation:
+//[ConfigAutoHighlightHistory]
+"Autohighlight in history"
+//[ConfigRegisteredTypes]
+"Používat regi&strované typy Windows"
+//[ConfigCloseCDGate]
+"Automatické př&ipojení CD disků"
+// need translation:
+//[ConfigUpdateEnvironment]
+"Automatic update of environment variables"
+//[ConfigAutoSave]
+"Automatické ukládaní &nastavení"
+
+//[ConfigPanelTitle]
+"Nastavení panelů"
+//[ConfigHidden]
+"Ukázat &skryté a systémové soubory"
+//[ConfigHighlight]
+"Zvý&razňovat soubory"
+//[ConfigTreeOptions]
+"Možnosti stromu adresářů"
+//[ConfigAutoChange]
+"&Automaticky měnit adresář"
+//[ConfigDefaultTreeScanDepth]
+"&Hloubka skenování"
+//[ConfigExclSubTreeMask]
+"Maska pro v&yloučení při prohledávání podadresářů"
+//[ConfigSelectFolders]
+"Vybírat a&dresáře"
+// need translation:
+//[ConfigCaseSensitiveCompareSelect]
+"Case sensitive when compare or select"
+//[ConfigSortFolderExt]
+"Řadit adresáře podle přípony"
+//[ConfigReverseSort]
+"Do&volit změnu směru řazení"
+//[ConfigAutoUpdateLimit]
+"Vypnout a&utomatickou aktualizaci panelů"
+//[ConfigAutoUpdateLimit2]
+"jestliže počet objektů překročí"
+// need translation:
+//[ConfigClassicHotkeyLinkResolving]
+"Classic hotkey link resolving"
+//[ConfigAutoUpdateRemoteDrive]
+"Automatická obnova síťových disků"
+//[ConfigShowColumns]
+"Zobrazovat &nadpisy sloupců"
+//[ConfigShowStatus]
+"Zobrazovat sta&vový řádek"
+//[ConfigShowTotal]
+"Zobrazovat &informace o velikosti souborů"
+//[ConfigShowFree]
+"Zobrazovat vo&lné místo"
+//[ConfigShowScrollbar]
+"Zobrazovat &posuvník"
+//[ConfigShowScreensNumber]
+"Zobrazovat počet &obrazovek na pozadí"
+//[ConfigShowSortMode]
+"Zobrazovat písmeno &módu řazení"
+//[ConfigPanelHighlightMarksButton]
+"Zvýrazňovat soubory - Označení"
+//[ConfigPanelHighlightMarksTitle]
+"Nastavení panelů - Zvýrazňovat soubory - Označení"
+//[ConfigFilenameMarksStatusLine]
+"Stavový řádek: Zobrazit označení názvů souborů"
+// need translation:
+//[ConfigFilenameMarksStatusLineHint]
+"Use Ctrl-Alt-N to quick toggle from panel"
+//[ConfigFilenameMarks]
+"Panely: Zobrazit označení názvů souborů"
+// need translation:
+//[ConfigFilenameMarksHint]
+"Use Ctrl-Alt-M to quick toggle from panel"
+//[ConfigFilenameMarksAlign]
+"Vyrovnat názvy souborů podle označení"
+//[ConfigFilenameMinMaxIndentation]
+"Min - max odsazení názvů souborů"
+//[ConfigFilenameMinIndentation]
+"Opravené odsazení názvů souborů"
+//[ConfigFilenameMaxIndentation]
+"Maximální odsazení názvů souborů"
+
+//[ConfigInterfaceTitle]
+"Nastavení rozhraní"
+
+// need translation:
+//[ConfigInputTitle]
+"Input settings"
+// need translation:
+//[DirSettingsTitle]
+"Dirs and symlinks in Size column"
+// need translation:
+//[DirSettingsHint]
+"Use Ctrl-Alt-D to quick open from panel"
+//[DirSettingsCenter]
+"&Zarovnat do středu"
+//[DirSettingsSurround]
+"&Symboly kolem"
+//[DirSettingsShowAs]
+"Zobrazit &adresář jako:"
+// need translation:
+//[DirSettingsWidthText]
+"Adjust "Size" column &width to text:"
+// need translation:
+//[DirSettingsWidthCombo0]
+"when in file panel mode it width is 0"
+// need translation:
+//[DirSettingsWidthCombo1]
+"always"
+// need translation:
+//[DirSettingsSymlinkText]
+"For symlink to file show:"
+// need translation:
+//[DirSettingsSymlinkRadio1]
+"&text"
+// need translation:
+//[DirSettingsSymlinkRadio2]
+"size of target &file"
+//[DirSettingsApply]
+"&Použít"
+// need translation:
+//[DirSettingsSymlinkSizeHint]
+"Use Ctrl-Alt-L to quick toggle from panel"
+//[ConfigClock]
+"&Hodiny v panelech"
+//[ConfigViewerEditorClock]
+"H&odiny v prohlížeči a editoru"
+//[ConfigMouse]
+"M&yš"
+// need translation:
+//[ConfigXLats]
+"&Transliteration ruleset:"
+// need translation:
+//[ConfigXLatDialogs]
+"Enable &dialog navigation transliteration"
+// need translation:
+//[ConfigXLatFastFileFind]
+"Enable fast &file find transliteration"
+//[ConfigKeyBar]
+"Zobrazovat &zkratkové klávesy"
+//[ConfigMenuBar]
+"Vždy zobrazovat hlavní &menu"
+//[ConfigSaver]
+"Sp&ořič obrazovky"
+//[ConfigSaverMinutes]
+"minut"
+//[ConfigCursorBlinkInt]
+"Interval blikání kurzoru (ms)"
+// need translation:
+//[ConfigConsoleChangeFont]
+"Change &font"
+// need translation:
+//[ConfigConsolePaintSharp]
+"Disable antialiasing"
+// need translation:
+//[ConfigOSC52ClipSet]
+"Use OSC&52 to set clipboard data"
+// need translation:
+//[ConfigTTYPaletteOverride]
+"Override base colors &palette"
+// need translation:
+//[ConfigExclusiveKeys]
+"&Exclusively handle hotkeys that include:"
+// need translation:
+//[ConfigExclusiveCtrlLeft]
+"Left Ctrl"
+// need translation:
+//[ConfigExclusiveCtrlRight]
+"Right Ctrl"
+// need translation:
+//[ConfigExclusiveAltLeft]
+"Left Alt "
+// need translation:
+//[ConfigExclusiveAltRight]
+"Right Alt "
+// need translation:
+//[ConfigExclusiveWinLeft]
+"Left Win "
+// need translation:
+//[ConfigExclusiveWinRight]
+"Right Win "
+//[ConfigCopyTotal]
+"Zobraz. ukazatel celkového stavu &kopírování"
+//[ConfigCopyTimeRule]
+"Zobrazovat informace o čase kopírování"
+// need translation:
+//[ConfigDeleteTotal]
+"Show total delete progress indicator"
+//[ConfigPgUpChangeDisk]
+"Použít Ctrl+Pg&Up pro změnu disku"
+// need translation:
+//[ConfigDateFormat]
+" &Datetime format "
+// need translation:
+//[ConfigDateFormatMDY]
+"MM-DD-RRRR"
+// need translation:
+//[ConfigDateFormatDMY]
+"DD-MM-RRRR"
+// need translation:
+//[ConfigDateFormatYMD]
+"RRRR-MM-DD"
+// need translation:
+//[ConfigDateSeparator]
+"Date separator"
+// need translation:
+//[ConfigTimeSeparator]
+"Time separator"
+// need translation:
+//[ConfigDecimalSeparator]
+"Decimal separator"
+// need translation:
+//[ConfigDateTimeDefault]
+"&Reset to default"
+// need translation:
+//[ConfigDateTimeCurrent]
+"R&eset to current"
+// need translation:
+//[ConfigDateTimeFromSystem]
+"From system locale"
+// need translation:
+//[ConfigWindowTitle]
+"FAR window title:"
+
+//[ConfigDlgSetsTitle]
+"Nastavení dialogů"
+//[ConfigDialogsEditHistory]
+"H&istorie v dialozích"
+// need translation:
+//[ConfigMaxHistoryCount]
+"&Max history items:"
+//[ConfigDialogsEditBlock]
+"&Trvalé bloky v editačních polích"
+//[ConfigDialogsDelRemovesBlocks]
+"&Del maže položky v editačních polích"
+//[ConfigDialogsAutoComplete]
+"Automatické dokončování v editač&ních polích"
+//[ConfigDialogsEULBsClear]
+"&Backspace maže nezměněný text"
+//[ConfigDialogsMouseButton]
+"Kl&iknutí myší mimo dialog ho zavře"
+//[ConfigDialogsShowArrowsInEdit]
+"&Zobrazit symboly » « při přetečení textu pole"
+
+// need translation:
+//[ConfigVMenuTitle]
+"Menu settings"
+// need translation:
+//[ConfigVMenuLBtnClick]
+"Left mouse click outside a menu"
+// need translation:
+//[ConfigVMenuRBtnClick]
+"Right mouse click outside a menu"
+// need translation:
+//[ConfigVMenuMBtnClick]
+"Middle mouse click outside a menu"
+// need translation:
+//[ConfigVMenuClickCancel]
+"Cancel menu"
+// need translation:
+//[ConfigVMenuClickApply]
+"Execute selected item"
+// need translation:
+//[ConfigVMenuClickIgnore]
+"Do nothing"
+//[ConfigVMenuStopEdge]
+"Procházení seznamu smyčkou"
+
+// need translation:
+//[ConfigCmdlineTitle]
+"Command line settings"
+// need translation:
+//[ConfigCmdlineEditBlock]
+"Persistent blocks"
+// need translation:
+//[ConfigCmdlineDelRemovesBlocks]
+"Del removes blocks"
+// need translation:
+//[ConfigCmdlineAutoComplete]
+"AutoComplete"
+// need translation:
+//[ConfigCmdlineSplitter]
+"Command &output splitter"
+// need translation:
+//[ConfigCmdlineVTLogLimit]
+"Terminal &log size limit (KB):"
+// need translation:
+//[ConfigCmdlineWaitKeypress]
+"&Wait keypress before close"
+// need translation:
+//[ConfigCmdlineWaitKeypress_Never]
+"Never"
+// need translation:
+//[ConfigCmdlineWaitKeypress_OnError]
+"On error"
+// need translation:
+//[ConfigCmdlineWaitKeypress_Always]
+"Always"
+// need translation:
+//[ConfigCmdlineUseShell]
+"Use shell"
+//[ConfigCmdlineUsePromptFormat]
+"Nastavit formát &příkazového řádku"
+// need translation:
+//[ConfigCmdlinePromptFormatAdmin]
+"Administrator"
+
+// need translation:
+//[ConfigAutoCompleteTitle]
+"AutoComplete && History settings"
+
+// need translation:
+//[ConfigAutoCompleteExceptions]
+"&Exceptions wildcards:"
+
+// need translation:
+//[ConfigAutoCompleteShowList]
+"&Show list"
+
+// need translation:
+//[ConfigAutoCompleteModalList]
+"&Modal mode"
+
+// need translation:
+//[ConfigAutoCompleteAutoAppend]
+"&Append first matched item"
+
+// need translation:
+//[ConfigInfoPanelTitle]
+"InfoPanel settings"
+// need translation:
+//[ConfigInfoPanelCNTitle]
+"ComputerName &format"
+// need translation:
+//[ConfigInfoPanelCNPhysicalNetBIOS]
+"Physical NetBIOS"
+// need translation:
+//[ConfigInfoPanelCNPhysicalDnsHostname]
+"Physical DNS hostname"
+// need translation:
+//[ConfigInfoPanelCNPhysicalDnsDomain]
+"Physical DNS domain"
+// need translation:
+//[ConfigInfoPanelCNPhysicalDnsFullyQualified]
+"Physical DNS fully-qualified"
+// need translation:
+//[ConfigInfoPanelCNNetBIOS]
+"NetBIOS"
+// need translation:
+//[ConfigInfoPanelCNDnsHostname]
+"DNS hostname"
+// need translation:
+//[ConfigInfoPanelCNDnsDomain]
+"DNS domain"
+// need translation:
+//[ConfigInfoPanelCNDnsFullyQualified]
+"DNS fully-qualified"
+// need translation:
+//[ConfigInfoPanelUNTitle]
+"UserName &format"
+// need translation:
+//[ConfigInfoPanelUNUnknown]
+"Default"
+// need translation:
+//[ConfigInfoPanelUNFullyQualifiedDN]
+"Fully Qualified Domain Name"
+// need translation:
+//[ConfigInfoPanelUNSamCompatible]
+"Sam Compatible"
+// need translation:
+//[ConfigInfoPanelUNDisplay]
+"Display Name"
+// need translation:
+//[ConfigInfoPanelUNUniqueId]
+"Unique Id"
+// need translation:
+//[ConfigInfoPanelUNCanonical]
+"Canonical Name"
+// need translation:
+//[ConfigInfoPanelUNUserPrincipal]
+"User Principial Name"
+// need translation:
+//[ConfigInfoPanelUNServicePrincipal]
+"Service Principal"
+// need translation:
+//[ConfigInfoPanelUNDnsDomain]
+"Dns Domain"
+// need translation:
+//[ViewerMenuFileTitle]
+"&File"
+// need translation:
+//[ViewerMenuToolsTitle]
+"&Tools"
+// need translation:
+//[ViewerMenuNavigateTitle]
+"&Navigate"
+// need translation:
+//[ViewerMenuViewTitle]
+"&View"
+// need translation:
+//[ViewerMenuNextFile]
+"Next file...                        +"
+// need translation:
+//[ViewerMenuPrevFile]
+"Previous file..                     -"
+// need translation:
+//[ViewerMenuFileHistory]
+"Recent list...                      Alt+F11"
+// need translation:
+//[ViewerMenuFilePrint]
+"Print...                            Alt+F5"
+// need translation:
+//[ViewerMenuFilePrinter]
+"Printer settings..."
+// need translation:
+//[ViewerMenuFileGoToPanel]
+"Go to file in Panel                 Ctrl+F10"
+// need translation:
+//[ViewerMenuFileExit]
+"Exit                                F3"
+// need translation:
+//[ViewerMenuFileHelp]
+"Help                                F1"
+// need translation:
+//[ViewerMenuFilePlugins]
+"Plugins...                          F11"
+// need translation:
+//[ViewerMenuFileScreens]
+"Screen list...                      F12"
+// need translation:
+//[ViewerMenuFileOptions]
+"Configuration...                    Alt+Shift+F9"
+// need translation:
+//[ViewerMenuFileExitFar]
+"Exit far2l                          Alt+F10"
+// need translation:
+//[ViewerMenuUndo]
+"Undo                                Ctrl+Z"
+// need translation:
+//[ViewerMenuRedo]
+"Redo                                Ctrl+Shift+Z"
+// need translation:
+//[ViewerMenuSelect]
+"Select block                        Shift+Right"
+// need translation:
+//[ViewerMenuCopy]
+"Copy                                Ctrl+C"
+// need translation:
+//[ViewerMenuGrep]
+"Grep filter...                      Ctrl+F7"
+// need translation:
+//[ViewerMenuFind]
+"Search...                           F7"
+// need translation:
+//[ViewerMenuFindNext]
+"Search next                         Shift+F7"
+// need translation:
+//[ViewerMenuFindPrev]
+"Search previous                     Alt+F7"
+// need translation:
+//[ViewerMenuNavigateGoToLine]
+"Go to line...                       Alt+F8"
+// need translation:
+//[ViewerMenuNavigateBegin]
+"Go to begin of file                 Ctrl+Home"
+// need translation:
+//[ViewerMenuNavigateEnd]
+"Go to end of file                   Ctrl+End"
+// need translation:
+//[ViewerMenuNavigatePageUp]
+"Page Up                             PageDown"
+// need translation:
+//[ViewerMenuNavigatePageDown]
+"Page Down                           PageUp"
+// need translation:
+//[ViewerMenuNavigateAltPageUp]
+"Scroll Page Up                      Alt+PageDown"
+// need translation:
+//[ViewerMenuNavigateAltPageDown]
+"Scroll Page Down                    Alt+PageUp"
+// need translation:
+//[ViewerMenuNavigateToStartLines]
+"Scroll to begin of lines            Ctrl+Shift+Left"
+// need translation:
+//[ViewerMenuNavigateToEndLines]
+"Scroll to end of lines              Ctrl+Shift+Right"
+// need translation:
+//[ViewerMenuNavigateBm0]
+"Go to bookmark 0                    Ctrl+0"
+// need translation:
+//[ViewerMenuNavigateBm1]
+"Go to bookmark 0                    Ctrl+1"
+// need translation:
+//[ViewerMenuNavigateBm2]
+"Go to bookmark 0                    Ctrl+2"
+// need translation:
+//[ViewerMenuNavigateBm3]
+"Go to bookmark 0                    Ctrl+3"
+// need translation:
+//[ViewerMenuNavigateBm4]
+"Go to bookmark 0                    Ctrl+4"
+// need translation:
+//[ViewerMenuNavigateBm5]
+"Go to bookmark 0                    Ctrl+5"
+// need translation:
+//[ViewerMenuNavigateBm6]
+"Go to bookmark 0                    Ctrl+6"
+// need translation:
+//[ViewerMenuNavigateBm7]
+"Go to bookmark 0                    Ctrl+7"
+// need translation:
+//[ViewerMenuNavigateBm8]
+"Go to bookmark 0                    Ctrl+8"
+// need translation:
+//[ViewerMenuNavigateBm9]
+"Go to bookmark 0                    Ctrl+9"
+// need translation:
+//[ViewerMenuNavigatePin0]
+"Pin bookmark 0                      Ctrl+Shift+0"
+// need translation:
+//[ViewerMenuNavigatePin1]
+"Pin bookmark 0                      Ctrl+Shift+1"
+// need translation:
+//[ViewerMenuNavigatePin2]
+"Pin bookmark 0                      Ctrl+Shift+2"
+// need translation:
+//[ViewerMenuNavigatePin3]
+"Pin bookmark 0                      Ctrl+Shift+3"
+// need translation:
+//[ViewerMenuNavigatePin4]
+"Pin bookmark 0                      Ctrl+Shift+4"
+// need translation:
+//[ViewerMenuNavigatePin5]
+"Pin bookmark 0                      Ctrl+Shift+5"
+// need translation:
+//[ViewerMenuNavigatePin6]
+"Pin bookmark 0                      Ctrl+Shift+6"
+// need translation:
+//[ViewerMenuNavigatePin7]
+"Pin bookmark 0                      Ctrl+Shift+7"
+// need translation:
+//[ViewerMenuNavigatePin8]
+"Pin bookmark 0                      Ctrl+Shift+8"
+// need translation:
+//[ViewerMenuNavigatePin9]
+"Pin bookmark 0                      Ctrl+Shift+9"
+// need translation:
+//[ViewerMenuKeyBar]
+"Show/Hide key bar                   Ctrl+B"
+// need translation:
+//[ViewerMenuTitleBar]
+"Show/Hide title bar                 Ctrl+Shift+B"
+// need translation:
+//[ViewerMenuScrollBar]
+"Show/Hide scroll bar                Ctrl+S"
+// need translation:
+//[ViewerMenuShowMenuBar]
+"Show/Hide menu bar"
+// need translation:
+//[ViewerMenuConsole]
+"Toggle console                      Ctrl+O"
+// need translation:
+//[ViewerMenuWrap]
+"Toggle wrap                         F2"
+// need translation:
+//[ViewerMenuWordWrap]
+"Toggle word wrap                    Shift+F2"
+// need translation:
+//[ViewerMenuHex]
+"Toggle hex view                     F4"
+// need translation:
+//[ViewerMenuExtl]
+"Toggle processed view               F5"
+// need translation:
+//[ViewerMenuEditor]
+"Switch to editor                    F6"
+// need translation:
+//[ViewerMenuTabSize]
+"Change tab size...                  Shift+F5"
+// need translation:
+//[ViewerMenuOem]
+"Toggle code page UTF8-ANSI-OEM      F8"
+// need translation:
+//[ViewerMenuCodepage]
+"Change code page...                 Shift+F8"
+//[ViewShowMenuBar]
+"Zobrazovat menu"
+//[ViewConfigTitle]
+"Prohlížeč"
+// need translation:
+//[ViewConfigExternalF3]
+"Use external viewer for F3 instead of Alt+F3"
+//[ViewConfigExternalCommand]
+"&Příkaz prohlížeče:"
+//[ViewConfigInternal]
+" Interní prohlížeč "
+//[ViewConfigSavePos]
+"&Ukládat pozici v souboru"
+//[ViewConfigSaveShortPos]
+"Ukládat &záložky"
+// need translation:
+//[ViewAutoDetectCodePage]
+"&Autodetekovat znakovou sadu"
+//[ViewConfigTabSize]
+"Velikost &Tabulátoru"
+//[ViewConfigScrollbar]
+"Zobrazovat posu&vník"
+//[ViewConfigArrows]
+"Zobrazovat &skrolovací šipky"
+//[ViewShowKeyBar]
+"Zobrazovat &zkratkové klávesy"
+// need translation:
+//[ViewShowTitleBar]
+"S&how title bar"
+//[ViewConfigPersistentSelection]
+"Trvalé &výběry"
+// need translation:
+//[ViewConfigDefaultCodePage]
+"Choose default code pa&ge:"
+//[ViewClickableURLs]
+"&Rozpoznávání URL"
+
+//[EditConfigTitle]
+"Editor"
+// need translation:
+//[EditConfigEditorF4]
+"Use external editor for F4 instead of Alt+F4"
+//[EditConfigEditorCommand]
+"&Příkaz editoru:"
+//[EditConfigInternal]
+" Interní editor "
+//[EditConfigExpandTabsTitle]
+"Rozšířit Ta&bulátory mezerami"
+
+//[EditConfigDoNotExpandTabs]
+"Nerozšiřovat tabulátory mezerami"
+//[EditConfigExpandTabs]
+"Rozšířit nově zadané tabulátory mezerami"
+//[EditConfigConvertAllTabsToSpaces]
+"Rozšířit všechny tabulátory mezerami"
+//[EditConfigPersistentBlocks]
+"&Trvalé bloky"
+
+//[EditConfigDelRemovesBlocks]
+"&Del maže bloky"
+//[EditConfigAutoIndent]
+"Auto &Odsazování"
+//[EditConfigSavePos]
+"&Ukládat pozici v souboru"
+//[EditConfigSaveShortPos]
+"Ukládat zá&ložky"
+//[EditCursorBeyondEnd]
+"&Kurzor za koncem řádku"
+// need translation:
+//[EditAutoDetectCodePage]
+"&Autodetekovat znakovou sadu"
+// need translation:
+//[EditUseEditorConfigOrg]
+"Use .editorc&onfig settings files"
+//[EditLockROFileModification]
+"&Zamknout editaci souborů určených jen pro čtení"
+//[EditWarningBeforeOpenROFile]
+"&Varovat při otevření souborů určených jen pro čtení"
+//[EditConfigTabSize]
+"Velikost &Tabulátoru"
+//[EditConfigScrollbar]
+"Zobr&azovat posuvník"
+// need translation:
+//[EditShowWhiteSpace]
+"Show white space"
+// need translation:
+//[EditShowLineNumbers]
+"Show line &numbers"
+//[EditShowKeyBar]
+"Zobrazovat &zkratkové klávesy"
+// need translation:
+//[EditorMenuFileTitle]
+"&File"
+// need translation:
+//[EditorMenuEditTitle]
+"&Edit"
+// need translation:
+//[EditorMenuNavigateTitle]
+"&Navigate"
+// need translation:
+//[EditorMenuViewTitle]
+"&View"
+// need translation:
+//[EditorMenuFileOpen]
+"&Open...                             Shift+F4"
+// need translation:
+//[EditorMenuFileSave]
+"&Save                                F2"
+// need translation:
+//[EditorMenuFileSaveAs]
+"Save &as...                          Shift+F2"
+// need translation:
+//[EditorMenuFileSaveQ]
+"Save &quietly and exit               Shift+F10"
+// need translation:
+//[EditorMenuFileHistory]
+"&Recent list...                      Alt+F11"
+// need translation:
+//[EditorMenuFilePrint]
+"&Print...                            Alt+F5"
+// need translation:
+//[EditorMenuFilePrinter]
+"Printer se&ttings..."
+// need translation:
+//[EditorMenuFileGoToPanel]
+"Go to file in &active Panel          Ctrl+F10"
+// need translation:
+//[EditorMenuFileExit]
+"E&xit                                F10"
+// need translation:
+//[EditorMenuFileHelp]
+"&Help                                F1"
+// need translation:
+//[EditorMenuFilePlugins]
+"Pl&ugins...                          F11"
+// need translation:
+//[EditorMenuFileScreens]
+"S&creen list...                      F12"
+// need translation:
+//[EditorMenuFileOptions]
+"Editor &settings...                  Alt+Shift+F9"
+// need translation:
+//[EditorMenuFileExitFar]
+"Exit &far2l                          Alt+F10"
+// need translation:
+//[EditorMenuEditUndo]
+"&Undo                                Ctrl+Z"
+// need translation:
+//[EditorMenuEditRedo]
+"&Redo                                Ctrl+Shift+Z"
+// need translation:
+//[EditorMenuEditSelectAll]
+"Select &all                          Ctrl+A"
+// need translation:
+//[EditorMenuEditSelectVertical]
+"Select &vertical block               Alt+Shift+Cursor keys"
+// need translation:
+//[EditorMenuEditCut]
+"&Cut                                 Ctrl+X"
+// need translation:
+//[EditorMenuEditCopy]
+"Cop&y                                Ctrl+C"
+// need translation:
+//[EditorMenuEditPaste]
+"&Paste                               Ctrl+V"
+// need translation:
+//[EditorMenuEditDelete]
+"Delete &selection                    Ctrl+D"
+// need translation:
+//[EditorMenuEditDelLine]
+"Delete &line                         Ctrl+Y"
+// need translation:
+//[EditorMenuEditDeleteWordLeft]
+"Delete &word left                    Ctrl+Backspace"
+// need translation:
+//[EditorMenuEditDeleteWordRight]
+"Delete word &right                   Ctrl+Del"
+// need translation:
+//[EditorMenuEditDeleteEOL]
+"Delete to the &end of line           Ctrl+K"
+// need translation:
+//[EditorMenuEditFind]
+"Sea&rch...                           F7"
+// need translation:
+//[EditorMenuEditFindReplace]
+"Repl&ace...                          Ctrl+F7"
+// need translation:
+//[EditorMenuEditFindNext]
+"Continue search/replace &forward     Shift+F7"
+// need translation:
+//[EditorMenuEditFindPrev]
+"Continue search/replace &backward    Alt+F7"
+// need translation:
+//[EditorMenuEditShortFName]
+"Type short f&ile name                Shift+Enter"
+// need translation:
+//[EditorMenuEditLongFName]
+"Type full file &name                 Ctrl+F"
+// need translation:
+//[EditorMenuEditLeftPaneName]
+"Insert path from left panel         Ctrl+Alt+("
+// need translation:
+//[EditorMenuEditRightPanel]
+"Insert path from right panel        Ctrl+Alt+)"
+// need translation:
+//[EditorMenuEditActivePanel]
+"Insert path from active panel       Alt+Shift+("
+// need translation:
+//[EditorMenuEditInactivePanel]
+"Insert path from passive panel      Alt+Shift+)"
+// need translation:
+//[EditorMenuEditBlockIndent]
+"Block inden&t                        Alt+U"
+// need translation:
+//[EditorMenuEditBlockUnindent]
+"Bloc&k unindent                      Alt+I"
+// need translation:
+//[EditorMenuNavigateGoToLine]
+"Go to &line...                       Alt+F8"
+// need translation:
+//[EditorMenuNavigateTop]
+"Go to &top                           Ctrl+N"
+// need translation:
+//[EditorMenuNavigateBottom]
+"Go to &bottom                        Ctrl+E"
+// need translation:
+//[EditorMenuNavigateBegin]
+"Go to begin of f&ile                 Ctrl+Home"
+// need translation:
+//[EditorMenuNavigateEnd]
+"Go to &end of file                   Ctrl+End"
+// need translation:
+//[EditorMenuNavigateBm0]
+"Go to bookmark &0                    Ctrl+0"
+// need translation:
+//[EditorMenuNavigateBm1]
+"Go to bookmark &1                    Ctrl+1"
+// need translation:
+//[EditorMenuNavigateBm2]
+"Go to bookmark &2                    Ctrl+2"
+// need translation:
+//[EditorMenuNavigateBm3]
+"Go to bookmark &3                    Ctrl+3"
+// need translation:
+//[EditorMenuNavigateBm4]
+"Go to bookmark &4                    Ctrl+4"
+// need translation:
+//[EditorMenuNavigateBm5]
+"Go to bookmark &5                    Ctrl+5"
+// need translation:
+//[EditorMenuNavigateBm6]
+"Go to bookmark &6                    Ctrl+6"
+// need translation:
+//[EditorMenuNavigateBm7]
+"Go to bookmark &7                    Ctrl+7"
+// need translation:
+//[EditorMenuNavigateBm8]
+"Go to bookmark &8                    Ctrl+8"
+// need translation:
+//[EditorMenuNavigateBm9]
+"Go to bookmark &9                    Ctrl+9"
+// need translation:
+//[EditorMenuNavigatePin0]
+"Pin bookmark 0                      Ctrl+Shift+0"
+// need translation:
+//[EditorMenuNavigatePin1]
+"Pin bookmark 1                      Ctrl+Shift+1"
+// need translation:
+//[EditorMenuNavigatePin2]
+"Pin bookmark 2                      Ctrl+Shift+2"
+// need translation:
+//[EditorMenuNavigatePin3]
+"Pin bookmark 3                      Ctrl+Shift+3"
+// need translation:
+//[EditorMenuNavigatePin4]
+"Pin bookmark 4                      Ctrl+Shift+4"
+// need translation:
+//[EditorMenuNavigatePin5]
+"Pin bookmark 5                      Ctrl+Shift+5"
+// need translation:
+//[EditorMenuNavigatePin6]
+"Pin bookmark 6                      Ctrl+Shift+6"
+// need translation:
+//[EditorMenuNavigatePin7]
+"Pin bookmark 7                      Ctrl+Shift+7"
+// need translation:
+//[EditorMenuNavigatePin8]
+"Pin bookmark 8                      Ctrl+Shift+8"
+// need translation:
+//[EditorMenuNavigatePin9]
+"Pin bookmark 9                      Ctrl+Shift+9"
+// need translation:
+//[EditorMenuViewKeyBar]
+"Show/Hide key bar                   Ctrl+B"
+// need translation:
+//[EditorMenuViewTitleBar]
+"Show/Hide title bar                 Ctrl+Shift+B"
+// need translation:
+//[EditorMenuViewMenuBar]
+"Show/Hide menu bar"
+// need translation:
+//[EditorMenuViewWordWrap]
+"Toggle word wrap                    F3"
+// need translation:
+//[EditorMenuViewNumbers]
+"Toggle line numbers                 Ctrl+F3"
+// need translation:
+//[EditorMenuViewSpaces]
+"Toggle white spaces                 F5"
+// need translation:
+//[EditorMenuViewTabs]
+"Toggle tabs to spaces conversion    Ctrl+F5"
+// need translation:
+//[EditorMenuViewOvertype]
+"Toggle insert/overtype mode         Insert"
+// need translation:
+//[EditorMenuViewFullScreen]
+"Toggle full screen                  Alt+F9"
+// need translation:
+//[EditorMenuViewLock]
+"Toggle lock mode                    Ctrl+L"
+// need translation:
+//[EditorMenuViewConsole]
+"Toggle console                      Ctrl+O"
+// need translation:
+//[EditorMenuViewTabSize]
+"Change &tab size...                  Shift+F5"
+// need translation:
+//[EditorMenuViewOem]
+"Toggle code &page UTF8-ANSI-OEM      F8"
+// need translation:
+//[EditorMenuViewCodepage]
+"Change &code page...                 Shift+F8"
+// need translation:
+//[EditorMenuViewViewer]
+"Switch to &viewer                    F6"
+// need translation:
+//[EditShowTitleBar]
+"S&how title bar"
+//[EditShowMenuBar]
+"Zobrazovat menu"
+// need translation:
+//[EditConfigPickUpWord]
+"Pick &up the word"
+// need translation:
+//[EditConfigDefaultCodePage]
+"Choose default code pa&ge:"
+
+//[NotifConfigTitle]
+"Notifications"
+// need translation:
+//[NotifConfigOnFileOperation]
+"Notify on &file operation completion"
+// need translation:
+//[NotifConfigOnConsole]
+"Notify on &console command completion"
+// need translation:
+//[NotifConfigOnlyIfBackground]
+"Notify only if in &background"
+// need translation:
+//[ConsoleCommandComplete]
+"Console command complete"
+// need translation:
+//[ConsoleCommandFailed]
+"Console command failed"
+// need translation:
+//[FileOperationComplete]
+"File operation complete"
+
+//[SaveSetupTitle]
+"Uložit nastavení"
+//[SaveSetupAsk1]
+"Přejete si uložit"
+//[SaveSetupAsk2]
+"aktuální nastavení?"
+//[SaveSetup]
+"Uložit"
+
+//[CopyDlgTitle]
+"Kopírovat"
+//[MoveDlgTitle]
+"Přejmenovat/Přesunout"
+//[LinkDlgTitle]
+"Link"
+// need translation:
+//[CopyAccessMode]
+"Copy files &access mode"
+//[CopyIfFileExist]
+"Již e&xistující soubory:"
+//[CopyAsk]
+"Ptát s&e"
+//[CopyAskRO]
+"Ptát se také na &R/O soubory"
+//[CopyOnlyNewerFiles]
+"Pouze &novější soubory"
+//[LinkType]
+"&Typ linku:"
+//[LinkTypeJunction]
+"křížení a&dresářů"
+//[LinkTypeHardlink]
+"&pevný link"
+//[LinkTypeSymlink]
+"symbolický link"
+//[LinkTypeSymlinkFile]
+"symbolický link (&soubor)"
+//[LinkTypeSymlinkDirectory]
+"symbolický link (&adresář)"
+// need translation:
+//[CopySymLinkText]
+"With s&ymlinks:"
+// need translation:
+//[LinkCopyAsIs]
+"Always copy &link"
+// need translation:
+//[LinkCopySmart]
+"&Smartly copy link or target file"
+// need translation:
+//[LinkCopyContent]
+"Always copy target &file"
+// need translation:
+//[LinkCopyMoveExplainText]
+" ('smartly' && 'target': always process dirs slowly by each file)"
+// need translation:
+//[CopySparseFiles]
+"Produce &sparse files"
+// need translation:
+//[CopyUseCOW]
+"Use copy-o&n-write if possible"
+//[CopyMultiActions]
+"&Zpracovat více míst určení"
+//[CopyDlgCopy]
+"&Kopírovat"
+//[CopyDlgTree]
+"F10-&Strom"
+//[CopyDlgCancel]
+"&Storno"
+//[CopyDlgRename]
+"Přej&menovat"
+// need translation:
+//[CopyDlgLink]
+"Create &link"
+//[CopyDlgTotal]
+"Celkem"
+//[CopyScanning]
+"Načítání adresářů..."
+//[CopyPrepareSecury]
+"Nastavuji přístupová práva..."
+//[CopyUseFilter]
+"P&oužít filtr"
+//[CopySetFilter]
+"Filt&r"
+
+//[CopyFile]
+"Kopírovat"
+//[MoveFile]
+"Přejmenovat nebo přesunout"
+// need translation:
+//[LinkFile]
+"Create link to"
+//[CopyFiles]
+"Kopírovat %d polož%ls"
+//[MoveFiles]
+"Přejmenovat nebo přesunout %d polož%ls"
+// need translation:
+//[LinkFiles]
+"Create links to %d item%ls"
+//[CMLTargetTO]
+" d&o:"
+// need translation:
+//[CMLTargetIN]
+" &in:"
+//[CMLItems0]
+"u"
+//[CMLItemsA]
+"ek"
+//[CMLItemsS]
+"ky"
+
+//[CopyIncorrectTargetList]
+"Nesprávný seznam cílů"
+
+//[CopyCopyingTitle]
+"Kopíruji"
+//[CopyMovingTitle]
+"Přesouvám"
+
+//[CopyCannotFind]
+"Nelze nalézt soubor"
+
+//[CannotCopyFolderToItself1]
+"Nelze kopírovat adresář"
+//[CannotCopyFolderToItself2]
+"sám na sebe"
+
+//[CannotCopyToTwoDot]
+"Nelze kopírovat soubory nebo adresáře"
+//[CannotMoveToTwoDot]
+"Nelze přesunout soubory nebo adresáře"
+//[CannotCopyMoveToTwoDot]
+"na vyšší úroveň než kořenový adresář"
+
+//[CopyCannotCreateFolder]
+"Nelze vytvořit adresář"
+//[CopyCannotChangeFolderAttr]
+"Nastavení atributů adresáře selhalo"
+//[CopyCannotRenameFolder]
+"Nelze přejmenovat adresář"
+//[CopyIgnore]
+"&Ignorovat"
+//[CopyIgnoreAll]
+"Ignorovat &vše"
+//[CopyRetry]
+"&Opakovat"
+//[CopySkip]
+"&Přeskočit"
+//[CopySkipAll]
+"Př&eskočit vše"
+//[CopyCancel]
+"&Storno"
+
+//[CopyCannotCreateLink]
+"Nelze vytvořit symbolický link"
+//[CopyFolderNotEmpty]
+"Cílový adresář musí být prázdný"
+//[CopyCannotCreateJunctionToFile]
+"Nelze vytvořit křížový odkaz. Soubor již existuje:"
+// need translation:
+//[CopyCannotCreateSymlinkAskCopyContents]
+"Cannot create symlink. Copy contents instead?"
+
+//[CopyCannotCreateVolMount]
+"Chyba připojovacích svazků"
+//[CopyMountVolFailed]
+"Pokus o připojení svazku '%ls'"
+//[CopyMountVolFailed2]
+"na '%ls' selhal"
+//[CopyMountName]
+"Disk_%c"
+
+//[CannotCopyFileToItself1]
+"Nelze kopírovat soubor"
+//[CannotCopyFileToItself2]
+"sám na sebe"
+
+// need translation:
+//[CopyDirectoryOrFile]
+"Does it specify a folder name or file name?"
+// need translation:
+//[CopyDirectoryOrFileDirectory]
+"Folder"
+// need translation:
+//[CopyDirectoryOrFileFile]
+"File"
+
+//[CopyFileExist]
+"Soubor již existuje"
+//[CopySource]
+"&Nový"
+//[CopyDest]
+"E&xistující"
+//[CopyOverwrite]
+"&Přepsat"
+//[CopySkipOvr]
+"Přes&kočit"
+//[CopyAppend]
+"Př&ipojit"
+//[CopyResume]
+"Po&kračovat"
+// need translation:
+//[CopyRename]
+"R&ename"
+//[CopyCancelOvr]
+"&Storno"
+//[CopyRememberChoice]
+"Zapama&tovat volbu"
+// need translation:
+//[CopyRenameTitle]
+"Rename"
+// need translation:
+//[CopyRenameText]
+"&New name:"
+
+//[CopyFileRO]
+"Soubor je určen pouze pro čtení"
+//[CopyAskDelete]
+"Opravdu si ho přejete smazat?"
+//[CopyDeleteRO]
+"S&mazat"
+//[CopyDeleteAllRO]
+"&Vše"
+//[CopySkipRO]
+"Přes&kočit"
+//[CopySkipAllRO]
+"Př&eskočit vše"
+//[CopyCancelRO]
+"&Storno"
+
+//[CannotCopy]
+"Nelze kopírovat"
+//[CannotMove]
+"Nelze přesunout"
+//[CannotLink]
+"Nelze linkovat"
+//[CannotCopyTo]
+"do"
+
+//[CopyReadError]
+"Nelze číst data z"
+//[CopyWriteError]
+"Nelze zapsat data do"
+
+//[CopyProcessed]
+"Zpracováno souborů: %d"
+//[CopyProcessedTotal]
+"Zpracováno souborů: %d z %d"
+//[CopyMoving]
+"Přesunuji soubor"
+//[CopyCopying]
+"Kopíruji soubor"
+//[CopyTo]
+"do"
+
+//[CopyErrorDiskFull]
+"Disk je plný. Vložte dalšíí"
+
+//[DeleteTitle]
+"Smazat"
+//[AskDeleteFolder]
+"Přejete si smazat adresář"
+//[AskDeleteFile]
+"Přejete si smazat soubor"
+//[AskDelete]
+"Přejete si smazat"
+//[AskDeleteRecycleFolder]
+"Přejete si přesunout do Koše adresář"
+//[AskDeleteRecycleFile]
+"Přejete si přesunout do Koše soubor"
+//[AskDeleteRecycle]
+"Přejete si přesunout do Koše"
+//[DeleteWipeTitle]
+"Vymazat"
+//[AskWipeFolder]
+"Přejete si vymazat adresář"
+//[AskWipeFile]
+"Přejete si vymazat soubor"
+//[AskWipe]
+"Přejete si vymazat"
+//[DeleteLinkTitle]
+"Smazat link"
+//[AskDeleteLink]
+"je symbolicky link na"
+//[AskDeleteLinkFolder]
+"adresář"
+//[AskDeleteLinkFile]
+"soubor"
+//[AskDeleteItems]
+"%d polož%ls"
+//[AskDeleteItems0]
+"ku"
+//[AskDeleteItemsA]
+"ky"
+//[AskDeleteItemsS]
+"ek"
+
+//[DeleteFolderTitle]
+"Smazat adresář"
+//[WipeFolderTitle]
+"Vymazat adresář"
+//[DeleteFilesTitle]
+"Smazat soubory"
+//[WipeFilesTitle]
+"Vymazat soubory"
+//[DeleteFolderConfirm]
+"Následující adresář bude smazán:"
+//[WipeFolderConfirm]
+"Následující adresář bude vymazán:"
+//[DeleteWipe]
+"Vymazat"
+// need translation:
+//[DeleteRecycle]
+"Move"
+//[DeleteFileDelete]
+"S&mazat"
+//[DeleteFileWipe]
+"V&ymazat"
+//[DeleteFileAll]
+"&Vše"
+//[DeleteFileSkip]
+"Přes&kočit"
+//[DeleteFileSkipAll]
+"Př&eskočit vše"
+//[DeleteFileCancel]
+"&Storno"
+
+//[DeleteLinkDelete]
+"Smazat link"
+//[DeleteLinkUnlink]
+"Poškozený link"
+
+//[DeletingTitle]
+"Mazání"
+
+//[Deleting]
+"Mazání souboru nebo adresáře"
+//[DeletingWiping]
+"Vymazávání souboru nebo adresáře"
+
+//[DeleteRO]
+"Soubor je určen pouze pro čtení"
+//[AskDeleteRO]
+"Opravdu si ho přejete smazat?"
+//[AskWipeRO]
+"Opravdu si ho přejete vymazat?"
+
+// need translation:
+//[DeleteSymLink1]
+"This is a symlink to the file"
+
+//[DeleteHardLink1]
+"Více pevných linků ukazuje na tento soubor."
+//[DeleteHardLink2]
+"Vymazání tohoto souboru zneplatní všechny soubory, které na něj linkují."
+//[DeleteHardLink3]
+"Opravdu chcete vymazat tento soubor?"
+
+//[CannotDeleteFile]
+"Nelze smazat soubor"
+//[CannotDeleteFolder]
+"Nelze smazat adresář"
+//[DeleteRetry]
+"&Znovu"
+// need translation:
+//[DeleteRetryNotRecycleBin]
+"&No Trash"
+//[DeleteSkip]
+"Přes&kočit"
+//[DeleteSkipAll]
+"Přeskočit &vše"
+//[DeleteCancel]
+"&Storno"
+
+//[CannotGetSecurity]
+"Nemohu získat přístupová práva pro"
+//[CannotSetSecurity]
+"Nemohu nastavit přístupová práva pro"
+
+//[EditTitle]
+"Editor"
+//[AskReload]
+"již otevřen. Jak otevřít tento soubor?"
+//[Current]
+"&Stávající"
+//[Reload]
+"&Znovu načíst"
+//[NewOpen]
+"&Nová instance"
+//[EditCannotOpen]
+"Nelze otevřít soubor"
+//[EditReading]
+"Načítám soubor"
+// need translation:
+//[EditAskSave]
+"Soubor byl modifikován. Save?"
+// need translation:
+//[EditAskSaveExt]
+"Soubor byl změněný externím programem. Save?"
+//[EditBtnSaveAs]
+"Ulož&it jako..."
+
+//[EditRO]
+"je určen pouze pro čtení"
+//[EditExists]
+"již existuje"
+//[EditOvr]
+"Přejete si ho přepsat?"
+//[EditSaving]
+"Ukládám soubor"
+//[EditStatusLine]
+"Řádek"
+//[EditStatusCol]
+"Sloupec"
+
+//[EditRSH]
+"je určen pouze pro čtení"
+// need translation:
+//[EditFileGetSizeError]
+"File size could not be determined."
+//[EditFileLong]
+"má velikost %ls,"
+//[EditFileLong2]
+"která překračuje nastavenou maximální velikost %ls."
+//[EditROOpen]
+"Opravdu si ho přejete upravit?"
+
+//[EditCanNotEditDirectory]
+"Nelze editovat adresář"
+
+//[EditSearchTitle]
+"Hledat"
+//[EditSearchFor]
+"&Hledat"
+//[EditSearchCase]
+"&Rozlišovat velikost písmen"
+//[EditSearchWholeWords]
+"&Celá slova"
+//[EditSearchReverse]
+"&Zpětné hledání"
+//[EditSearchSelFound]
+"Vy&ber nalezené"
+// need translation:
+//[EditSearchRegexp]
+"Re&gular expressions"
+//[EditSearchSearch]
+"Hledat"
+//[EditSearchCancel]
+"Storno"
+
+//[EditReplaceTitle]
+"Nahradit"
+//[EditReplaceWith]
+"Nahradit &s"
+//[EditReplaceReplace]
+"&Nahradit"
+
+//[EditSearchingFor]
+"Vyhledávám"
+//[EditNotFound]
+"Nemůžu najít řetězec"
+
+//[EditAskReplace]
+"Nahradit"
+//[EditAskReplaceWith]
+"s"
+//[EditReplace]
+"&Nahradit"
+//[EditReplaceAll]
+"&Vše"
+//[EditSkip]
+"Přes&kočit"
+//[EditCancel]
+"&Storno"
+//[EditOpenCreateLabel]
+"Otevřít/vytvořit soubor:"
+// need translation:
+//[EditOpenAutoDetect]
+"Automatic detection"
+
+//[EditGoToLine]
+"Jít na pozici"
+
+//[BookmarksTitle]
+"Adresářové zkratky"
+
+// need translation:
+//[PluginsTitle]
+"Plugins"
+
+// need translation:
+//[VTStop]
+"Closing back shell."
+
+// need translation:
+//[VTStopTip]
+"TIP: To close far2l - type 'exit far'."
+
+// need translation:
+//[VTStartTipNoCmdTitle]
+"While typing command:                                                     "
+
+// need translation:
+//[VTStartTipNoCmdCtrlO]
+" Ctrl+O - switch between panel/terminal.                                  "
+
+// need translation:
+//[VTStartTipNoCmdCtrlArrow]
+" Ctrl+Up/+Down/+Left/+Right - adjust panels dimensions.                   "
+
+// need translation:
+//[VTStartTipNoCmdShiftTAB]
+" Double Shift+TAB - bash-guided autocomplete.                             "
+
+// need translation:
+//[VTStartTipNoCmdFn]
+" F3, F4, F8 - viewer/editor/clear terminal log (if panels are off).       "
+
+// need translation:
+//[VTStartTipNoCmdMouse]
+" Ctrl+Shift+MouseScrollUp - open autoclosing viewer with terminal log.    "
+
+// need translation:
+//[VTStartTipPendCmdTitle]
+"While executing command:                                                  "
+
+// need translation:
+//[VTStartTipPendCmdFn]
+" Ctrl+Shift+F3/+F4 - pause and open viewer/editor with console log.       "
+
+// need translation:
+//[VTStartTipPendCmdCtrlAltC]
+" Ctrl+Alt+C - terminate everything in this shell.                         "
+
+// need translation:
+//[VTStartTipPendCmdCtrlAltZ]
+" Ctrl+Alt+Z - detach command to background releasing terminal.            "
+
+// need translation:
+//[VTStartTipPendCmdMouse]
+" Ctrl+Shift+MouseScrollUp - autoclosing console log viewer.               "
+
+// need translation:
+//[VTStartTipMouseSelect]
+"Text selected with mouse automatically copied to clipboard                "
+//[BookmarkBottom]
+"Edit: Del Ins F4 Shift+Up Shift+Down"
+//[ShortcutNone]
+"<není>"
+//[ShortcutPlugin]
+"<plugin>"
+//[FSShortcut]
+"Zadejte novou zkratku:"
+//[NeedNearPath]
+"Skočit na nejbližší existující adresář?"
+//[SaveThisShortcut]
+"Uložit tyto zkratky?"
+
+//functional keys - 6 characters max, 12 keys, "OEM" is F8 dupe!
+//[EditF1]
+"Pomoc"
+//[EditF2]
+"Uložit"
+//[EditF3]
+""
+//[EditF4]
+"Konec"
+// need translation:
+//[EditF5]
+"ShwSpc"
+//[EditF6]
+"Zobraz"
+//[EditF7]
+"Hledat"
+//[EditF8]
+"->ANSI"
+//[EditF9]
+"Menu"
+//[EditF10]
+"Konec"
+//[EditF11]
+"Plugin"
+//[EditF12]
+"Obraz."
+// need translation:
+//[EditF5Hide]
+"HidSpc"
+// need translation:
+//[EditCtrlF3Hide]
+"HideNum"
+// need translation:
+//[EditCtrlF5Spaces]
+"Spaces"
+//[EditF8DOS]
+"->OEM"
+// don't count this - it's a F8 another text
+//[EditF8UTF8]
+"->UTF8"
+// don't count this - it's a F8 another text
+//[ViewF5Processed]
+"Proc-d"
+// don't count this - it's a F5 another text
+//[ViewF5Raw]
+"Raw"
+// don't count this - it's a F5 another text
+
+//Editor: Shift
+//[EditShiftF1]
+""
+//[EditShiftF2]
+"UlJako"
+//[EditShiftF3]
+""
+//[EditShiftF4]
+"Edit.."
+// need translation:
+//[EditShiftF5]
+"TabWdt"
+//[EditShiftF6]
+""
+//[EditShiftF7]
+"Další"
+// need translation:
+//[EditShiftF8]
+"ZnSady"
+//[EditShiftF9]
+""
+//[EditShiftF10]
+"UlKone"
+//[EditShiftF11]
+""
+//[EditShiftF12]
+""
+
+//Editor: Alt
+//[EditAltF1]
+""
+//[EditAltF2]
+""
+//[EditAltF3]
+""
+//[EditAltF4]
+""
+//[EditAltF5]
+"Tisk"
+//[EditAltF6]
+""
+//[EditAltF7]
+"Předch"
+//[EditAltF8]
+"Jít na"
+//[EditAltF9]
+"Video"
+//[EditAltF10]
+"ExitFar"
+//[EditAltF11]
+"ProhHs"
+//[EditAltF12]
+""
+
+//Editor: Ctrl
+//[EditCtrlF1]
+""
+//[EditCtrlF2]
+""
+// need translation:
+//[EditCtrlF3]
+"LineNum"
+//[EditCtrlF4]
+""
+// need translation:
+//[EditCtrlF5]
+"Tab-s"
+//[EditCtrlF6]
+""
+//[EditCtrlF7]
+"Nahraď"
+//[EditCtrlF8]
+""
+//[EditCtrlF9]
+""
+//[EditCtrlF10]
+"JdiSou"
+//[EditCtrlF11]
+""
+//[EditCtrlF12]
+""
+
+//Editor: AltShift
+//[EditAltShiftF1]
+""
+//[EditAltShiftF2]
+""
+//[EditAltShiftF3]
+""
+//[EditAltShiftF4]
+""
+//[EditAltShiftF5]
+""
+//[EditAltShiftF6]
+""
+//[EditAltShiftF7]
+""
+//[EditAltShiftF8]
+""
+//[EditAltShiftF9]
+"Nastav"
+//[EditAltShiftF10]
+""
+//[EditAltShiftF11]
+""
+//[EditAltShiftF12]
+""
+
+//Editor: CtrlShift
+//[EditCtrlShiftF1]
+""
+//[EditCtrlShiftF2]
+""
+//[EditCtrlShiftF3]
+""
+//[EditCtrlShiftF4]
+""
+//[EditCtrlShiftF5]
+""
+//[EditCtrlShiftF6]
+""
+//[EditCtrlShiftF7]
+""
+//[EditCtrlShiftF8]
+""
+//[EditCtrlShiftF9]
+""
+//[EditCtrlShiftF10]
+""
+//[EditCtrlShiftF11]
+""
+//[EditCtrlShiftF12]
+""
+
+// Editor: CtrlAlt
+//[EditCtrlAltF1]
+""
+//[EditCtrlAltF2]
+""
+//[EditCtrlAltF3]
+""
+//[EditCtrlAltF4]
+""
+//[EditCtrlAltF5]
+""
+//[EditCtrlAltF6]
+""
+//[EditCtrlAltF7]
+""
+//[EditCtrlAltF8]
+""
+//[EditCtrlAltF9]
+""
+//[EditCtrlAltF10]
+""
+//[EditCtrlAltF11]
+""
+//[EditCtrlAltF12]
+""
+
+// Editor: CtrlAltShift
+//[EditCtrlAltShiftF1]
+""
+//[EditCtrlAltShiftF2]
+""
+//[EditCtrlAltShiftF3]
+""
+//[EditCtrlAltShiftF4]
+""
+//[EditCtrlAltShiftF5]
+""
+//[EditCtrlAltShiftF6]
+""
+//[EditCtrlAltShiftF7]
+""
+//[EditCtrlAltShiftF8]
+""
+//[EditCtrlAltShiftF9]
+""
+//[EditCtrlAltShiftF10]
+""
+//[EditCtrlAltShiftF11]
+""
+//[EditCtrlAltShiftF12]
+""
+//End of functional keys (Editor)
+
+//Single Editor: functional keys - 6 characters max, 12 keys, "OEM" is F8 dupe!
+//[SingleEditF1]
+"Pomoc"
+//[SingleEditF2]
+"Uložit"
+//[SingleEditF3]
+""
+//[SingleEditF4]
+"Konec"
+//[SingleEditF5]
+""
+//[SingleEditF6]
+"Zobraz"
+//[SingleEditF7]
+"Hledat"
+//[SingleEditF8]
+"->ANSI"
+//[SingleEditF9]
+""
+//[SingleEditF10]
+"Konec"
+//[SingleEditF11]
+"Plugin"
+//[SingleEditF12]
+"Obraz."
+//[SingleEditF8DOS]
+"->OEM"
+// don't count this - it's a F8 another text
+//[SingleEditF8UTF8]
+"->UTF8"
+// don't count this - it's a F8 another text
+
+//Single Editor: Shift
+//[SingleEditShiftF1]
+""
+//[SingleEditShiftF2]
+"UlJako"
+//[SingleEditShiftF3]
+""
+//[SingleEditShiftF4]
+""
+//[SingleEditShiftF5]
+""
+//[SingleEditShiftF6]
+""
+//[SingleEditShiftF7]
+"Další"
+// need translation:
+//[SingleEditShiftF8]
+"ZnSady"
+//[SingleEditShiftF9]
+""
+//[SingleEditShiftF10]
+"UlKone"
+//[SingleEditShiftF11]
+""
+//[SingleEditShiftF12]
+""
+
+//Single Editor: Alt
+//[SingleEditAltF1]
+""
+//[SingleEditAltF2]
+""
+//[SingleEditAltF3]
+""
+//[SingleEditAltF4]
+""
+//[SingleEditAltF5]
+"Tisk"
+//[SingleEditAltF6]
+""
+//[SingleEditAltF7]
+""
+//[SingleEditAltF8]
+"Jít na"
+//[SingleEditAltF9]
+"Video"
+//[SingleEditAltF10]
+""
+//[SingleEditAltF11]
+"ProhHs"
+//[SingleEditAltF12]
+""
+
+//Single Editor: Ctrl
+//[SingleEditCtrlF1]
+""
+//[SingleEditCtrlF2]
+""
+// need translation:
+//[SingleEditCtrlF3]
+"LineNum"
+//[SingleEditCtrlF4]
+""
+//[SingleEditCtrlF5]
+""
+//[SingleEditCtrlF6]
+""
+//[SingleEditCtrlF7]
+"Nahraď"
+//[SingleEditCtrlF8]
+""
+//[SingleEditCtrlF9]
+""
+//[SingleEditCtrlF10]
+""
+//[SingleEditCtrlF11]
+""
+//[SingleEditCtrlF12]
+""
+
+//Single Editor: AltShift
+//[SingleEditAltShiftF1]
+""
+//[SingleEditAltShiftF2]
+""
+//[SingleEditAltShiftF3]
+""
+//[SingleEditAltShiftF4]
+""
+//[SingleEditAltShiftF5]
+""
+//[SingleEditAltShiftF6]
+""
+//[SingleEditAltShiftF7]
+""
+//[SingleEditAltShiftF8]
+""
+//[SingleEditAltShiftF9]
+"Nastav"
+//[SingleEditAltShiftF10]
+""
+//[SingleEditAltShiftF11]
+""
+//[SingleEditAltShiftF12]
+""
+
+//Single Editor: CtrlShift
+//[SingleEditCtrlShiftF1]
+""
+//[SingleEditCtrlShiftF2]
+""
+//[SingleEditCtrlShiftF3]
+""
+//[SingleEditCtrlShiftF4]
+""
+//[SingleEditCtrlShiftF5]
+""
+//[SingleEditCtrlShiftF6]
+""
+//[SingleEditCtrlShiftF7]
+""
+//[SingleEditCtrlShiftF8]
+""
+//[SingleEditCtrlShiftF9]
+""
+//[SingleEditCtrlShiftF10]
+""
+//[SingleEditCtrlShiftF11]
+""
+//[SingleEditCtrlShiftF12]
+""
+
+//Single Editor: CtrlAlt
+//[SingleEditCtrlAltF1]
+""
+//[SingleEditCtrlAltF2]
+""
+//[SingleEditCtrlAltF3]
+""
+//[SingleEditCtrlAltF4]
+""
+//[SingleEditCtrlAltF5]
+""
+//[SingleEditCtrlAltF6]
+""
+//[SingleEditCtrlAltF7]
+""
+//[SingleEditCtrlAltF8]
+""
+//[SingleEditCtrlAltF9]
+""
+//[SingleEditCtrlAltF10]
+""
+//[SingleEditCtrlAltF11]
+""
+//[SingleEditCtrlAltF12]
+""
+
+//Single Editor: CtrlAltShift
+//[SingleEditCtrlAltShiftF1]
+""
+//[SingleEditCtrlAltShiftF2]
+""
+//[SingleEditCtrlAltShiftF3]
+""
+//[SingleEditCtrlAltShiftF4]
+""
+//[SingleEditCtrlAltShiftF5]
+""
+//[SingleEditCtrlAltShiftF6]
+""
+//[SingleEditCtrlAltShiftF7]
+""
+//[SingleEditCtrlAltShiftF8]
+""
+//[SingleEditCtrlAltShiftF9]
+""
+//[SingleEditCtrlAltShiftF10]
+""
+//[SingleEditCtrlAltShiftF11]
+""
+//[SingleEditCtrlAltShiftF12]
+""
+//End of functional keys (Single Editor)
+// need translation:
+//[EditTabWidthTitle]
+"Tab character width"
+// need translation:
+//[EditTabWidthItems]
+"1 space;2 spaces;3 spaces;4 spaces;5 spaces;6 spaces;7 spaces;8 spaces;9 spaces;10 spaces"
+
+//[EditSaveAs]
+"Uložit soubor jako"
+//[EditCodePage]
+"Kódová stránka:"
+//[EditAddSignature]
+"Přidat signaturu (BOM)"
+//[EditSaveAsFormatTitle]
+"Změnit zakončení řádků na:"
+//[EditSaveOriginal]
+"&Beze změny"
+//[EditSaveDOS]
+"&Dos/Windows formát (CR LF)"
+//[EditSaveUnix]
+"&Unix formát (LF)"
+//[EditSaveMac]
+"&Mac formát (CR)"
+//[EditCannotSave]
+"Nelze uložit soubor"
+//[EditSavedChangedNonFile]
+"Soubor je změněn, ale soubor, nebo adresář obsahující"
+//[EditSavedChangedNonFile1]
+"Soubor nebo adresář obsahující"
+// need translation:
+//[EditSavedChangedNonFile2]
+"tento soubor byl přesunut, nebo smazán. Save?"
+//[EditNewPath1]
+"Cesta k editovanému souboru neexistuje,"
+//[EditNewPath2]
+"ale bude vytvořena při uložení souboru."
+//[EditNewPath3]
+"Pokračovat?"
+//[EditNewPlugin1]
+"Název souboru k editaci nesmí být prázdné"
+// need translation:
+//[EditorLoadCPWarn1]
+"File contains characters, which cannot be"
+// need translation:
+//[EditorLoadCPWarn2]
+"correctly read using selected codepage."
+// need translation:
+//[EditorSaveCPWarn1]
+"Editor contains characters, which cannot be"
+// need translation:
+//[EditorSaveCPWarn2]
+"correctly saved using selected codepage."
+// need translation:
+//[EditorSwitchCPWarn1]
+"Editor contains characters, which cannot be"
+// need translation:
+//[EditorSwitchCPWarn2]
+"correctly translated using selected codepage."
+// need translation:
+//[EditDataLostWarn]
+"During file editing some data was lost."
+//[EditorSaveNotRecommended]
+"Není doporučeno uložit tento soubor."
+// need translation:
+//[EditorSaveCPWarnShow]
+"Show"
+
+//[ColumnName]
+"Název"
+//[ColumnSize]
+"Velikost"
+// need translation:
+//[ColumnPhysical]
+"PhysSz"
+//[ColumnDate]
+"Datum"
+//[ColumnTime]
+"Čas"
+// need translation:
+//[ColumnWrited]
+"Write"
+//[ColumnCreated]
+"Vytvořen"
+//[ColumnAccessed]
+"Přístup"
+// need translation:
+//[ColumnChanged]
+"Change"
+//[ColumnAttr]
+"Attr"
+//[ColumnDescription]
+"Popis"
+//[ColumnOwner]
+"Vlastník"
+// need translation:
+//[ColumnGroup]
+"Group"
+//[ColumnMumLinks]
+"PočLn"
+//[DirUp]
+"Nahoru"
+//[DirName]
+"Složka"
+//[DirUp2]
+"KATALOG"
+//[DirName2]
+"KATALOG"
+//[DirUp3]
+"DIR-NAHORU"
+//[DirName3]
+"ADRESÁŘ"
+//[DirUp4]
+"DIR-NAHORU"
+//[DirName4]
+"POD-ADRESÁ"
+//[SymLinkName]
+"Link"
+//[SymLinkName2]
+"Syodkaz"
+//[SymLinkName3]
+"SYODKAZ"
+//[SymLinkName4]
+"SYODKAZ"
+//[JunctionName]
+"Křížení"
+//[JunctionName2]
+"KŘÍŽENÍ"
+//[JunctionName3]
+"KŘÍŽENÍ"
+//[JunctionName4]
+"KŘÍŽENÍ"
+//[ListBytes]
+"B"
+//[ListKb]
+"K"
+//[ListMb]
+"M"
+//[ListGb]
+"G"
+//[ListTb]
+"T"
+//[ListPb]
+"P"
+//[ListEb]
+"E"
+//[ListFileSize]
+" %ls bytů v 1 souboru "
+//[ListFilesSize1]
+" %ls bytů v %d souborech "
+//[ListFilesSize2]
+" %ls bytů v %d souborech "
+//[ListFreeSize]
+" %ls volných bytů "
+
+//[DirInfoViewTitle]
+"Zobraz"
+//[FileToEdit]
+"Soubor k editaci:"
+
+//[UnselectTitle]
+"Odznačit"
+//[SelectTitle]
+"Označit"
+//[SelectFolders]
+"Vybírat a&dresáře"
+//[SelectCase]
+"Roz&lišovat velikost písmen"
+// need translation:
+//[SelectNote]
+"Setting affects also Compare folders"
+//[SelectFilter]
+"&Filtr"
+
+//[CompareTitle]
+"Porovnat"
+//[CompareFilePanelsRequired1]
+"Pro provedení příkazu Porovnat adresáře"
+//[CompareFilePanelsRequired2]
+"jsou nutné dva souborové panely"
+//[CompareSameFolders1]
+"Obsahy adresářů jsou"
+//[CompareSameFolders2]
+"identické"
+
+//[SelectAssocTitle]
+"Vyber závislosti"
+
+//[AssocTitle]
+"Závislosti souborů"
+//[AssocBottom]
+"Edit: Del Ins F4"
+//[AskDelAssoc]
+"Přejete si smazat závislost pro"
+
+//[FileAssocTitle]
+"Upravit závislosti souborů"
+//[FileAssocMasks]
+"&Maska nebo masky souborů:"
+//[FileAssocDescr]
+"&Popis asociací:"
+//[FileAssocExec]
+"&Vykonat příkaz (použito pro Enter):"
+//[FileAssocAltExec]
+"V&ykonat příkaz (použito pro Ctrl+PgDn):"
+//[FileAssocView]
+"Příkaz &Zobraz (použito pro F3):"
+//[FileAssocAltView]
+"Příkaz Z&obraz (použito pro Alt+F3):"
+//[FileAssocEdit]
+"Příkaz &Edituj (použito pro F4):"
+//[FileAssocAltEdit]
+"Příkaz Editu&j (použito pro Alt+F4):"
+
+//Viewer: functional keys, 12 keys, except F2 - 2 keys, and F8 - 2 keys
+//[ViewF1]
+"Pomoc"
+//[ViewF2]
+"Zalom"
+// this is another text for F2
+//[ViewF3]
+"Konec"
+//[ViewF4]
+"Hex"
+//[ViewF5]
+""
+//[ViewF6]
+"Edit"
+//[ViewF7]
+"Hledat"
+//[ViewF8]
+"->ANSI"
+//[ViewF9]
+"Menu"
+//[ViewF10]
+"Konec"
+//[ViewF11]
+"Plugin"
+//[ViewF12]
+"Obraz."
+//[ViewF2Unwrap]
+"Nezal"
+// this is another text for F4
+//[ViewF4Text]
+"Text"
+//[ViewF8DOS]
+"->OEM"
+//[ViewF8UTF8]
+"->UTF8"
+
+//Viewer: Shift
+//[ViewShiftF1]
+""
+//[ViewShiftF2]
+"ZalSlo"
+//[ViewShiftF3]
+""
+//[ViewShiftF4]
+""
+//[ViewShiftF5]
+""
+//[ViewShiftF6]
+""
+//[ViewShiftF7]
+"Další"
+// need translation:
+//[ViewShiftF8]
+"ZnSady"
+//[ViewShiftF9]
+""
+//[ViewShiftF10]
+""
+//[ViewShiftF11]
+""
+//[ViewShiftF12]
+""
+
+//Viewer: Alt
+//[ViewAltF1]
+""
+//[ViewAltF2]
+""
+//[ViewAltF3]
+""
+//[ViewAltF4]
+""
+//[ViewAltF5]
+"Tisk"
+//[ViewAltF6]
+""
+//[ViewAltF7]
+"Předch"
+//[ViewAltF8]
+"Jít na"
+//[ViewAltF9]
+"Video"
+//[ViewAltF10]
+"ExitFar"
+//[ViewAltF11]
+"ProhHs"
+//[ViewAltF12]
+""
+
+//Viewer: Ctrl
+//[ViewCtrlF1]
+""
+//[ViewCtrlF2]
+""
+//[ViewCtrlF3]
+""
+//[ViewCtrlF4]
+""
+//[ViewCtrlF5]
+""
+//[ViewCtrlF6]
+""
+//[ViewCtrlF7]
+"Grep"
+//[ViewCtrlF8]
+""
+//[ViewCtrlF9]
+""
+//[ViewCtrlF10]
+"JítSou"
+//[ViewCtrlF11]
+""
+//[ViewCtrlF12]
+""
+
+//Viewer: AltShift
+//[ViewAltShiftF1]
+""
+//[ViewAltShiftF2]
+""
+//[ViewAltShiftF3]
+""
+//[ViewAltShiftF4]
+""
+//[ViewAltShiftF5]
+""
+//[ViewAltShiftF6]
+""
+//[ViewAltShiftF7]
+""
+//[ViewAltShiftF8]
+""
+//[ViewAltShiftF9]
+"Nastav"
+//[ViewAltShiftF10]
+""
+//[ViewAltShiftF11]
+""
+//[ViewAltShiftF12]
+""
+
+//Viewer: CtrlShift
+//[ViewCtrlShiftF1]
+""
+//[ViewCtrlShiftF2]
+""
+//[ViewCtrlShiftF3]
+""
+//[ViewCtrlShiftF4]
+""
+//[ViewCtrlShiftF5]
+""
+//[ViewCtrlShiftF6]
+""
+//[ViewCtrlShiftF7]
+""
+//[ViewCtrlShiftF8]
+""
+//[ViewCtrlShiftF9]
+""
+//[ViewCtrlShiftF10]
+""
+//[ViewCtrlShiftF11]
+""
+//[ViewCtrlShiftF12]
+""
+
+//Viewer: CtrlAlt
+//[ViewCtrlAltF1]
+""
+//[ViewCtrlAltF2]
+""
+//[ViewCtrlAltF3]
+""
+//[ViewCtrlAltF4]
+""
+//[ViewCtrlAltF5]
+""
+//[ViewCtrlAltF6]
+""
+//[ViewCtrlAltF7]
+""
+//[ViewCtrlAltF8]
+""
+//[ViewCtrlAltF9]
+""
+//[ViewCtrlAltF10]
+""
+//[ViewCtrlAltF11]
+""
+//[ViewCtrlAltF12]
+""
+
+//Viewer: CtrlAltShift
+//[ViewCtrlAltShiftF1]
+""
+//[ViewCtrlAltShiftF2]
+""
+//[ViewCtrlAltShiftF3]
+""
+//[ViewCtrlAltShiftF4]
+""
+//[ViewCtrlAltShiftF5]
+""
+//[ViewCtrlAltShiftF6]
+""
+//[ViewCtrlAltShiftF7]
+""
+//[ViewCtrlAltShiftF8]
+""
+//[ViewCtrlAltShiftF9]
+""
+//[ViewCtrlAltShiftF10]
+""
+//[ViewCtrlAltShiftF11]
+""
+//[ViewCtrlAltShiftF12]
+""
+//end of functional keys (Viewer)
+
+//Single Viewer: functional keys, 12 keys, except F2 - 2 keys, and F8 - 2 keys
+//[SingleViewF1]
+"Pomoc"
+//[SingleViewF2]
+"Zalom"
+//[SingleViewF3]
+"Konec"
+//[SingleViewF4]
+"Hex"
+//[SingleViewF5]
+""
+//[SingleViewF6]
+"Edit"
+//[SingleViewF7]
+"Hledat"
+//[SingleViewF8]
+"ANSI"
+//[SingleViewF9]
+""
+//[SingleViewF10]
+"Konec"
+//[SingleViewF11]
+"Plugin"
+//[SingleViewF12]
+"Obraz."
+// this is another text for F2
+//[SingleViewF2Unwrap]
+"Nezal"
+// this is another text for F4
+//[SingleViewF4Text]
+"Text"
+//[SingleViewF8DOS]
+"OEM"
+
+//Single Viewer: Shift
+//[SingleViewShiftF1]
+""
+//[SingleViewShiftF2]
+"ZalSlo"
+//[SingleViewShiftF3]
+""
+//[SingleViewShiftF4]
+""
+//[SingleViewShiftF5]
+""
+//[SingleViewShiftF6]
+""
+//[SingleViewShiftF7]
+"Další"
+// need translation:
+//[SingleViewShiftF8]
+"ZnSady"
+//[SingleViewShiftF9]
+""
+//[SingleViewShiftF10]
+""
+//[SingleViewShiftF11]
+""
+//[SingleViewShiftF12]
+""
+
+//Single Viewer: Alt
+//[SingleViewAltF1]
+""
+//[SingleViewAltF2]
+""
+//[SingleViewAltF3]
+""
+//[SingleViewAltF4]
+""
+//[SingleViewAltF5]
+"Tisk"
+//[SingleViewAltF6]
+""
+//[SingleViewAltF7]
+"Předch"
+//[SingleViewAltF8]
+"Jít na"
+//[SingleViewAltF9]
+"Video"
+//[SingleViewAltF10]
+"ExitFar"
+//[SingleViewAltF11]
+"ProhHs"
+//[SingleViewAltF12]
+""
+
+//Single Viewer: Ctrl
+//[SingleViewCtrlF1]
+""
+//[SingleViewCtrlF2]
+""
+//[SingleViewCtrlF3]
+""
+//[SingleViewCtrlF4]
+""
+//[SingleViewCtrlF5]
+""
+//[SingleViewCtrlF6]
+""
+//[SingleViewCtrlF7]
+""
+//[SingleViewCtrlF8]
+""
+//[SingleViewCtrlF9]
+""
+//[SingleViewCtrlF10]
+""
+//[SingleViewCtrlF11]
+""
+//[SingleViewCtrlF12]
+""
+
+//Single Viewer: AltShift
+//[SingleViewAltShiftF1]
+""
+//[SingleViewAltShiftF2]
+""
+//[SingleViewAltShiftF3]
+""
+//[SingleViewAltShiftF4]
+""
+//[SingleViewAltShiftF5]
+""
+//[SingleViewAltShiftF6]
+""
+//[SingleViewAltShiftF7]
+""
+//[SingleViewAltShiftF8]
+""
+//[SingleViewAltShiftF9]
+"Nastav"
+//[SingleViewAltShiftF10]
+""
+//[SingleViewAltShiftF11]
+""
+//[SingleViewAltShiftF12]
+""
+
+//Single Viewer: CtrlShift
+//[SingleViewCtrlShiftF1]
+""
+//[SingleViewCtrlShiftF2]
+""
+//[SingleViewCtrlShiftF3]
+""
+//[SingleViewCtrlShiftF4]
+""
+//[SingleViewCtrlShiftF5]
+""
+//[SingleViewCtrlShiftF6]
+""
+//[SingleViewCtrlShiftF7]
+""
+//[SingleViewCtrlShiftF8]
+""
+//[SingleViewCtrlShiftF9]
+""
+//[SingleViewCtrlShiftF10]
+""
+//[SingleViewCtrlShiftF11]
+""
+//[SingleViewCtrlShiftF12]
+""
+
+//Single Viewer: CtrlAlt
+//[SingleViewCtrlAltF1]
+""
+//[SingleViewCtrlAltF2]
+""
+//[SingleViewCtrlAltF3]
+""
+//[SingleViewCtrlAltF4]
+""
+//[SingleViewCtrlAltF5]
+""
+//[SingleViewCtrlAltF6]
+""
+//[SingleViewCtrlAltF7]
+""
+//[SingleViewCtrlAltF8]
+""
+//[SingleViewCtrlAltF9]
+""
+//[SingleViewCtrlAltF10]
+""
+//[SingleViewCtrlAltF11]
+""
+//[SingleViewCtrlAltF12]
+""
+
+//Single Viewer: CtrlAltShift
+//[SingleViewCtrlAltShiftF1]
+""
+//[SingleViewCtrlAltShiftF2]
+""
+//[SingleViewCtrlAltShiftF3]
+""
+//[SingleViewCtrlAltShiftF4]
+""
+//[SingleViewCtrlAltShiftF5]
+""
+//[SingleViewCtrlAltShiftF6]
+""
+//[SingleViewCtrlAltShiftF7]
+""
+//[SingleViewCtrlAltShiftF8]
+""
+//[SingleViewCtrlAltShiftF9]
+""
+//[SingleViewCtrlAltShiftF10]
+""
+//[SingleViewCtrlAltShiftF11]
+""
+//[SingleViewCtrlAltShiftF12]
+""
+//end of functional keys (Single Viewer)
+//[InViewer]
+"prohlížení %ls"
+//[InEditor]
+"editace %ls"
+
+//[FilterTitle]
+"Menu filtrů"
+//[FilterBottom]
+"+ - Mezera I X BS Shift+BS Ins Del F4 F5 Ctrl+Up/Dn Ctrl+M"
+//[PanelFileType]
+"Typ panelu souborů"
+//[FolderFileType]
+"Adresáře"
+//[CanEditCustomFilterOnly]
+"Jedině vlastní filtr může být upraven"
+//[AskDeleteFilter]
+"Přejete si smazat filtr"
+//[CanDeleteCustomFilterOnly]
+"Jedině vlastní filtr může být smazán"
+
+//[FindFileTitle]
+"Hledat soubor"
+//[FindFileMasks]
+"Maska nebo masky souborů:"
+//[FindFileText]
+"Obsahující te&xt:"
+//[FindFileHex]
+"Obsahující &hex:"
+// need translation:
+//[FindFileCodePage]
+"Použít &znakovou sadu:"
+//[FindFileCodePageBottom]
+"Space Ins"
+//[FindFileCaseFileMask]
+"Zvážit &velikost písmen masky"
+//[FindFileCase]
+"Zvážit &velikost písmen textu"
+//[FindFileWholeWords]
+"&Celá slova"
+// need translation:
+//[FindFileAllCodePages]
+"Všechny znakové sady"
+// need translation:
+//[FindFileSelectedCodePages]
+"Selected code pages (%d)"
+//[FindArchives]
+"Hledat v a&rchívech"
+//[FindFolders]
+"Hledat a&dresáře"
+//[FindSymLinks]
+"Hledat v s&ymbolických lincích"
+//[SearchForHex]
+"Hledat &hex"
+// need translation:
+//[SearchWhere]
+"Zvolte oblast hledání:"
+//[SearchAllDisks]
+"Ve všech p&evných discích"
+//[SearchAllButNetwork]
+"Ve všech &lokálních discích"
+//[SearchInPATH]
+"V adresářích z &PATH"
+//[SearchFromRootOfDrive]
+"V &kořeni"
+//[SearchFromRootFolder]
+"V kořeno&vém adresáři"
+//[SearchFromCurrent]
+"V tomto adresář&i"
+//[SearchInCurrent]
+"P&ouze v tomto adresáři"
+//[SearchInSelected]
+"Ve vy&braných adresářích"
+//[FindUseFilter]
+"Použít f&iltr"
+//[FindUsingFilter]
+"používám filtr"
+//[FindFileFind]
+"&Hledat"
+//[FindFileDrive]
+"D&isk"
+//[FindFileSetFilter]
+"&Filtr"
+//[FindFileAdvanced]
+"Pokr&očilé"
+//[FindSearchingIn]
+"Hledám%ls v"
+//[FindNewSearch]
+"&Nové hledání"
+//[FindGoTo]
+"&Jdi na"
+//[FindView]
+"Zo&braz"
+// need translation:
+//[FindEdit]
+"&Edit"
+//[FindPanel]
+"&Panel"
+//[FindStop]
+"&Stop"
+
+//[FindDone]
+"Hledání ukončeno. Nalezeno %d soubor(ů) a %d adresář(ů)"
+//[FindCancel]
+"&Storno"
+
+//[FindFound]
+" Souborů: %d, adresářů: %d "
+
+//[FindFileFolder]
+"Adresář"
+//[FindFileSymLink]
+"Link"
+//[FindFileJunction]
+"Křížení"
+
+//[FindFileAdvancedTitle]
+"Pokročilé nastavení vyhledávání souborů"
+//[FindFileSearchFirst]
+"Hledat po&uze v prvních:"
+// need translation:
+//[FindFileSearchOutputFormat]
+"&Output format:"
+// need translation:
+//[FindAlternateStreams]
+"Process &alternate data streams"
+//[FindAlternateModeTypes]
+"&Typ sloupců"
+//[FindAlternateModeWidths]
+"Šíř&ka sloupců"
+
+//[FoldTreeSearch]
+"Hledat:"
+
+// need translation:
+//[GetCodePageTitle]
+"Znakové sady:"
+// need translation:
+//[GetCodePageSystem]
+"System"
+// need translation:
+//[GetCodePageUnicode]
+"Unicode"
+// need translation:
+//[GetCodePageFavorites]
+"Favorites"
+// need translation:
+//[GetCodePageOther]
+"Other"
+//[GetCodePageBottomTitle]
+"Ctrl+H Del Ins F4 Ctrl+Alt+F"
+//[GetCodePageBottomShortTitle]
+"Ctrl+H Del F4 Ctrl+Alt+F"
+// need translation:
+//[GetCodePageEditCodePageName]
+"Edit code page name"
+// need translation:
+//[GetCodePageResetCodePageName]
+"&Reset"
+
+//[HighlightTitle]
+"Zvýrazňování souborů"
+//[HighlightBottom]
+"+ - Mezera Ins Del Enter/F4 F3 F5 Ctrl+Nahoru/Dolů Ctrl+M"
+//[HighlightUpperSortGroup]
+"Vzesupné řazení"
+//[HighlightLowerSortGroup]
+"Sestupné řazení"
+//[HighlightLastGroup]
+"Zvýraznění nejnižší prority"
+//[HighlightAskDel]
+"Přejete si smazat zvýraznění pro"
+//[HighlightWarning]
+"Všechny změny budou ztraceny"
+//[HighlightAskRestore]
+"Přejete si obnovit výchozí nastavení?"
+// need translation:
+//[HighlightViewTitle]
+"Files highlighting expand Mask Groups"
+// need translation:
+//[HighlightViewName]
+"== Highlighting Name:"
+// need translation:
+//[HighlightViewMarker]
+"== Highlighting Marker:"
+// need translation:
+//[HighlightViewMasksEmpty]
+"== Highlighting has empty masks"
+// need translation:
+//[HighlightViewMasksBeforeExpand]
+"== Highlighting masks before expand:"
+// need translation:
+//[HighlightViewMasksCountExpandedGroups]
+"== Correctly expanded Groups inside Highlighting masks:"
+// need translation:
+//[HighlightViewMasksAfterExpand]
+"== Highlighting masks after expand all groups:"
+
+//[HighlightEditTitle]
+"Upravit zvýrazňování souborů"
+//[HighlightMarking]
+"O&značení"
+//[HighlightMarkStrInherit]
+"Dědit"
+//[HighlightMarkAddInherit]
+"Přidat"
+//[HighlightCustomIdent]
+"Odsazení"
+//[HighlightColors]
+" Barva názvu souborů (\"černá na černé\" - výchozí barva) "
+//[HighlightFileName1]
+"&1. Normální soubor            "
+//[HighlightFileName2]
+"&3. Vybraný soubor             "
+//[HighlightFileName3]
+"&5. Soubor pod kurzorem        "
+//[HighlightFileName4]
+"&7. Vybraný soubor pod kurzorem"
+//[HighlightMarking1]
+"&2. Označení"
+//[HighlightMarking2]
+"&4. Označení"
+//[HighlightMarking3]
+"&6. Označení"
+//[HighlightMarking4]
+"&8. Označení"
+//[HighlightExample1]
+"filename.ext"
+//[HighlightExample2]
+"║ filename.ext│"
+//[HighlightContinueProcessing]
+"Pokračovat ve zpracová&ní"
+
+//[InfoTitle]
+"Informace"
+//[InfoCompName]
+"Název počítače"
+//[InfoUserName]
+"Jméno uživatele"
+//[InfoDisk]
+"disk"
+//[InfoDiskTotal]
+"Celkem bytů"
+//[InfoDiskFree]
+"Volných bytů"
+//[InfoDiskLabel]
+"Popisek disku"
+//[InfoDiskNumber]
+"Sériové číslo"
+// need translation:
+//[InfoDiskCurDir]
+"Current Directory"
+// need translation:
+//[InfoDiskRealDir]
+"Real Directory Path"
+// need translation:
+//[InfoDiskMountPoint]
+"FS Mount Point"
+// need translation:
+//[InfoDiskMaxFilenameLength]
+"FS Maximum Filename Length"
+// need translation:
+//[InfoDiskFlags]
+"FS Flags"
+// need translation:
+//[InfoPluginTitle]
+"Plugin in panel"
+// need translation:
+//[InfoPluginStartDir]
+"Plugin start in Directory"
+// need translation:
+//[InfoPluginModuleName]
+"Plugin Module Name"
+// need translation:
+//[InfoPluginHostFile]
+"Plugin HostFile"
+// need translation:
+//[InfoPluginCurDir]
+"Plugin CurDir"
+// need translation:
+//[InfoPluginPanelTitle]
+"Plugin PanelTitle"
+// need translation:
+//[InfoPluginFormat]
+"Plugin Format"
+// need translation:
+//[InfoPluginShortcutData]
+"Plugin ShortcutData"
+//[InfoMemory]
+"Paměť"
+//[InfoMemoryLoad]
+"Zatížení paměti"
+//[InfoMemoryTotal]
+"Celková paměť"
+//[InfoMemoryFree]
+"Volná paměť"
+// need translation:
+//[InfoSharedMemory]
+"Shared RAM"
+// need translation:
+//[InfoBufferMemory]
+"Buffer RAM"
+// need translation:
+//[InfoPageFileTotal]
+"Total paging file"
+// need translation:
+//[InfoPageFileFree]
+"Free paging file"
+// need translation:
+//[InfoEdCfgNearestDir]
+".editorconfig Nearest Dir"
+// need translation:
+//[InfoEdCfgRootDir]
+".editorconfig Root Dir"
+// need translation:
+//[InfoGitRootDir]
+"Git Root Directory"
+//[InfoDescription]
+"Popis"
+//[InfoDizAbsent]
+"Soubor s popisem adresáře chybí"
+//[InfoPluginDescription]
+"Plugin Popis"
+// need translation:
+//[InfoPluginAbsent]
+"Plugin information is absent"
+
+//[ErrorInvalidFunction]
+"Nesprávná funkce"
+//[ErrorBadCommand]
+"Příkaz nebyl rozpoznán"
+//[ErrorFileNotFound]
+"Soubor nenalezen"
+//[ErrorPathNotFound]
+"Cesta nenalezena"
+//[ErrorTooManyOpenFiles]
+"Příliš mnoho otevřených souborů"
+//[ErrorAccessDenied]
+"Přístup odepřen"
+//[ErrorNotEnoughMemory]
+"Nedostatek paměti"
+//[ErrorDiskRO]
+"Nelze zapisovat na disk chráněný proti zápisu"
+//[ErrorDeviceNotReady]
+"Zařízení není připraveno"
+//[ErrorCannotAccessDisk]
+"Na disk nelze přistoupit"
+//[ErrorSectorNotFound]
+"Sektor nenalezen"
+//[ErrorOutOfPaper]
+"V tiskárně došel papír"
+//[ErrorWrite]
+"Chyba zápisu"
+//[ErrorRead]
+"Chyba čtení"
+//[ErrorDeviceGeneral]
+"Obecná chyba zařízení"
+//[ErrorFileSharing]
+"Narušeno sdílení souborů"
+//[ErrorNetworkPathNotFound]
+"Síťová cesta nebyla nalezena"
+//[ErrorNetworkBusy]
+"Síť je zaneprázdněna"
+//[ErrorNetworkAccessDenied]
+"Přístup na síť zakázán"
+//[ErrorNetworkWrite]
+"Na síti došlo k chybě v zápisu"
+//[ErrorDiskLocked]
+"Disk je používán nebo uzamčen jiným procesem"
+//[ErrorFileExists]
+"Soubor nebo adresář již existuje"
+//[ErrorInvalidName]
+"Zadaný název je neplatný"
+//[ErrorInsufficientDiskSpace]
+"Nedostatek místa na disku"
+//[ErrorFolderNotEmpty]
+"Adresář není prázdný"
+//[ErrorIncorrectUserName]
+"Neplatné jméno uživatele"
+//[ErrorIncorrectPassword]
+"Neplatné heslo"
+//[ErrorLoginFailure]
+"Přihlášení selhalo"
+//[ErrorConnectionAborted]
+"Spojení přerušeno"
+//[ErrorCancelled]
+"Operace stornována"
+//[ErrorNetAbsent]
+"Síť není k dispozici"
+//[ErrorNetDeviceInUse]
+"Zařízení se používá a nemůže být odpojeno"
+//[ErrorNetOpenFiles]
+"Přes toto síťové spojení jsou otevřeny soubory"
+//[ErrorAlreadyAssigned]
+"Název lokálního zařízení je již používán"
+//[ErrorAlreadyRemebered]
+"Lokální zařízení je již v uživatelově profilu"
+//[ErrorNotLoggedOn]
+"Uživatel nebyl do sítě přihlášen"
+//[ErrorInvalidPassword]
+"Uživatelovo heslo není správné"
+//[ErrorNoRecoveryPolicy]
+"V tomto systému není nastaveno žádné platné pravidlo pro dešifrování"
+//[ErrorEncryptionFailed]
+"Zadaný soubor nemohl být zašifrován"
+//[ErrorDecryptionFailed]
+"Zadaný soubor nemohl být dešifrován"
+//[ErrorFileNotEncrypted]
+"Zadaný soubor není zašifrován"
+//[ErrorNoAssociation]
+"K zadanému souboru není asociována žádná aplikace pro tuto operaci"
+
+//[CannotExecute]
+"Nelze provést"
+//[ScanningFolder]
+"Prohledávám adresář"
+
+//[MakeFolderTitle]
+"Vytvoření adresáře"
+//[CreateFolder]
+"Vytvořit &adresář"
+//[MultiMakeDir]
+"Zpracovat &více názvů"
+//[IncorrectDirList]
+"Neplatný seznam adresářů"
+//[CannotCreateFolder]
+"Adresář nelze vytvořit"
+
+//[MenuBriefView]
+"&Stručný                  LCtrl+1"
+//[MenuMediumView]
+"S&třední                  LCtrl+2"
+//[MenuFullView]
+"&Plný                     LCtrl+3"
+//[MenuWideView]
+"Š&iroký                   LCtrl+4"
+//[MenuDetailedView]
+"Detai&lní                 LCtrl+5"
+//[MenuDizView]
+"P&opisky                  LCtrl+6"
+//[MenuLongDizView]
+"&Dlouhé popisky           LCtrl+7"
+//[MenuOwnersView]
+"Vlastník so&uboru         LCtrl+8"
+//[MenuLinksView]
+"Souborové lin&ky          LCtrl+9"
+//[MenuAlternativeView]
+"&Alternativní plný        LCtrl+0"
+
+//[MenuInfoPanel]
+"Panel In&fo               Ctrl+L"
+//[MenuTreePanel]
+"Panel St&rom              Ctrl+T"
+//[MenuQuickView]
+"Z&běžné zobrazení         Ctrl+Q"
+//[MenuSortModes]
+"Módy řaze&ní              Ctrl+F12"
+//[MenuLongNames]
+"Zobrazit dlouhé názv&y    Ctrl+N"
+//[MenuTogglePanel]
+"Panel &Zap/Vyp            Ctrl+F1"
+//[MenuReread]
+"Obno&vit                  Ctrl+R"
+//[MenuChangeDrive]
+"Z&měnit jednotku          Alt+F1"
+
+//[MenuView]
+"&Zobrazit                   F3"
+//[MenuEdit]
+"&Editovat                   F4"
+//[MenuCopy]
+"&Kopírovat                  F5"
+//[MenuMove]
+"&Přejmenovat/Přesunout      F6"
+//[MenuLink]
+"Link                       Alt+F6"
+//[MenuCreateFolder]
+"&Vytvořit adresář           F7"
+//[MenuDelete]
+"&Smazat                     F8"
+//[MenuWipe]
+"&Vymazat                    Alt+Del"
+//[MenuAdd]
+"Přidat do &archívu          Shift+F1"
+//[MenuExtract]
+"&Rozbalit soubory           Shift+F2"
+//[MenuArchiveCommands]
+"Příkazy arc&hívu            Shift+F3"
+//[MenuAttributes]
+"A&tributy souboru           Ctrl+A"
+// need translation:
+//[MenuChattr]
+"chattr / ch&flags           Ctrl+Alt+A"
+//[MenuApplyCommand]
+"Ap&likovat příkaz           Ctrl+G"
+//[MenuDescribe]
+"Přidat popisek sou&borům    Ctrl+Z"
+//[MenuSelectGroup]
+"Oz&načit skupinu            Num +"
+//[MenuUnselectGroup]
+"O&dznačit skupinu           Num -"
+//[MenuInvertSelection]
+"&Invertovat výběr           Num *"
+//[MenuRestoreSelection]
+"&Obnovit výběr              Ctrl+M"
+
+//[MenuFindFile]
+"H&ledat soubor                  Alt+F7"
+//[MenuHistory]
+"&Historie                       Alt+F8"
+//[MenuVideoMode]
+"&Video mód                      Alt+F9"
+//[MenuFindFolder]
+"Hl&edat adresář                 Alt+F10"
+//[MenuViewHistory]
+"Historie &zobrazení souborů     Alt+F11"
+//[MenuFoldersHistory]
+"Historie &adresářů              Alt+F12"
+//[MenuSwapPanels]
+"Prohodit panel&y                Ctrl+U"
+//[MenuHorizontalPanels]
+"Hori&zontální panely            Ctrl+,"
+//[MenuVerticalPanels]
+"Ver&tikální panely              Ctrl+,"
+//[MenuTogglePanels]
+"&Panely Zap/Vyp                 Ctrl+O"
+//[MenuCompareFolders]
+"Po&rovnat adresáře"
+//[MenuUserMenu]
+"Upravit uživatelské &menu"
+//[MenuFileAssociations]
+"Asocia&ce souborů"
+//[MenuBookmarks]
+"A&dresářové zkratky"
+//[MenuFilter]
+"F&iltr panelu souborů           Ctrl+I"
+//[MenuPluginCommands]
+"Příkazy plu&ginů                F11"
+//[MenuWindowsList]
+"Seznam obrazove&k               F12"
+//[MenuProcessList]
+"Seznam úl&oh                    Ctrl+W"
+//[MenuFarConfig]
+"Ko&nfigurační editor"
+// need translation:
+//[MenuMacroBrowser]
+"Macro Browser"
+//[MenuAboutFar]
+"Informace o &FAR"
+
+//[MenuSystemSettings]
+"Nastavení S&ystému"
+//[MenuPanelSettings]
+"Nastavení &Panelů"
+//[MenuInterface]
+"Nastavení Ro&zhraní"
+//[MenuLanguages]
+"Nastavení &Jazyka (Languages)"
+// need translation:
+//[MenuInput]
+"Inpu&t settings"
+//[MenuPluginsConfig]
+"Nastavení Plu&ginů                 Alt+Shift+F9"
+// need translation:
+//[MenuPluginsManagerSettings]
+"Plugins manager settings"
+//[MenuDialogSettings]
+"Nastavení Dialo&gů"
+// need translation:
+//[MenuVMenuSettings]
+"Menu settings"
+// need translation:
+//[MenuCmdlineSettings]
+"Command line settings"
+// need translation:
+//[MenuAutoCompleteSettings]
+"AutoComplete && History settings"
+//[MenuMaskGroups]
+"Skupiny masek souborů"
+// need translation:
+//[MenuInfoPanelSettings]
+"Inf&oPanel settings"
+//[MenuConfirmation]
+"P&otvrzení"
+//[MenuFilePanelModes]
+"&Módy souborových panelů"
+//[MenuFileDescriptions]
+"Popi&sy souborů"
+//[MenuFolderInfoFiles]
+"Soubory popisů &adresářů"
+//[MenuViewer]
+"Nastavení P&rohlížeče"
+//[MenuEditor]
+"Nastavení &Editoru"
+// need translation:
+//[MenuNotifications]
+"No&tifications settings"
+// need translation:
+//[MenuCodePages]
+"Znakové sady:"
+//[MenuColors]
+"&Barvy"
+//[MenuFilesHighlighting]
+"Z&výrazňování souborů a skupiny řazení"
+//[MenuSaveSetup]
+"&Uložit nastavení                      Shift+F9"
+//[MenuTogglePanelRight]
+"Panel &Zap/Vyp            Ctrl+F2"
+//[MenuChangeDriveRight]
+"Z&měnit jednotku          Alt+F2"
+
+//[MenuLeftTitle]
+"&Levý"
+//[MenuFilesTitle]
+"&Soubory"
+//[MenuCommandsTitle]
+"Pří&kazy"
+//[MenuOptionsTitle]
+"&Nastavení"
+//[MenuRightTitle]
+"&Pravý"
+
+//[MenuSortTitle]
+"Seřadit podle"
+//[MenuSortByName]
+"&Názvu                     Ctrl+F3"
+//[MenuSortByExt]
+"&Přípony                   Ctrl+F4"
+// need translation:
+//[MenuSortByWrite]
+"&Write time             Ctrl+F5"
+//[MenuSortBySize]
+"&Velikosti                 Ctrl+F6"
+//[MenuUnsorted]
+"N&eřadit                   Ctrl+F7"
+//[MenuSortByCreation]
+"&Data vytvoření            Ctrl+F8"
+//[MenuSortByAccess]
+"Ča&su přístupu             Ctrl+F9"
+// need translation:
+//[MenuSortByChange]
+"Change time"
+//[MenuSortByDiz]
+"P&opisků                   Ctrl+F10"
+//[MenuSortByOwner]
+"V&lastníka                 Ctrl+F11"
+// need translation:
+//[MenuSortByPhysicalSize]
+"&Komprimované velikosti"
+//[MenuSortByNumLinks]
+"Poč&tu pevných linků"
+// need translation:
+//[MenuSortByFullName]
+"&Full name"
+// need translation:
+//[MenuSortByCustomData]
+"Cus&tom data"
+//[MenuSortUseGroups]
+"Řazení podle skup&in       Shift+F11"
+//[MenuSortSelectedFirst]
+"Nejdřív zobrazit vy&brané  Shift+F12"
+// need translation:
+//[MenuSortDirectoriesFirst]
+"Sho&w directories first"
+// need translation:
+//[MenuSortExecutablesFirst]
+"Show e&xecutables first"
+//[MenuSortUseNumeric]
+"Použít čí&selné řazení"
+//[MenuSortUseCaseSensitive]
+"Použít řazení citlivé na velikost písmen"
+
+//[ChangeDriveTitle]
+"Jednotka"
+//[ChangeDriveRemovable]
+"vyměnitelná"
+//[ChangeDriveFixed]
+"pevná"
+//[ChangeDriveNetwork]
+"síťová"
+// need translation:
+//[ChangeDriveDisconnectedNetwork]
+"disconnected"
+//[ChangeDriveCDROM]
+"CD-ROM"
+//[ChangeDriveCD_RW]
+"CD-RW"
+//[ChangeDriveCD_RWDVD]
+"CD-RW/DVD"
+//[ChangeDriveDVD_ROM]
+"DVD-ROM"
+//[ChangeDriveDVD_RW]
+"DWD-RW"
+//[ChangeDriveDVD_RAM]
+"DVD-RAM"
+//[ChangeDriveBD_ROM]
+"BD-ROM"
+//[ChangeDriveBD_RW]
+"BD-RW"
+//[ChangeDriveHDDVD_ROM]
+"HDDVD-ROM"
+//[ChangeDriveHDDVD_RW]
+"HDDVD-RW"
+//[ChangeDriveRAM]
+"RAM disk"
+//[ChangeDriveSUBST]
+"SUBST"
+// need translation:
+//[ChangeDriveVirtual]
+"virtual"
+//[ChangeDriveLabelAbsent]
+"není k dispozici"
+//[ChangeDriveCannotReadDisk]
+"Nelze přečíst disk v jednotce"
+//[ChangeDriveCannotDisconnect]
+"Nelze se odpojit od %ls"
+//[ChangeDriveCannotDelSubst]
+"Nelze smazat substnutá jednotka %ls"
+//[ChangeDriveOpenFiles]
+"Pokud neuzavřete otevřené soubory, mohou být tato data ztracena"
+
+//[ChangeSUBSTDisconnectDriveTitle]
+"Odpojování virtuálního zařízení"
+// need translation:
+//[ClearTerminalTitle]
+"Clear terminal"
+// need translation:
+//[ClearTerminalQuestion]
+"Clear terminal screen and history?"
+
+//[ChangeHotPlugDisconnectDriveTitle]
+"Odpojování zařízení"
+//[ChangeHotPlugDisconnectDriveQuestion]
+"Opravdu si přejete odpojit zařízení"
+//[HotPlugDisks]
+"(disk(y): %ls)"
+//[ChangeCouldNotEjectHotPlugMedia]
+"Zařízení %c: nemůže být odpojeno."
+//[ChangeCouldNotEjectHotPlugMedia2]
+"Zařízení nemůže být odpojeno."
+//[ChangeHotPlugNotify1]
+"Zařízení"
+//[ChangeHotPlugNotify2]
+"může být nyní bezpečně odebráno"
+//[HotPlugListTitle]
+"Seznam vyjímatelných zařízení"
+//[HotPlugListBottom]
+"Edit: Del Ctrl+R"
+
+//[ChangeDriveDisconnectTitle]
+"Odpojit síťovou jednotku"
+//[ChangeDriveDisconnectQuestion]
+"Opravdu si přejete odpojit od jednotky %c:?"
+//[ChangeDriveDisconnectMapped]
+"Jednotka %c: je namapována na..."
+//[ChangeDriveDisconnectReconnect]
+"&Znovu připojit při přihlášení"
+
+//[ChangeDriveAskDisconnect]
+"Přejete si přesto zařízení odpojit?"
+//[ChangeVolumeInUse]
+"Jednotka %c: nemůže být vysunuta."
+//[ChangeVolumeInUse2]
+"Je používaná jinou aplikací"
+//[ChangeWaitingLoadDisk]
+"Čekám na disk k připojení..."
+//[ChangeCouldNotEjectMedia]
+"Nelze vysunout médium v jednotce %c:"
+// need translation:
+//[ChangeDriveConfigure]
+"Location Menu Options"
+// need translation:
+//[ChangeDriveShowDiskType]
+"Show disk type"
+// need translation:
+//[ChangeDriveShowNetworkName]
+"Show &network name/SUBST path/VHD name"
+// need translation:
+//[ChangeDriveShowLabel]
+"Show disk &label"
+// need translation:
+//[ChangeDriveShowFileSystem]
+"Show &file system type"
+// need translation:
+//[ChangeDriveShowSize]
+"Show &size"
+// need translation:
+//[ChangeDriveShowSizeFloat]
+"Show size in &Windows Explorer style"
+// need translation:
+//[ChangeDriveShowRemovableDrive]
+"Show &removable drive parameters"
+// need translation:
+//[ChangeDriveShowPlugins]
+"Show &plugins"
+// need translation:
+//[ChangeDriveShowShortcuts]
+"Show &bookmarks"
+// need translation:
+//[ChangeDriveShowMounts]
+"Show &mountpoints"
+// need translation:
+//[ChangeDriveShowNetworkDrive]
+"Show ne&twork drive parameters"
+//[ChangeDriveMenuFooter]
+"Ins Del Shift+Del F4 F9 Ctrl+Alt+F"
+// need translation:
+//[ChangeDriveExceptions]
+"Exceptions:   "
+// need translation:
+//[ChangeDriveColumn2]
+"Second column:"
+// need translation:
+//[ChangeDriveColumn3]
+"Third column: "
+//[EditControlHistoryFooter]
+"Up/Down Enter Esc Shift+Del"
+//[EditControlHistoryFooterNoDel]
+"Up/Down Enter Esc"
+//[HistoryFooter]
+"Up/Down Enter Esc Shift+Del Del Ins Ctrl+C Ctrl+T Ctrl+Alt+F"
+//[HistoryFooterFolder]
+"Up/Down Enter Esc Shift+Del Del Ins Ctrl+C Ctrl+R Ctrl+T Ctrl+F10 Ctrl+Alt+F"
+//[HistoryFooterCmd]
+"Up/Down Enter Esc F3 Shift+Del Del Ins Ctrl+C Ctrl+T Ctrl+F10 Ctrl+Alt+F"
+//[HistoryFooterViewEdit]
+"Up/Down Enter Esc F3 F4 Shift+Del Del Ins Ctrl+C Ctrl+R Ctrl+T Ctrl+F10 Ctrl+Alt+F"
+
+//[SearchFileTitle]
+" Hledat "
+//[CannotCreateListFile]
+"Nelze vytvořit soubor se seznamem"
+//[CannotCreateListTemp]
+"(nemohu vytvořit dočasný soubor pro seznam)"
+//[CannotCreateListWrite]
+"(nemohu zapsat data do souboru)"
+
+//[DragFiles]
+"%d souborů"
+//[DragMove]
+"Přesunout %ls"
+//[DragCopy]
+"Kopírovat %ls"
+
+//[ProcessListTitle]
+"Seznam úloh"
+//[ProcessListBottom]
+"Edit: Del Ctrl+R"
+//[KillProcessTitle]
+"Zabít úlohu"
+//[AskKillProcess]
+"Přejete si zabít vybranou úlohu?"
+//[KillProcessWarning]
+"V tomto programu budou ztraceny neuložené informace"
+//[KillProcessKill]
+"Zabít"
+//[CannotKillProcess]
+"Nemohu ukončit zvolenou úlohu"
+//[CannotKillProcessPerm]
+"Nemáte oprávnění zabít tento proces."
+
+//[QuickViewTitle]
+"Zběžné zobrazení"
+//[QuickViewFolder]
+"Adresář"
+//[QuickViewJunction]
+"Křížení"
+//[QuickViewSymlink]
+"Symbolický link"
+//[QuickViewVolMount]
+"Svazek"
+//[QuickViewContains]
+"Obsah:"
+//[QuickViewFolders]
+"Adresáře           "
+//[QuickViewFiles]
+"Soubory            "
+//[QuickViewBytes]
+"Velikost souborů   "
+// need translation:
+//[QuickViewPhysical]
+"Komprim. velikost  "
+//[QuickViewRatio]
+"Poměr              "
+//[QuickViewCluster]
+"Velikost clusteru  "
+//[QuickViewRealSize]
+"Opravdová velikost "
+//[QuickViewSlack]
+"Mrtvé místo        "
+
+//[SetAttrTitle]
+"Atributy"
+//[SetAttrFor]
+"Změna atributů souboru pro"
+//[SetAttrSelectedObjects]
+"vybrané objekty"
+//[SetAttrHardLinks]
+"pevné linky"
+//[SetAttrJunction]
+"Křížení:"
+// need translation:
+//[SetAttrInfoSelAll]
+"selected %d items"
+// need translation:
+//[SetAttrInfoSelDevices]
+"%lsdevices: %d"
+// need translation:
+//[SetAttrInfoSelDirs]
+"%lsdirs: %d"
+// need translation:
+//[SetAttrInfoSelFiles]
+"%lsfiles: %d"
+// need translation:
+//[SetAttrInfoSelSymDirs]
+"%lssymlinks to dirs: %d"
+// need translation:
+//[SetAttrInfoSelSymFiles]
+"%lssymlinks to files: %d"
+//[SetAttrSymlink]
+"Link:"
+// need translation:
+//[SetAttrSymlinkWarn1]
+"For symlink '%ls'"
+// need translation:
+//[SetAttrSymlinkWarn2]
+"new target '%ls' does not exist"
+// need translation:
+//[SetAttrSymlinkWarn3]
+"(current target '%ls')"
+// need translation:
+//[SetAttrSymlinkWarn4]
+"Skip or change symlink target anyway?"
+// need translation:
+//[SetAttrSymlinkFailed]
+"Error changing symbolic link"
+//[SetAttrVolMount]
+"Svazek:"
+//[SetAttrUnknownJunction]
+"(data nejsou k dispozici)"
+//[SetAttrSubfolders]
+"Zpracovat i po&dadresáře"
+// need translation:
+//[SetAttrAttributesTitle]
+" Attributes / Flags (chattr / chflags) "
+// need translation:
+//[SetAttrImmutable]
+"Im&mutable"
+// need translation:
+//[SetAttrAppend]
+"&Append"
+// need translation:
+//[SetAttrHidden]
+"&Hidden"
+//[SetAttrSUID]
+"&SUID"
+//[SetAttrSGID]
+"SGID"
+//[SetAttrSticky]
+"Sticky"
+// need translation:
+//[SetAttrOwnerTitle]
+" Ownership (chown) "
+//[SetAttrOwner]
+"&Vlastník:"
+// need translation:
+//[SetAttrOwnerMultiple]
+"(multiple values)"
+//[SetAttrOwnerGroupShowId]
+"&Zobrazit Uid / Gid"
+//[SetAttrOwnerOriginal]
+"Originál"
+// need translation:
+//[SetAttrModification]
+"Last &write time:"
+//[SetAttrCreation]
+"Čas v&ytvoření:"
+//[SetAttrLastAccess]
+"Čas posledního pří&stupu:"
+// need translation:
+//[SetAttrChange]
+"Change time:"
+//[SetAttrOriginal]
+"&Originál"
+//[SetAttrCurrent]
+"So&učasný"
+//[SetAttrBlank]
+"P&rázdný"
+//[SetAttrSet]
+"Nastavit"
+
+// need translation:
+//[SetAttrTimeTitle1]
+"MM%cDD%cRRRRR hh%cmm%css%cms"
+// need translation:
+//[SetAttrTimeTitle2]
+"DD%cMM%cRRRRR hh%cmm%css%cms"
+// need translation:
+//[SetAttrTimeTitle3]
+"RRRRR%cMM%cDD hh%cmm%css%cms"
+// need translation:
+//[SetAttrBriefInfo]
+"&Info:"
+// need translation:
+//[SetAttrSymlinkContent]
+"S&ymlink:"
+// need translation:
+//[SetAttrSymlinkObject]
+"Ob&ject: "
+// need translation:
+//[SetAttrSymlinkObjectInfo]
+"&Info:   "
+
+//[SetAttrSetting]
+"Nastavení atributů souboru pro"
+//[SetAttrCannotFor]
+"Nelze nastavit atributy pro"
+//[SetAttrCompressedCannotFor]
+"Nelze nastavit atribut KOMPRIMOVANÝ pro"
+//[SetAttrEncryptedCannotFor]
+"Nelze nastavit atribut ŠIFROVANÝ pro"
+// need translation:
+//[SetAttrSparseCannotFor]
+"Cannot set attribute SPARSE for"
+//[SetAttrTimeCannotFor]
+"Nelze nastavit čas souboru pro"
+// need translation:
+//[SetAttrOwnerCannotFor]
+"Cannot set owner for"
+// need translation:
+//[SetAttrGroupCannotFor]
+"Cannot set group for"
+// need translation:
+//[SetAttrGroup]
+"Grou&p:"
+// need translation:
+//[SetAttrModeTitle]
+" Permissions (chmod) "
+// need translation:
+//[SetAttrAccessUser]
+"User:"
+// need translation:
+//[SetAttrAccessGroup]
+"Group:"
+// need translation:
+//[SetAttrAccessOther]
+"Other:"
+//[SetAttrAccessUserRead]
+"&R"
+//[SetAttrAccessUserWrite]
+"&W"
+//[SetAttrAccessUserExecute]
+"&X"
+//[SetAttrAccessGroupRead]
+"R"
+//[SetAttrAccessGroupWrite]
+"W"
+//[SetAttrAccessGroupExecute]
+"X"
+//[SetAttrAccessOtherRead]
+"R"
+//[SetAttrAccessOtherWrite]
+"W"
+//[SetAttrAccessOtherExecute]
+"X"
+//[SetAttrModeOriginal]
+"Ori&ginál"
+// need translation:
+//[SetAttrAccessTime]
+"Last access time"
+// need translation:
+//[SetAttrModificationTime]
+"Last modification &time"
+// need translation:
+//[SetAttrStatusChangeTime]
+"Last status change time"
+// need translation:
+//[SetAttrSymlinkExplain1]
+"For symlinks all times, ownership, permissions,..."
+// need translation:
+//[SetAttrSymlinkExplain2]
+"  are displayed and will be modified for the original object"
+//[ChAttrTitle]
+"chattr / chflags"
+// need translation:
+//[ChAttrWarnSystem]
+"Far2l doesn't know how to handle flags on your system yet"
+// need translation:
+//[ChAttrWarnNoOne]
+"Chattr/chflags only applicable to one object only.\nMultiple objects are currently selected in the panel."
+// need translation:
+//[ChAttrWarnNoRealFile]
+"Chattr/chflags only applicable to a real object accessible locally.\nCurrently, the plugin panel does not have a real file system object."
+// need translation:
+//[ChAttrWarnNoSymlinks]
+"Chattr/chflags not applicable to symlinks"
+// need translation:
+//[ChAttrErrorGetFlags]
+"Cannot get flags of \"%ls\":\n"
+// need translation:
+//[ChAttrErrorSetFlags]
+"Cannot chattr for \"%ls\":\n"
+
+//[SetColorPanel]
+"&Panel"
+//[SetColorDialog]
+"&Dialog"
+//[SetColorWarning]
+"&Varovná zpráva"
+//[SetColorMenu]
+"&Menu"
+//[SetColorHMenu]
+"Hori&zontální menu"
+//[SetColorKeyBar]
+"&Řádek kláves"
+//[SetColorCommandLine]
+"Pří&kazový řádek"
+//[SetColorClock]
+"&Hodiny"
+//[SetColorViewer]
+"P&rohlížeč"
+//[SetColorEditor]
+"&Editor"
+//[SetColorHelp]
+"&Nápověda"
+//[SetDefaultColors]
+"Výchozí &16 barvy"
+//[SetDefaultColorsRGB]
+"Výchozí RG&B barvy"
+//[SetBW]
+"&Tmavý mód"
+// need translation:
+//[ColorThemesUserSection]
+"User themes"
+// need translation:
+//[ColorThemesPreinstalledSection]
+"Preinstalled themes"
+// need translation:
+//[ColorThemesNoTheme]
+"User colors"
+
+//[SetColorPanelNormal]
+"Normální text"
+//[SetColorPanelSelected]
+"Vybraný text"
+//[SetColorPanelHighlightedInfo]
+"Info zvýrazněné"
+//[SetColorPanelDragging]
+"Tažený text"
+//[SetColorPanelBox]
+"Okraj"
+//[SetColorPanelNormalCursor]
+"Normální kurzor"
+//[SetColorPanelSelectedCursor]
+"Vybraný kurzor"
+//[SetColorPanelNormalTitle]
+"Normální nadpis"
+//[SetColorPanelSelectedTitle]
+"Vybraný nadpis"
+//[SetColorPanelColumnTitle]
+"Nadpis sloupce"
+//[SetColorPanelTotalInfo]
+"Info celkové"
+//[SetColorPanelSelectedInfo]
+"Info výběr"
+//[SetColorPanelScrollbar]
+"Posuvník"
+//[SetColorPanelScreensNumber]
+"Počet obrazovek na pozadí"
+
+//[SetColorDialogNormal]
+"Normální text"
+//[SetColorDialogHighlighted]
+"Zvýrazněný text"
+//[SetColorDialogDisabled]
+"Zakázaný text"
+//[SetColorDialogBox]
+"Okraj"
+//[SetColorDialogBoxTitle]
+"Nadpis"
+//[SetColorDialogHighlightedBoxTitle]
+"Zvýrazněný nadpis"
+//[SetColorDialogTextInput]
+"Textový vstup"
+//[SetColorDialogUnchangedTextInput]
+"Nezměněný textový vstup"
+//[SetColorDialogSelectedTextInput]
+"Vybraný textový vstup"
+//[SetColorDialogEditDisabled]
+"Zakázaný vstupní řádek"
+//[SetColorDialogButtons]
+"Tlačítka"
+//[SetColorDialogSelectedButtons]
+"Vybraná tlačítka"
+//[SetColorDialogHighlightedButtons]
+"Zvýrazněná tlačítka"
+//[SetColorDialogSelectedHighlightedButtons]
+"Vybraná zvýrazněná tlačítka"
+// need translation:
+//[SetColorDialogDefaultButton]
+"Default button"
+// need translation:
+//[SetColorDialogSelectedDefaultButton]
+"Selected default button"
+// need translation:
+//[SetColorDialogHighlightedDefaultButton]
+"Highlighted default button"
+// need translation:
+//[SetColorDialogSelectedHighlightedDefaultButton]
+"Selected highlighted default button"
+//[SetColorDialogOverflowArrow]
+"Šipka přetečení"
+//[SetColorDialogListBoxControl]
+"Seznam položek"
+//[SetColorDialogComboBoxControl]
+"Výběr položek"
+
+//[SetColorDialogListText]
+"Normální text"
+//[SetColorDialogListSelectedText]
+"Vybraný text"
+//[SetColorDialogListHighLight]
+"Zvýrazněný text"
+//[SetColorDialogListSelectedHighLight]
+"Vybraný zvýrazněný text"
+//[SetColorDialogListDisabled]
+"Naktivní položka"
+//[SetColorDialogListBox]
+"Okraj"
+//[SetColorDialogListTitle]
+"Nadpis"
+// need translation:
+//[SetColorDialogListGrayed]
+"Grayed list text"
+// need translation:
+//[SetColorDialogSelectedListGrayed]
+"Selected grayed list text"
+//[SetColorDialogListScrollBar]
+"Posuvník"
+//[SetColorDialogListArrows]
+"Značka dlouhého řetězce"
+//[SetColorDialogListArrowsSelected]
+"Vybraná značka dlouhého řetězce"
+//[SetColorDialogListArrowsDisabled]
+"Zakázaná značka dlouhého řetězce"
+
+//[SetColorMenuNormal]
+"Normální text"
+//[SetColorMenuSelected]
+"Vybraný text"
+//[SetColorMenuHighlighted]
+"Zvýrazněný text"
+//[SetColorMenuSelectedHighlighted]
+"Vybraný zvýrazněný text"
+//[SetColorMenuDisabled]
+"Neaktivní text"
+// need translation:
+//[SetColorMenuGrayed]
+"Grayed text"
+// need translation:
+//[SetColorMenuSelectedGrayed]
+"Selected grayed text"
+//[SetColorMenuBox]
+"Okraj"
+//[SetColorMenuTitle]
+"Nadpis"
+//[SetColorMenuScrollBar]
+"Posuvník"
+//[SetColorMenuArrows]
+"Značka dlouhého řetězce"
+//[SetColorMenuArrowsSelected]
+"Vybraná značka dlouhého řetězce"
+//[SetColorMenuArrowsDisabled]
+"Zakázaná značka dlouhého řetězce"
+//[SetColorMenuPrefix]
+"Předpona"
+//[SetColorMenuPrefixSelected]
+"Vybraný prefix"
+//[SetColorDialogListPrefix]
+"Předpona"
+//[SetColorDialogListPrefixSelected]
+"Vybraný prefix"
+
+//[SetColorHMenuNormal]
+"Normální text"
+//[SetColorHMenuSelected]
+"Vybraný text"
+//[SetColorHMenuHighlighted]
+"Zvýrazněný text"
+//[SetColorHMenuSelectedHighlighted]
+"Vybraný zvýrazněný text"
+
+//[SetColorKeyBarNumbers]
+"Čísla kláves"
+//[SetColorKeyBarNames]
+"Názvy kláves"
+//[SetColorKeyBarBackground]
+"Pozadí"
+
+//[SetColorCommandLineNormal]
+"Normální text"
+//[SetColorCommandLineSelected]
+"Vybraný textový vstup"
+//[SetColorCommandLinePrefix]
+"Text předpony"
+//[SetColorCommandLineUserScreen]
+"Obrazovka uživatele"
+
+//[SetColorClockNormal]
+"Normální text (Panel)"
+//[SetColorClockNormalEditor]
+"Normální text (Editor)"
+//[SetColorClockNormalViewer]
+"Normální text (Prohlížeč)"
+
+//[SetColorViewerNormal]
+"Normální text"
+//[SetColorViewerSelected]
+"Vybraný text"
+//[SetColorViewerStatus]
+"Stavový řádek"
+//[SetColorViewerArrows]
+"Skrolovací šipky"
+//[SetColorViewerScrollbar]
+"Posuvník"
+
+//[SetColorEditorNormal]
+"Normální text"
+//[SetColorEditorSelected]
+"Vybraný text"
+//[SetColorEditorStatus]
+"Stavový řádek"
+//[SetColorEditorScrollbar]
+"Posuvník"
+// need translation:
+//[SetColorEditorLineNumber]
+"Line numbers"
+
+//[SetColorHelpNormal]
+"Normální text"
+//[SetColorHelpHighlighted]
+"Zvýrazněný text"
+//[SetColorHelpReference]
+"Odkaz"
+//[SetColorHelpSelectedReference]
+"Vybraný odkaz"
+//[SetColorHelpBox]
+"Okraj"
+//[SetColorHelpBoxTitle]
+"Nadpis"
+//[SetColorHelpScrollbar]
+"Posuvník"
+
+//[SetColorGroupsTitle]
+"Skupiny barev"
+//[SetColorItemsTitle]
+"Položky skupin"
+//[SetColorBlackOnBlack]
+"Černá na černém"
+//[SetColorDefaultColor]
+"Výchozí barva"
+//[PickColorHue]
+"&Odstín"
+//[PickColorUseGray]
+"Použijte první 16 a odstíny šedi"
+//[PickColorSat]
+"&Saturace"
+//[PickColorColors]
+"&Barvy"
+
+//[SetColorTitle]
+"Barva"
+//[PickColorStyle]
+"Styl:"
+//[PickColorEnableStyle]
+"Povolit"
+//[PickColorStyleBold]
+"Tučné"
+//[PickColorStyleItalic]
+"Kurzíva"
+//[PickColorStyleUnderline]
+"Podtržené"
+//[PickColorStyleOverline]
+"Nadtržené"
+//[PickColorStyleStrikeout]
+"Přeškrtnuté"
+//[PickColorStyleBlinking]
+"Mrkající"
+//[PickColorStyleInverse]
+"Inverzní"
+//[SetColorForeground]
+"&Popředí"
+//[SetColorBackground]
+"Po&zadí"
+//[SetColorForeTransparent]
+"Průhlednos&t"
+//[SetColorBackTransparent]
+"Průhledno&st"
+//[SetColorSample]
+"Text Text Text Text Text Text Text"
+//[SetColorSet]
+"Nastavit"
+// need translation:
+//[SetColorReset]
+"&Reset"
+//[SetColorCancel]
+"Storno"
+
+//[SetConfirmTitle]
+"Potvrzení"
+//[SetConfirmCopy]
+"&Kopírování"
+//[SetConfirmMove]
+"&Přesouvání"
+// need translation:
+//[SetConfirmRO]
+"&Overwrite and delete R/O files"
+//[SetConfirmDrag]
+"&Drag and drop"
+//[SetConfirmDelete]
+"&Mazání"
+//[SetConfirmDeleteFolders]
+"Mazat &neprázdné adresáře"
+//[SetConfirmEsc]
+"Pře&rušit operaci"
+//[SetConfirmRemoveConnection]
+"Odpojení &síťové jednotky"
+// need translation:
+//[SetConfirmClearVT]
+"Clear &terminal"
+//[SetConfirmRemoveHotPlug]
+"Odpojení vyjímatelného zařízení"
+//[SetConfirmAllowReedit]
+"&Obnovit upravovaný soubor"
+//[SetConfirmHistoryClear]
+"Vymazat seznam &historie"
+//[SetConfirmExit]
+"U&končení"
+
+// need translation:
+//[PluginsManagerSettingsTitle]
+"Plugins manager settings"
+//[PluginsManagerScanSymlinks]
+"Prohledávat s&ymbolické linky"
+//[PluginsManagerPersonalPath]
+"&Cesta k vlastním pluginům:"
+// need translation:
+//[PluginsManagerOFP]
+"&File processing (OpenFilePlugin)"
+// need translation:
+//[PluginsManagerStdAssoc]
+"Show standard &association item"
+// need translation:
+//[PluginsManagerEvenOne]
+"Even if only &one plugin found"
+// need translation:
+//[PluginsManagerSFL]
+"Search &results (SetFindList)"
+// need translation:
+//[PluginsManagerPF]
+"&Prefix processing"
+// need translation:
+//[PluginConfirmationTitle]
+"Plugin selection"
+// need translation:
+//[MenuPluginStdAssociation]
+"Standard association"
+
+//[FindFolderTitle]
+"Najít adresář"
+
+// Find folder Tree KeyBar
+//[KBFolderTreeF1]
+"Nápověda"
+//[KBFolderTreeF2]
+"Obnovit"
+//[KBFolderTreeF5]
+"Zoom"
+//[KBFolderTreeF10]
+"Konec"
+//[KBFolderTreeAltF9]
+"Video"
+//[TreeTitle]
+"Stromové zobrazení"
+//[CannotSaveTree]
+"Adresářový strom nelze uložit do souboru"
+//[ReadingTree]
+"Načítám adresářový strom"
+
+//[UserMenuTitle]
+"Menu uživatele"
+//[ChooseMenuType]
+"Zvol typ menu uživatele pro úpravu"
+//[ChooseMenuMain]
+"&Hlavní"
+//[ChooseMenuLocal]
+"&Lokální"
+//[MainMenuTitle]
+"Hlavní menu"
+//[MainMenuFAR]
+"Složka FARu"
+
+// <...menu (Registry)>
+//[MainMenuREG]
+"Profil"
+//[LocalMenuTitle]
+"Lokalní menu"
+//[MainMenuBottomTitle]
+"Del Ins F4 Ctrl+F4 Ctrl+Up/Down Ctrl+Alt+F"
+//[AskDeleteMenuItem]
+"Přejete si smazat položku v menu"
+//[AskDeleteSubMenuItem]
+"Přejete si smazat podmenu"
+//[UserMenuInvalidInputLabel]
+"Neplatný formát pro název Uživatelského menu"
+//[UserMenuInvalidInputHotKey]
+"Neplatný formát pro klávesovou zkratku"
+
+//[EditMenuTitle]
+"Editace uživatelského menu"
+//[EditMenuHotKey]
+"K&lávesová zkratka:"
+//[EditMenuLabel]
+"&Popisek:"
+//[EditMenuCommands]
+"Pří&kazy:"
+
+//[AskInsertMenuOrCommand]
+"Přejete si vložit nový příkaz nebo nové menu?"
+//[MenuInsertCommand]
+"Vložit příkaz"
+//[MenuInsertMenu]
+"Vložit menu"
+
+//[EditSubmenuTitle]
+"Úprava popisku podmenu"
+//[EditSubmenuHotKey]
+"Klávesová &zkratka:"
+//[EditSubmenuLabel]
+"&Popisek:"
+
+//[ViewerTitle]
+"Prohlížeč"
+//[ViewerCannotOpenFile]
+"Nelze otevřít soubor"
+//[ViewerStatusCol]
+"Sloupec"
+
+//[ViewSearchTitle]
+"Hledat"
+//[ViewSearchFor]
+"H&ledat"
+//[ViewSearchForText]
+"Hledat &text"
+//[ViewSearchForHex]
+"Hledat he&x"
+//[ViewSearchCase]
+"&Rozlišovat velikost písmen"
+//[ViewSearchWholeWords]
+"Celá &slova"
+//[ViewSearchReverse]
+"&Zpětné hledání"
+// need translation:
+//[ViewSearchRegexp]
+"&Regular expressions"
+//[ViewSearchSearch]
+"Hledat"
+//[ViewSearchCancel]
+"Storno"
+
+//[ViewSearchingFor]
+"Vyhledávám"
+//[ViewSearchingHex]
+"Vyhledávám sekvenci bytů"
+//[ViewSearchCannotFind]
+"Nelze najít řetězec"
+//[ViewSearchCannotFindHex]
+"Nelze najít sekvenci bytů"
+//[ViewSearchFromBegin]
+"Pokračovat s hledáním od začátku dokumentu?"
+//[ViewSearchFromEnd]
+"Pokračovat s hledáním od konce dokumentu?"
+
+//[PrintTitle]
+"Tisk"
+//[PrintTo]
+"Vytisknout %ls na"
+//[PrintFilesTo]
+"Vytisknout %d souborů na"
+//[PreparingForPrinting]
+"Připravuji soubory pro tisk"
+// need translation:
+//[CannotEnumeratePrinters]
+"Cannot enumerate available printers list"
+//[CannotOpenPrinter]
+"Nelze otevřít tiskárnu"
+//[CannotPrint]
+"Nelze tisknout"
+
+//[DescribeFiles]
+"Popiskový soubor"
+//[EnterDescription]
+"Zadejte popisek"
+
+//[ReadingDiz]
+"Načítám popisky souboru"
+//[CannotUpdateDiz]
+"Nelze aktualizovat popisky souboru"
+//[CannotUpdateRODiz]
+"Popiskový soubor má atribut Jen pro čtení"
+
+//[CfgDizTitle]
+"Popisky souboru"
+//[CfgDizListNames]
+"Seznam pop&isových souborů oddělených čárkami:"
+//[CfgDizSetHidden]
+"Novým souborům s popisy nastavit atribut ""&Skrytý"""
+//[CfgDizROUpdate]
+"Aktualizovat popisové soubory s atributem Jen pro čtení"
+//[CfgDizStartPos]
+"&Pozice nových popisů v řetězci"
+//[CfgDizNotUpdate]
+"&Neaktualizovat popisy"
+//[CfgDizUpdateIfDisplayed]
+"Aktualizovat, jestliže je &zobrazen"
+//[CfgDizAlwaysUpdate]
+"&Vždy aktualizovat"
+// need translation:
+//[CfgDizAnsiByDefault]
+"Automaticky otevírat soubory ve &WIN kódování"
+// need translation:
+//[CfgDizSaveInUTF]
+"Save in UTF8"
+
+//[ReadingTitleFiles]
+"Aktualizace panelů"
+//[ReadingFiles]
+"Načítám: %d souborů"
+//[OperationNotCompleted]
+"Operace není dokončena"
+
+//[EditPanelModes]
+"Editovat módy panelu"
+//[EditPanelModesBottom]
+"Enter/F4 Ctrl+Enter Ctrl+Shift+Enter"
+
+//[EditPanelModesBrief]
+"&Stručný mód"
+//[EditPanelModesMedium]
+"S&třední mód"
+//[EditPanelModesFull]
+"&Plný mód"
+//[EditPanelModesWide]
+"Š&iroký mód"
+//[EditPanelModesDetailed]
+"Detai&lní mód"
+//[EditPanelModesDiz]
+"P&opiskový mód"
+//[EditPanelModesLongDiz]
+"&Mód dlouhých popisků"
+//[EditPanelModesOwners]
+"Mód vlastníka so&uborů"
+//[EditPanelModesLinks]
+"Lin&kový mód"
+//[EditPanelModesAlternative]
+"&Alternativní plný mód"
+
+//[EditPanelModeTypes]
+"&Typ sloupců"
+//[EditPanelModeWidths]
+"Šíř&ka sloupců"
+//[EditPanelModeStatusTypes]
+"T&yp sloupců stavového řádku"
+//[EditPanelModeStatusWidths]
+"Šířka slo&upců stavového řádku"
+//[EditPanelModeFullscreen]
+"&Celoobrazovkový režim"
+//[EditPanelModeAlignExtensions]
+"Zarovnat příp&ony souborů"
+//[EditPanelModeAlignFolderExtensions]
+"Zarovnat přípony adre&sářů"
+//[EditPanelModeFoldersUpperCase]
+"Zobrazit adresáře &velkými písmeny"
+//[EditPanelModeFilesLowerCase]
+"Zobrazit soubory ma&lými písmeny"
+//[EditPanelModeUpperToLowerCase]
+"Zobrazit velké znaky ve jménech souborů jako &malá písmena"
+//[EditPanelReadHelp]
+" Pro instrukce si přečtěte online nápovědu "
+
+//[SetFolderInfoTitle]
+"Soubory s popiskem adresáře"
+//[SetFolderInfoNames]
+"Zadejte jména souborů oddělených čárkami (značky jsou povoleny)"
+
+//[ScreensTitle]
+"Obrazovky"
+//[ScreensPanels]
+"Panely"
+//[ScreensView]
+"Zobrazit"
+//[ScreensEdit]
+"Editovat"
+
+//[AskApplyCommandTitle]
+"Aplikovat příkaz"
+//[AskApplyCommand]
+"Zadejte příkaz pro zpracování vybraných souborů"
+
+//[PluginConfigTitle]
+"Nastavení Pluginů"
+//[PluginCommandsMenuTitle]
+"Příkazy pluginů"
+
+//[PreparingList]
+"Připravuji seznam souborů"
+
+//[LangTitle]
+"Hlavní jazyk"
+//[HelpLangTitle]
+"Jazyk nápovědy"
+
+//[DefineMacroTitle]
+"Definovat makro"
+// need translation:
+//[DefineMacroDescription]
+"Macro description"
+//[DefineMacro]
+"Stiskněte požadovanou klávesu"
+//[MacroReDefinedKey]
+"Klávesa makra '%ls' již je definována."
+//[MacroDeleteAssign]
+"Klávesa makra '%ls' není aktivní."
+//[MacroDeleteKey]
+"Klávesa makra '%ls' bude odstraněna."
+//[MacroCommonReDefinedKey]
+"Klávesa pro běžné makro '%ls' již je definována."
+//[MacroCommonDeleteAssign]
+"Klávesa pro běžné makro '%ls' není aktivní."
+//[MacroCommonDeleteKey]
+"Klávesa pro běžné makro '%ls' bude odstraněna."
+//[MacroSequence]
+"Posloupnost:"
+//[MacroReDefinedKey2]
+"Předefinovat?"
+//[MacroDeleteKey2]
+"Odstranit?"
+//[MacroDisDisabledKey]
+"(klávesa makra není aktivní)"
+//[MacroDisOverwrite]
+"Přepsat"
+//[MacroDisAnotherKey]
+"Zkusit jinou klávesu"
+
+//[MacroSettingsTitle]
+"Nastavení makra pro '%ls'"
+//[MacroSettingsEnableOutput]
+"Povolit &výstup na obrazovku dokud se provádí makro"
+//[MacroSettingsRunAfterStart]
+"&Spustit po spuštění FARu"
+//[MacroSettingsActivePanel]
+"&Aktivní panel"
+//[MacroSettingsPassivePanel]
+"Pa&sivní panel"
+//[MacroSettingsPluginPanel]
+"Panel p&luginů"
+//[MacroSettingsFolders]
+"Spustit pro ad&resáře"
+//[MacroSettingsSelectionPresent]
+"E&xistující výběr"
+//[MacroSettingsCommandLine]
+"Prázdný pří&kazový řádek"
+//[MacroSettingsSelectionBlockPresent]
+"Existující blok výběr&u"
+
+// for <!Macro:Vars!> and <!Macro:Consts!>, count formats = 1
+//[MacroOutputFormatForHelpSz]
+"„%ls”"
+// for <!Macro:Vars!> and <!Macro:Consts!>, count formats = 2
+//[MacroOutputFormatForHelpDWord]
+"%d / 0x%X"
+// for <!Macro:Vars!> and <!Macro:Consts!>, count formats = 2
+//[MacroOutputFormatForHelpQWord]
+"%I64d / 0x%I64X"
+// for <!Macro:Vars!> and <!Macro:Consts!>, count formats = 2
+//[MacroOutputFormatForHelpDouble]
+"%g"
+// need translation:
+//[MacroPErrorTitle]
+"Error parsing macro"
+// need translation:
+//[MacroPErrorPosition]
+"Line %d, Pos %d"
+
+//[MacroPErrUnrecognized_keyword]
+"Neznámé klíčové slovo '%ls'"
+//[MacroPErrUnrecognized_function]
+"Neznámá funkce '%ls'"
+// need translation:
+//[MacroPErrFuncParam]
+"Incorrect number of arguments for function '%ls'"
+//[MacroPErrNot_expected_ELSE]
+"Neočekávané $Else"
+//[MacroPErrNot_expected_END]
+"Neočekávané $End"
+//[MacroPErrUnexpected_EOS]
+"Neočekávaný konec zdrojového řetězce"
+//[MacroPErrExpected]
+"Očekávané '%ls'"
+//[MacroPErrBad_Hex_Control_Char]
+"Chybný kontrolní znak Hex"
+//[MacroPErrBad_Control_Char]
+"Špatný kontrolní znak"
+//[MacroPErrVar_Expected]
+"Očekávaná proměnná '%ls'"
+//[MacroPErrExpr_Expected]
+"Očekávaný výraz"
+// need translation:
+//[MacroPErr_ZeroLengthMacro]
+"Zero-length macro"
+// need translation:
+//[MacroPErrIntParserError]
+"Internal parser error"
+// need translation:
+//[MacroPErrContinueOutsideTheLoop]
+"$Continue outside the loop"
+
+//[CannotSaveFile]
+"Nelze uložit soubor"
+//[TextSavedToTemp]
+"Editovaný text je uložen v"
+
+//[MonthJan]
+"Led"
+//[MonthFeb]
+"Úno"
+//[MonthMar]
+"Bře"
+//[MonthApr]
+"Dub"
+//[MonthMay]
+"Kvě"
+//[MonthJun]
+"Čer"
+//[MonthJul]
+"Čec"
+//[MonthAug]
+"Srp"
+//[MonthSep]
+"Zář"
+//[MonthOct]
+"Říj"
+//[MonthNov]
+"Lis"
+//[MonthDec]
+"Pro"
+//[HelpHotKey]
+"Zadejte horkou klávesu (písmeno nebo číslici)"
+//[PluginHotKeyBottom]
+"F4 - nastavení horké klávesy"
+
+//[PluginHotKeyTitle]
+"Přidělit horkou klávesu pluginu"
+
+// need translation:
+//[LocationHotKeyTitle]
+"Přidělit horkou klávesu ???"
+//[LocationHotKey]
+"Zadejte horkou klávesu (písmeno nebo číslici)"
+
+//[RightCtrl]
+"PravýCtrl"
+
+//[ViewerGoTo]
+"Jdi na"
+//[GoToPercent]
+"&Procent"
+//[GoToHex]
+"&Hex offset"
+//[GoToDecimal]
+"&Desítkový offset"
+//[ExcTrappedException]
+"Vyskytla se výjimka"
+//[ExcRAccess]
+"Neplatná adresa (čtení z 0x%p)"
+//[ExcWAccess]
+"Neplatná adresa (zápis na 0x%p)"
+//[ExcEAccess]
+"Neplatná adresa (spuštění na 0x%p)"
+//[ExcOutOfBounds]
+"Pole mimo hranice"
+//[ExcDivideByZero]
+"Dělení nulou"
+//[ExcStackOverflow]
+"Přetečení zásobníku"
+//[ExcBreakPoint]
+"Výjimka přerušení"
+//[ExcFloatDivideByZero]
+"Dělení nulou v pohyblivé čárce"
+//[ExcFloatOverflow]
+"Přetečení při operaci v pohyblivé čárce"
+//[ExcFloatStackOverflow]
+"Prázdný nebo plný zásobník v pohyblivé čárce"
+//[ExcFloatUnderflow]
+"Podtečení při operaci v pohyblivé čárce"
+//[ExcBadInstruction]
+"Neplatná instrukce"
+//[ExcDatatypeMisalignment]
+"Chyba zarovnání"
+//[ExcUnknown]
+"Neznámá výjimka"
+// need translation:
+//[ExcException]
+"Exception:"
+// need translation:
+//[ExcAddress]
+"Address:"
+// need translation:
+//[ExcFunction]
+"Function:"
+// need translation:
+//[ExcModule]
+"Module:"
+// need translation:
+//[ExcTerminate]
+"Terminate FAR"
+// need translation:
+//[ExcUnload]
+"Unload plugin"
+// need translation:
+//[ExcDebugger]
+"Debug"
+
+//[NetUserName]
+"Jméno uživatele"
+//[NetUserPassword]
+"Heslo uživatele"
+
+//[ReadFolderError]
+"Nelze načíst obsah adresáře"
+
+//[PlgBadVers]
+"Tento plugin vyžaduje vyšší verzi FARu"
+//[PlgRequired]
+"Požadovaná verze FARu je %d.%d.%d."
+//[PlgRequired2]
+"Nynější verze FARu je %d.%d.%d."
+//[PlgLoadPluginError]
+"Chyba při nahrávání zásuvného modulu"
+
+//[CheckBox2State]
+"?"
+
+//[HelpTitle]
+"Nápověda"
+//[HelpActivatorURL]
+"Tento odkaz spouští externí aplikaci:"
+//[HelpActivatorFormat]
+"s parametrem:"
+//[HelpActivatorQ]
+"Přejete si ji spustit?"
+//[CannotOpenHelp]
+"Nelze otevřít soubor"
+//[HelpTopicNotFound]
+"požadované téma nápovědy nebylo nalezeno"
+
+//[PluginsHelpTitle]
+"Nápověda Pluginů"
+//[DocumentsHelpTitle]
+"Nápověda Dokumentů"
+
+//[HelpSearchTitle]
+"Hledání"
+//[HelpSearchingFor]
+"Hledání"
+//[HelpSearchCannotFind]
+"Nelze najít řetězec"
+
+// Help KeyBar F1-12
+//[HelpF1]
+"Pomoc"
+//[HelpF2]
+""
+//[HelpF3]
+""
+//[HelpF4]
+""
+//[HelpF5]
+"Zoom"
+//[HelpF6]
+""
+//[HelpF7]
+"Hledat"
+//[HelpF8]
+""
+//[HelpF9]
+""
+//[HelpF10]
+"Konec"
+//[HelpF11]
+""
+//[HelpF12]
+""
+
+// Help KeyBar Shift+F1-12
+//[HelpShiftF1]
+"Index"
+//[HelpShiftF2]
+"Plugin"
+//[HelpShiftF3]
+"Dokume"
+//[HelpShiftF4]
+""
+//[HelpShiftF5]
+""
+//[HelpShiftF6]
+""
+//[HelpShiftF7]
+"Další"
+//[HelpShiftF8]
+""
+//[HelpShiftF9]
+""
+//[HelpShiftF10]
+""
+//[HelpShiftF11]
+""
+//[HelpShiftF12]
+""
+
+// Help KeyBar Alt+F1-12
+//[HelpAltF1]
+"Předch"
+//[HelpAltF2]
+""
+//[HelpAltF3]
+""
+//[HelpAltF4]
+""
+//[HelpAltF5]
+""
+//[HelpAltF6]
+""
+//[HelpAltF7]
+""
+//[HelpAltF8]
+""
+//[HelpAltF9]
+"Video"
+//[HelpAltF10]
+""
+//[HelpAltF11]
+""
+//[HelpAltF12]
+""
+
+// Help KeyBar Ctrl+F1-12
+//[HelpCtrlF1]
+""
+//[HelpCtrlF2]
+""
+//[HelpCtrlF3]
+""
+//[HelpCtrlF4]
+""
+//[HelpCtrlF5]
+""
+//[HelpCtrlF6]
+""
+//[HelpCtrlF7]
+""
+//[HelpCtrlF8]
+""
+//[HelpCtrlF9]
+""
+//[HelpCtrlF10]
+""
+//[HelpCtrlF11]
+""
+//[HelpCtrlF12]
+""
+
+// Help KeyBar CtrlShiftF1-12
+//[HelpCtrlShiftF1]
+""
+//[HelpCtrlShiftF2]
+""
+//[HelpCtrlShiftF3]
+""
+//[HelpCtrlShiftF4]
+""
+//[HelpCtrlShiftF5]
+""
+//[HelpCtrlShiftF6]
+""
+//[HelpCtrlShiftF7]
+""
+//[HelpCtrlShiftF8]
+""
+//[HelpCtrlShiftF9]
+""
+//[HelpCtrlShiftF10]
+""
+//[HelpCtrlShiftF11]
+""
+//[HelpCtrlShiftF12]
+""
+
+// Help KeyBar CtrlAltF1-12
+//[HelpCtrlAltF1]
+""
+//[HelpCtrlAltF2]
+""
+//[HelpCtrlAltF3]
+""
+//[HelpCtrlAltF4]
+""
+//[HelpCtrlAltF5]
+""
+//[HelpCtrlAltF6]
+""
+//[HelpCtrlAltF7]
+""
+//[HelpCtrlAltF8]
+""
+//[HelpCtrlAltF9]
+""
+//[HelpCtrlAltF10]
+""
+//[HelpCtrlAltF11]
+""
+//[HelpCtrlAltF12]
+""
+
+// Help KeyBar AltShiftF1-12
+//[HelpAltShiftF1]
+""
+//[HelpAltShiftF2]
+""
+//[HelpAltShiftF3]
+""
+//[HelpAltShiftF4]
+""
+//[HelpAltShiftF5]
+""
+//[HelpAltShiftF6]
+""
+//[HelpAltShiftF7]
+""
+//[HelpAltShiftF8]
+""
+//[HelpAltShiftF9]
+""
+//[HelpAltShiftF10]
+""
+//[HelpAltShiftF11]
+""
+//[HelpAltShiftF12]
+""
+
+// Help KeyBar CtrlAltShiftF1-12
+//[HelpCtrlAltShiftF1]
+""
+//[HelpCtrlAltShiftF2]
+""
+//[HelpCtrlAltShiftF3]
+""
+//[HelpCtrlAltShiftF4]
+""
+//[HelpCtrlAltShiftF5]
+""
+//[HelpCtrlAltShiftF6]
+""
+//[HelpCtrlAltShiftF7]
+""
+//[HelpCtrlAltShiftF8]
+""
+//[HelpCtrlAltShiftF9]
+""
+//[HelpCtrlAltShiftF10]
+""
+//[HelpCtrlAltShiftF11]
+""
+//[HelpCtrlAltShiftF12]
+""
+
+// InfoPanel KeyBar F1-F12
+//[InfoF1]
+"Pomoc"
+//[InfoF2]
+"Zalam"
+//[InfoF3]
+"Zobraz"
+//[InfoF4]
+"Edit"
+//[InfoF5]
+""
+//[InfoF6]
+""
+//[InfoF7]
+"Hledat"
+//[InfoF8]
+"ANSI"
+//[InfoF9]
+"KonfMn"
+//[InfoF10]
+"Konec"
+//[InfoF11]
+"Plugin"
+//[InfoF12]
+"Obraz."
+
+// InfoPanel KeyBar Shift+F1-F12
+//[InfoShiftF1]
+""
+//[InfoShiftF2]
+"ZalSlo"
+//[InfoShiftF3]
+""
+//[InfoShiftF4]
+""
+//[InfoShiftF5]
+""
+//[InfoShiftF6]
+""
+//[InfoShiftF7]
+"Další"
+// need translation:
+//[InfoShiftF8]
+"ZnSady"
+//[InfoShiftF9]
+"Uložit"
+//[InfoShiftF10]
+"Posled"
+//[InfoShiftF11]
+""
+//[InfoShiftF12]
+""
+
+// InfoPanel KeyBar Alt+F1-F12
+//[InfoAltF1]
+"Levý"
+//[InfoAltF2]
+"Pravý"
+//[InfoAltF3]
+""
+//[InfoAltF4]
+""
+//[InfoAltF5]
+""
+//[InfoAltF6]
+""
+//[InfoAltF7]
+"Hledat"
+//[InfoAltF8]
+"Jít na"
+//[InfoAltF9]
+"Video"
+//[InfoAltF10]
+"Strom"
+//[InfoAltF11]
+"ProhHs"
+//[InfoAltF12]
+"AdrsHs"
+
+// InfoPanel KeyBar Ctrl+F1-F12
+//[InfoCtrlF1]
+"Levý"
+//[InfoCtrlF2]
+"Pravý"
+//[InfoCtrlF3]
+""
+//[InfoCtrlF4]
+""
+//[InfoCtrlF5]
+""
+//[InfoCtrlF6]
+""
+//[InfoCtrlF7]
+""
+//[InfoCtrlF8]
+""
+//[InfoCtrlF9]
+""
+//[InfoCtrlF10]
+""
+//[InfoCtrlF11]
+""
+//[InfoCtrlF12]
+""
+
+// InfoPanel KeyBar CtrlShiftF1-12
+//[InfoCtrlShiftF1]
+""
+//[InfoCtrlShiftF2]
+""
+//[InfoCtrlShiftF3]
+""
+//[InfoCtrlShiftF4]
+""
+//[InfoCtrlShiftF5]
+""
+//[InfoCtrlShiftF6]
+""
+//[InfoCtrlShiftF7]
+""
+//[InfoCtrlShiftF8]
+""
+//[InfoCtrlShiftF9]
+""
+//[InfoCtrlShiftF10]
+""
+//[InfoCtrlShiftF11]
+""
+//[InfoCtrlShiftF12]
+""
+
+// InfoPanel KeyBar CtrlAltF1-12
+//[InfoCtrlAltF1]
+""
+//[InfoCtrlAltF2]
+""
+//[InfoCtrlAltF3]
+""
+//[InfoCtrlAltF4]
+""
+//[InfoCtrlAltF5]
+""
+//[InfoCtrlAltF6]
+""
+//[InfoCtrlAltF7]
+""
+//[InfoCtrlAltF8]
+""
+//[InfoCtrlAltF9]
+""
+//[InfoCtrlAltF10]
+""
+//[InfoCtrlAltF11]
+""
+//[InfoCtrlAltF12]
+""
+
+// InfoPanel KeyBar AltShiftF1-12
+//[InfoAltShiftF1]
+""
+//[InfoAltShiftF2]
+""
+//[InfoAltShiftF3]
+""
+//[InfoAltShiftF4]
+""
+//[InfoAltShiftF5]
+""
+//[InfoAltShiftF6]
+""
+//[InfoAltShiftF7]
+""
+//[InfoAltShiftF8]
+""
+//[InfoAltShiftF9]
+""
+//[InfoAltShiftF10]
+""
+//[InfoAltShiftF11]
+""
+//[InfoAltShiftF12]
+""
+
+// InfoPanel KeyBar CtrlAltShiftF1-12
+//[InfoCtrlAltShiftF1]
+""
+//[InfoCtrlAltShiftF2]
+""
+//[InfoCtrlAltShiftF3]
+""
+//[InfoCtrlAltShiftF4]
+""
+//[InfoCtrlAltShiftF5]
+""
+//[InfoCtrlAltShiftF6]
+""
+//[InfoCtrlAltShiftF7]
+""
+//[InfoCtrlAltShiftF8]
+""
+//[InfoCtrlAltShiftF9]
+""
+//[InfoCtrlAltShiftF10]
+""
+//[InfoCtrlAltShiftF11]
+""
+//[InfoCtrlAltShiftF12]
+""
+
+// QView KeyBar F1-F12
+//[QViewF1]
+"Pomoc"
+//[QViewF2]
+"Zalam"
+//[QViewF3]
+"Zobraz"
+//[QViewF4]
+"Hex"
+//[QViewF5]
+""
+//[QViewF6]
+""
+//[QViewF7]
+"Hledat"
+//[QViewF8]
+"ANSI"
+//[QViewF9]
+"KonfMn"
+//[QViewF10]
+"Konec"
+//[QViewF11]
+"Plugin"
+//[QViewF12]
+"Obraz."
+
+// QView KeyBar Shift+F1-F12
+//[QViewShiftF1]
+""
+//[QViewShiftF2]
+"ZalSlo"
+//[QViewShiftF3]
+""
+//[QViewShiftF4]
+""
+//[QViewShiftF5]
+""
+//[QViewShiftF6]
+""
+//[QViewShiftF7]
+"Další"
+// need translation:
+//[QViewShiftF8]
+"ZnSady"
+//[QViewShiftF9]
+"Uložit"
+//[QViewShiftF10]
+"Posled"
+//[QViewShiftF11]
+""
+//[QViewShiftF12]
+""
+
+// QView KeyBar Alt+F1-F12
+//[QViewAltF1]
+"Levý"
+//[QViewAltF2]
+"Pravý"
+//[QViewAltF3]
+""
+//[QViewAltF4]
+""
+//[QViewAltF5]
+""
+//[QViewAltF6]
+""
+//[QViewAltF7]
+"Hledat"
+//[QViewAltF8]
+"Jít na"
+//[QViewAltF9]
+"Video"
+//[QViewAltF10]
+"Strom"
+//[QViewAltF11]
+"ProhHs"
+//[QViewAltF12]
+"AdrsHs"
+
+// QView KeyBar Ctrl+F1-F12
+//[QViewCtrlF1]
+"Levý"
+//[QViewCtrlF2]
+"Pravý"
+//[QViewCtrlF3]
+""
+//[QViewCtrlF4]
+""
+//[QViewCtrlF5]
+""
+//[QViewCtrlF6]
+""
+//[QViewCtrlF7]
+""
+//[QViewCtrlF8]
+""
+//[QViewCtrlF9]
+""
+//[QViewCtrlF10]
+""
+//[QViewCtrlF11]
+""
+//[QViewCtrlF12]
+""
+
+// QView KeyBar CtrlShiftF1-12
+//[QViewCtrlShiftF1]
+""
+//[QViewCtrlShiftF2]
+""
+//[QViewCtrlShiftF3]
+""
+//[QViewCtrlShiftF4]
+""
+//[QViewCtrlShiftF5]
+""
+//[QViewCtrlShiftF6]
+""
+//[QViewCtrlShiftF7]
+""
+//[QViewCtrlShiftF8]
+""
+//[QViewCtrlShiftF9]
+""
+//[QViewCtrlShiftF10]
+""
+//[QViewCtrlShiftF11]
+""
+//[QViewCtrlShiftF12]
+""
+
+// QView KeyBar CtrlAltF1-12
+//[QViewCtrlAltF1]
+""
+//[QViewCtrlAltF2]
+""
+//[QViewCtrlAltF3]
+""
+//[QViewCtrlAltF4]
+""
+//[QViewCtrlAltF5]
+""
+//[QViewCtrlAltF6]
+""
+//[QViewCtrlAltF7]
+""
+//[QViewCtrlAltF8]
+""
+//[QViewCtrlAltF9]
+""
+//[QViewCtrlAltF10]
+""
+//[QViewCtrlAltF11]
+""
+//[QViewCtrlAltF12]
+""
+
+// QView KeyBar AltShiftF1-12
+//[QViewAltShiftF1]
+""
+//[QViewAltShiftF2]
+""
+//[QViewAltShiftF3]
+""
+//[QViewAltShiftF4]
+""
+//[QViewAltShiftF5]
+""
+//[QViewAltShiftF6]
+""
+//[QViewAltShiftF7]
+""
+//[QViewAltShiftF8]
+""
+//[QViewAltShiftF9]
+""
+//[QViewAltShiftF10]
+""
+//[QViewAltShiftF11]
+""
+//[QViewAltShiftF12]
+""
+
+// QView KeyBar CtrlAltShiftF1-12
+//[QViewCtrlAltShiftF1]
+""
+//[QViewCtrlAltShiftF2]
+""
+//[QViewCtrlAltShiftF3]
+""
+//[QViewCtrlAltShiftF4]
+""
+//[QViewCtrlAltShiftF5]
+""
+//[QViewCtrlAltShiftF6]
+""
+//[QViewCtrlAltShiftF7]
+""
+//[QViewCtrlAltShiftF8]
+""
+//[QViewCtrlAltShiftF9]
+""
+//[QViewCtrlAltShiftF10]
+""
+//[QViewCtrlAltShiftF11]
+""
+//[QViewCtrlAltShiftF12]
+""
+
+// Tree KeyBar F1-F12
+//[KBTreeF1]
+"Pomoc"
+//[KBTreeF2]
+"UživMn"
+//[KBTreeF3]
+""
+//[KBTreeF4]
+"Attr"
+//[KBTreeF5]
+"Kopír."
+//[KBTreeF6]
+"PřjPřs"
+//[KBTreeF7]
+"VytAdr"
+//[KBTreeF8]
+"Smazat"
+//[KBTreeF9]
+"KonfMn"
+//[KBTreeF10]
+"Konec"
+//[KBTreeF11]
+"Plugin"
+//[KBTreeF12]
+"Obraz."
+
+// Tree KeyBar Shift+F1-F12
+//[KBTreeShiftF1]
+""
+//[KBTreeShiftF2]
+""
+//[KBTreeShiftF3]
+""
+//[KBTreeShiftF4]
+""
+//[KBTreeShiftF5]
+"Kopír."
+//[KBTreeShiftF6]
+"Přejm."
+//[KBTreeShiftF7]
+""
+//[KBTreeShiftF8]
+""
+//[KBTreeShiftF9]
+"Uložit"
+//[KBTreeShiftF10]
+"Posled"
+//[KBTreeShiftF11]
+"Skupin"
+//[KBTreeShiftF12]
+"VybPrv"
+
+// Tree KeyBar Alt+F1-F12
+//[KBTreeAltF1]
+"Levý"
+//[KBTreeAltF2]
+"Pravý"
+//[KBTreeAltF3]
+""
+//[KBTreeAltF4]
+""
+//[KBTreeAltF5]
+""
+//[KBTreeAltF6]
+""
+//[KBTreeAltF7]
+"Hledat"
+//[KBTreeAltF8]
+"Histor"
+//[KBTreeAltF9]
+"Video"
+//[KBTreeAltF10]
+"Strom"
+//[KBTreeAltF11]
+"ProhHs"
+//[KBTreeAltF12]
+"AdrsHs"
+
+// Tree KeyBar Ctrl+F1-F12
+//[KBTreeCtrlF1]
+"Levý"
+//[KBTreeCtrlF2]
+"Pravý"
+//[KBTreeCtrlF3]
+""
+//[KBTreeCtrlF4]
+""
+//[KBTreeCtrlF5]
+""
+//[KBTreeCtrlF6]
+""
+//[KBTreeCtrlF7]
+""
+//[KBTreeCtrlF8]
+""
+//[KBTreeCtrlF9]
+""
+//[KBTreeCtrlF10]
+""
+//[KBTreeCtrlF11]
+""
+//[KBTreeCtrlF12]
+""
+
+// Tree KeyBar CtrlShiftF1-12
+//[KBTreeCtrlShiftF1]
+""
+//[KBTreeCtrlShiftF2]
+""
+//[KBTreeCtrlShiftF3]
+""
+//[KBTreeCtrlShiftF4]
+""
+//[KBTreeCtrlShiftF5]
+""
+//[KBTreeCtrlShiftF6]
+""
+//[KBTreeCtrlShiftF7]
+""
+//[KBTreeCtrlShiftF8]
+""
+//[KBTreeCtrlShiftF9]
+""
+//[KBTreeCtrlShiftF10]
+""
+//[KBTreeCtrlShiftF11]
+""
+//[KBTreeCtrlShiftF12]
+""
+
+// Tree KeyBar CtrlAltF1-12
+//[KBTreeCtrlAltF1]
+""
+//[KBTreeCtrlAltF2]
+""
+//[KBTreeCtrlAltF3]
+""
+//[KBTreeCtrlAltF4]
+""
+//[KBTreeCtrlAltF5]
+""
+//[KBTreeCtrlAltF6]
+""
+//[KBTreeCtrlAltF7]
+""
+//[KBTreeCtrlAltF8]
+""
+//[KBTreeCtrlAltF9]
+""
+//[KBTreeCtrlAltF10]
+""
+//[KBTreeCtrlAltF11]
+""
+//[KBTreeCtrlAltF12]
+""
+
+// Tree KeyBar AltShiftF1-12
+//[KBTreeAltShiftF1]
+""
+//[KBTreeAltShiftF2]
+""
+//[KBTreeAltShiftF3]
+""
+//[KBTreeAltShiftF4]
+""
+//[KBTreeAltShiftF5]
+""
+//[KBTreeAltShiftF6]
+""
+//[KBTreeAltShiftF7]
+""
+//[KBTreeAltShiftF8]
+""
+//[KBTreeAltShiftF9]
+""
+//[KBTreeAltShiftF10]
+""
+//[KBTreeAltShiftF11]
+""
+//[KBTreeAltShiftF12]
+""
+
+// Tree KeyBar CtrlAltShiftF1-12
+//[KBTreeCtrlAltShiftF1]
+""
+//[KBTreeCtrlAltShiftF2]
+""
+//[KBTreeCtrlAltShiftF3]
+""
+//[KBTreeCtrlAltShiftF4]
+""
+//[KBTreeCtrlAltShiftF5]
+""
+//[KBTreeCtrlAltShiftF6]
+""
+//[KBTreeCtrlAltShiftF7]
+""
+//[KBTreeCtrlAltShiftF8]
+""
+//[KBTreeCtrlAltShiftF9]
+""
+//[KBTreeCtrlAltShiftF10]
+""
+//[KBTreeCtrlAltShiftF11]
+""
+//[KBTreeCtrlAltShiftF12]
+""
+
+//[CopyTimeInfo]
+"Čas: %8.8ls      Zbývá: %8.8ls      %8.8lsb/s"
+
+//[KeyESCWasPressed]
+"Operace byla přerušena"
+//[DoYouWantToStopWork]
+"Opravdu chcete operaci stornovat?"
+//[DoYouWantToStopWork2]
+"Pokračovat v práci?"
+
+//[CheckingFileInPlugin]
+"Soubor je právě kontrolován pluginem"
+
+//[DialogType]
+"Dialog"
+//[HelpType]
+"Nápověda"
+//[FolderTreeType]
+"StromAdresáře"
+//[VMenuType]
+"Menu"
+
+//[IncorrectMask]
+"Řetězec masky souboru obsahuje chyby"
+
+//[PanelBracketsForLongName]
+"{}"
+
+//[ComspecNotFound]
+"Proměnná prostředí %COMSPEC% není definována"
+//[ExecuteErrorMessage]
+"'%ls' nebylo nalezeno jako vniřní nebo externí příkaz, spustitelná aplikace nebo dávkový soubor.\n"
+
+//[OpenPluginCannotOpenFile]
+"Nelze otevřít soubor"
+
+//[FileFilterTitle]
+"Filtr"
+//[FileHilightTitle]
+"Zvýrazňování souborů"
+//[FileFilterName]
+"Jmé&no:"
+//[FileFilterMatchMask]
+"&Maska"
+//[FileFilterMatchMaskCase]
+"Rozlišovat velikost písmen (masky souborů)"
+//[FileFilterSize]
+"Vel&ikost"
+//[FileFilterSizeFromSign]
+">="
+//[FileFilterSizeToSign]
+"<="
+//[FileFilterDate]
+"Dat&um/Čas:"
+// need translation:
+//[FileFilterWrited]
+"&write"
+//[FileFilterCreated]
+"&vytvoření"
+//[FileFilterOpened]
+"&přístupu"
+// need translation:
+//[FileFilterChanged]
+"c&hange"
+//[FileFilterDateRelative]
+"Relati&vní"
+//[FileFilterDateAfterSign]
+">="
+//[FileFilterDateBeforeSign]
+"<="
+//[FileFilterCurrent]
+"Aktuá&lní"
+//[FileFilterBlank]
+"Práz&dný"
+//[FileFilterAttr]
+"Attri&buty"
+//[FileFilterAttrR]
+"Jen pro čt&ení"
+//[FileFilterAttrA]
+"Arc&hivovat"
+//[FileFilterAttrH]
+"Skry&tý"
+//[FileFilterAttrS]
+"Systémo&vý"
+//[FileFilterAttrC]
+"Kompri&movaný"
+//[FileFilterAttrE]
+"Ši&frovaný"
+//[FileFilterAttrD]
+"Adr&esář"
+//[FileFilterAttrNI]
+"Neinde&xovaný"
+//[FileFilterAttrSparse]
+"Říd&ký"
+//[FileFilterAttrHardLinks]
+"Má více než jeden pevný link"
+//[FileFilterAttrT]
+"Doča&sný"
+//[FileFilterAttrReparse]
+"Sybol. li&nk"
+//[FileFilterAttrOffline]
+"O&ffline"
+//[FileFilterAttrVirtual]
+"Virtuální"
+// need translation:
+//[FileFilterAttrExecutable]
+"E&xecutable"
+// need translation:
+//[FileFilterAttrBroken]
+"&Broken"
+// need translation:
+//[FileFilterAttrDevChar]
+"Char device"
+// need translation:
+//[FileFilterAttrDevBlock]
+"Block device"
+//[FileFilterAttrDevFIFO]
+"FIFO"
+// need translation:
+//[FileFilterAttrDevSock]
+"Socket"
+//[FileFilterReset]
+"Reset"
+//[FileFilterCancel]
+"Storno"
+//[FileFilterMakeTransparent]
+"Zprůhlednit"
+//[BadFileSizeFormat]
+"Velikost souboru neobsahuje správnou hodnotu"
+
+// need translation:
+//[FarTitleAddonsAdmin]
+"root"
+// need translation:
+//[AdminRequired]
+"You need to provide administrator permission"
+// need translation:
+//[AdminRequiredPrivileges]
+"Additional privileges required"
+// need translation:
+//[AdminRequiredProcess]
+"to process this object:"
+// need translation:
+//[AdminRequiredCreate]
+"to create this object:"
+// need translation:
+//[AdminRequiredDelete]
+"to delete this object:"
+// need translation:
+//[AdminRequiredCopy]
+"to copy this object:"
+// need translation:
+//[AdminRequiredMove]
+"to move this object:"
+// need translation:
+//[AdminRequiredGetAttributes]
+"to get attributes of this object:"
+// need translation:
+//[AdminRequiredSetAttributes]
+"to set attributes of this object:"
+// need translation:
+//[AdminRequiredHardLink]
+"to create this hard link:"
+// need translation:
+//[AdminRequiredSymLink]
+"to create this symbolic link:"
+// need translation:
+//[AdminRequiredRecycle]
+"to move this object to Trash:"
+// need translation:
+//[AdminRequiredList]
+"to list this object:"
+// need translation:
+//[AdminRequiredSetOwner]
+"to set owner of this object:"
+// need translation:
+//[AdminRequiredOpen]
+"to open this object:"
+// need translation:
+//[AdminDoForAll]
+"Do this for &all current objects"
+// need translation:
+//[AdminDoNotAskAgainInTheCurrentSession]
+"Do not ask again in the current session"
+// need translation:
+//[TerminalClipboardAccessTitle]
+"Clipboard access"
+// need translation:
+//[TerminalClipboardSetText]
+"Application wants to set clipboard data."
+// need translation:
+//[TerminalClipboardSetAllowOnce]
+"&Allow once"
+// need translation:
+//[TerminalClipboardSetAllowForCommand]
+"Allow for &this command"
+// need translation:
+//[TerminalClipboardAccessText]
+"Please choose how this terminal application may use clipboard."
+// need translation:
+//[TerminalClipboardAccessBlock]
+"&Block attempt"
+// need translation:
+//[TerminalClipboardAccessTemporaryRemote]
+"&Remote clipboard"
+// need translation:
+//[TerminalClipboardAccessTemporaryLocal]
+"&Share clipboard"
+// need translation:
+//[TerminalClipboardAccessAlwaysLocal]
+"Share clipboard &always"
+// need translation:
+//[MountsRoot]
+"Root"
+// need translation:
+//[MountsHome]
+"Home"
+// need translation:
+//[MountsOther]
+"Other panel"
+// need translation:
+//[HistoryCommandTitle]
+"History Command Info"
+// need translation:
+//[HistoryCommandLine]
+"  Command: "
+// need translation:
+//[HistoryCommandDir]
+"Directory: "
+// need translation:
+//[HistoryCommandClose]
+"Close"
+// need translation:
+//[HistoryCommandChDir]
+"To &dir"
+// need translation:
+//[HistoryCommandRunUp]
+"&Run-up"
+// need translation:
+//[EditorConfigOrgConflict]
+"Editor and .editorconfig"
+// need translation:
+//[EditorConfigOrgFile]
+"File located in (sub)directory with .editorconfig"
+// need translation:
+//[EditorConfigOrgDisable]
+"You can disable .editorconfig processing globally\nin main menu->Options->Editor settings"
+// need translation:
+//[EditorConfigOrgValueOfIndentSize]
+"In .editorconfig 'indent_size' set to '%d'"
+// need translation:
+//[EditorConfigOrgValueOfIndentStyle]
+"In .editorconfig 'indent_style' set to '%s'"
+// need translation:
+//[EditorConfigOrgValueOfCharset]
+"In .editorconfig 'charset' set to '%ls'"
+// need translation:
+//[EditorConfigOrgProblemIndentSize]
+"In this case user can't change tab size by Shift+F5"
+// need translation:
+//[EditorConfigOrgProblemIndentStyle]
+"In this case user can't change tab style by Ctrl+F5"
+// need translation:
+//[EditorConfigOrgProblemCharset]
+"In this case user can't change codepage by F8 or Shift+F8"
+// need translation:
+//[ConfigGrepFilterTitle]
+"Filter with grep"
+// need translation:
+//[ConfigGrepFilterCaseSensitive]
+"&Case sensitive"
+// need translation:
+//[ConfigGrepFilterWholeWords]
+"&Whole words"
+// need translation:
+//[ConfigGrepFilterExclPattern]
+"&Excl.Pattern:"
+// need translation:
+//[ConfigGrepFilterPattern]
+"&Pattern:     "
+// need translation:
+//[ConfigGrepFilterContext]
+"Context (&lines):"
+// need translation:
+//[OSC52Confirm]
+"Use OSC52 to set clipboard data (question at first start)\n\nOSC52 allows copying from far2l running\nin TTY mode (even via SSH connection) to your local system clipboard\n(if you are using far2l on a remote untrusted system, giving remote\nsystem write access to your clipboard may be potentially unsafe).\n\nSome terminals also need OSC52 to be enabled in terminal's settings.\n\nYou can toggle use of OSC52 on/off at any time\nin Menu(F9)->Options->Interface settings.\n\nAllow far2l to set clipboard data using OSC52?\n"
+// need translation:
+//[EditWordWrap]
+"Word wrap"
+
+//[NewFileName]
+"?Nový soubor?"
