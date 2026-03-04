@@ -25,44 +25,52 @@ set(SOURCES
 set(IMG_NATIVE_LIBS "")
 set(IMG_CROSSPLATFORM_LIBS "")
 
-if(APPLE AND IMG_NATIVE)
+if(APPLE)
     list(APPEND SOURCES src/decoder/ImageDecoder_mac.cpp)
     find_library(IMAGEIO ImageIO REQUIRED)
     find_library(COREGRAPHICS CoreGraphics REQUIRED)
     find_library(COREFOUNDATION CoreFoundation REQUIRED)
     find_library(ACCELERATE Accelerate REQUIRED)
     set(IMG_NATIVE_LIBS ${IMAGEIO} ${COREGRAPHICS} ${COREFOUNDATION} ${ACCELERATE})
-    set(EXTRA_DEFINES ${EXTRA_DEFINES} -DIMG_NATIVE)
-
-else() # This is the cross-platform part
-    list(APPEND SOURCES src/decoder/ImageDecoder_stb.cpp)
-    # Include the new WebP decoder source file for compilation
-    list(APPEND SOURCES src/decoder/ImageDecoder_webp.cpp) 
-    # Include the new HEIF decoder source file for compilation
-    list(APPEND SOURCES src/decoder/ImageDecoder_heif.cpp) 
-    
-    # --- Integrate WebP and HEIC support using PkgConfig ---
-    # Check for libwebp
-    pkg_check_modules(WEBP REQUIRED libwebp)
-    # Check for libheif
-    pkg_check_modules(HEIF REQUIRED libheif)
-    set(IMG_CROSSPLATFORM_LIBS ${WEBP_LIBRARIES} ${HEIF_LIBRARIES})
-    # Append include directories for WebP and HEIF to the target
-    target_include_directories(img PRIVATE ${WEBP_INCLUDE_DIRS} ${HEIF_INCLUDE_DIRS})
-    # --- End Integration ---
-    if(APPLE)
-        message(STATUS "IMG plugin: Using stb_image for decoding on macOS because IMG_NATIVE=OFF")
-    endif()
+    # We don't define IMG_NATIVE anymore as it's runtime choice
+    # set(EXTRA_DEFINES ${EXTRA_DEFINES} -DIMG_NATIVE) 
 endif()
 
-add_library(img MODULE ${SOURCES})
+# Always include cross-platform decoders
+list(APPEND SOURCES src/decoder/ImageDecoder_stb.cpp)
+# Include the new HEIF decoder source file for compilation
+list(APPEND SOURCES src/decoder/ImageDecoder_heif.cpp) 
+# Include the WebP decoder source file
+list(APPEND SOURCES src/decoder/ImageDecoder_webp.cpp)
 
-target_include_directories(img PRIVATE
+# --- Integrate WebP and HEIC support using PkgConfig ---
+# Check for libwebp
+pkg_check_modules(WEBP REQUIRED libwebp)
+# Check for libheif
+pkg_check_modules(HEIF REQUIRED libheif)
+
+# Always include include directories BEFORE add_library
+include_directories(
+    ${WEBP_INCLUDE_DIRS}
+    ${HEIF_INCLUDE_DIRS}
     .
     ../far2l/far2sdk
     ../WinPort
-    ${INCLUDE_DIRS}
 )
+
+# Use full paths to libraries if possible
+foreach(lib_name ${WEBP_LIBRARIES})
+    find_library(LIB_WEBP_${lib_name} NAMES ${lib_name} HINTS ${WEBP_LIBRARY_DIRS})
+    list(APPEND IMG_CROSSPLATFORM_LIBS ${LIB_WEBP_${lib_name}})
+endforeach()
+
+foreach(lib_name ${HEIF_LIBRARIES})
+    find_library(LIB_HEIF_${lib_name} NAMES ${lib_name} HINTS ${HEIF_LIBRARY_DIRS})
+    list(APPEND IMG_CROSSPLATFORM_LIBS ${LIB_HEIF_${lib_name}})
+endforeach()
+# --- End Integration ---
+
+add_library(img MODULE ${SOURCES})
 
 # Link all libraries found for the active branch
 target_link_libraries(img utils far2l ${IMG_NATIVE_LIBS} ${IMG_CROSSPLATFORM_LIBS})
