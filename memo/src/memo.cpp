@@ -10,7 +10,6 @@
 #include <ctime>
 #include <cwchar>
 #include <string>
-#include <vector>
 
 #ifndef WINAPI
 #define WINAPI
@@ -74,7 +73,7 @@ enum DialogItems {
   DI_F2, DI_BTN1, DI_BTN2, DI_BTN3, DI_BTN4, DI_BTN5, DI_BTN6, DI_BTN7, DI_BTN8, DI_BTN9, DI_BTN0, DI_F9
 };
 
-PluginStartupInfo g_far;
+static PluginStartupInfo g_far;
 static int g_currentMemo = 0;
 static std::wstring g_loadedContent;
 static bool g_enabled = true;
@@ -83,10 +82,11 @@ static bool g_useHotkey = true;
 static inline const wchar_t *GetMsg(int msgId) {
   return g_far.GetMsg(g_far.ModuleNumber, msgId);
 }
+static inline int MemoDisplayNum(int idx) { return (idx == 9) ? 0 : idx + 1; }
 
 static std::wstring GetMemoFilePath(int index) {
   char buf[MAX_PATH];
-  snprintf(buf, sizeof(buf), MEMO_FILE_FMT, MEMO_DIR, (index == 9) ? 0 : index + 1);
+  snprintf(buf, sizeof(buf), MEMO_FILE_FMT, MEMO_DIR, MemoDisplayNum(index));
   return MB2Wide(InMyConfig(buf, false).c_str());
 }
 
@@ -113,9 +113,18 @@ static void SaveLastMemo(int v) {
 
 static bool GetEnabled() { return g_enabled; }
 static void SetEnabled(bool v) {
+  if (g_enabled == v) return;
   DBG("SetEnabled: %d", (int)v);
   g_enabled = v;
   SaveState();
+}
+
+// Returns true if the CtrlS macro was written by the Memo plugin.
+static bool IsMacroOurs(KeyFileHelper &kfh) {
+  if (!kfh.HasSection(MACRO_SECTION)) return false;
+  char ours[32];
+  snprintf(ours, sizeof(ours), "callplugin(0x%08X)", SYSID_MEMO);
+  return kfh.GetString(MACRO_SECTION, MACRO_K_SEQ, "").find(ours) != std::string::npos;
 }
 
 static void UpdateGlobalMacro(bool enabled) {
@@ -134,7 +143,7 @@ static void UpdateGlobalMacro(bool enabled) {
       g_far.AdvControl(g_far.ModuleNumber, ACTL_KEYMACRO, &akm, NULL);
     }
   } else {
-    if (kfh.HasSection(MACRO_SECTION)) {
+    if (IsMacroOurs(kfh)) {  // never touch a macro we didn't write
       kfh.RemoveSection(MACRO_SECTION);
       kfh.Save();
 
@@ -177,6 +186,8 @@ static void SaveFile(int idx, const std::wstring &content) {
   if (f) {
     fputs(Wide2MB(content.c_str()).c_str(), f);
     fclose(f);
+  } else {
+    DBG("SaveFile(%d): write failed: %ls", idx, path.c_str());
   }
 }
 
@@ -196,7 +207,7 @@ static void SwitchToMemo(HANDLE hDlg, int newMemo) {
   g_far.SendDlgMessage(hDlg, DM_SETTEXTPTR, DI_MEMO, (LONG_PTR)g_loadedContent.c_str());
 
   wchar_t title[64];
-  swprintf(title, 64, GetMsg(MMemoTitle), (g_currentMemo == 9) ? 0 : g_currentMemo + 1);
+  swprintf(title, 64, GetMsg(MMemoTitle), MemoDisplayNum(g_currentMemo));
   g_far.SendDlgMessage(hDlg, DM_SETTEXTPTR, DI_BOX, (LONG_PTR)title);
   for (int i = 0; i < MEMO_COUNT; i++) {
     FarDialogItem it;
@@ -217,18 +228,21 @@ static void SaveAs(HANDLE hDlg) {
     g_far.SendDlgMessage(hDlg, DM_GETTEXTPTR, DI_MEMO, (LONG_PTR)&content[0]);
   }
   wchar_t path[MAX_PATH];
-  swprintf(path, MAX_PATH, L"memo-%02d.txt", (g_currentMemo == 9) ? 0 : g_currentMemo + 1);
+  swprintf(path, MAX_PATH, L"memo-%02d.txt", MemoDisplayNum(g_currentMemo));
   if (g_far.InputBox(GetMsg(MSaveMemo), GetMsg(MPath), L"MemoSave", path, path, MAX_PATH, NULL, FIB_NONE)) {
     DBG("SaveAs: %ls", path);
     FILE *f = fopen(Wide2MB(path).c_str(), "w");
     if (f) {
       fputs(Wide2MB(content.c_str()).c_str(), f);
       fclose(f);
+    } else {
+      DBG("SaveAs: write failed: %ls", path);
     }
   }
 }
 
 SHAREDSYMBOL int WINAPI ConfigureW(int ItemNumber) {
+  enum { CFG_BOX, CFG_ENABLED, CFG_HOTKEY, CFG_SEP, CFG_OK, CFG_CANCEL };
   FarDialogItem it[] = {
     {DI_DOUBLEBOX, 3, 1, 32, 8, 0, {0}, 0, 0, GetMsg(MConfigTitle), 0},
     {DI_CHECKBOX,  6, 3, 0, 0, 0, {(DWORD_PTR)(GetEnabled() ? BSTATE_CHECKED : BSTATE_UNCHECKED)}, 0, 0, GetMsg(MEnablePlugin), 0},
@@ -241,8 +255,8 @@ SHAREDSYMBOL int WINAPI ConfigureW(int ItemNumber) {
   if (d != (HANDLE)-1) {
     if (g_far.DialogRun(d) == 4) {
       DBG("ConfigureW: status OK");
-      SetEnabled(g_far.SendDlgMessage(d, DM_GETCHECK, 1, 0) == BSTATE_CHECKED);
-      SetUseHotkey(g_far.SendDlgMessage(d, DM_GETCHECK, 2, 0) == BSTATE_CHECKED);
+      SetEnabled(g_far.SendDlgMessage(d, DM_GETCHECK, CFG_ENABLED, 0) == BSTATE_CHECKED);
+      SetUseHotkey(g_far.SendDlgMessage(d, DM_GETCHECK, CFG_HOTKEY, 0) == BSTATE_CHECKED);
     }
     g_far.DialogFree(d);
   }
@@ -335,7 +349,7 @@ static void OpenMemo() {
   g_loadedContent = LoadFile(g_currentMemo);
   DBG("OpenMemo: cur=%d, len=%d", g_currentMemo, (int)g_loadedContent.length());
   wchar_t title[64];
-  swprintf(title, 64, GetMsg(MMemoTitle), (g_currentMemo == 9) ? 0 : g_currentMemo + 1);
+  swprintf(title, 64, GetMsg(MMemoTitle), MemoDisplayNum(g_currentMemo));
 
   FarDialogItem it[] = {
     {DI_TEXT,     0, 0, 0, 0, 0, {0}, 0, 0, title, 0},
@@ -375,8 +389,17 @@ SHAREDSYMBOL void WINAPI SetStartupInfoW(const struct PluginStartupInfo *Info) {
   g_useHotkey = kf.GetInt(INI_S_SETTINGS, INI_K_HOTKEY, 1);
   g_currentMemo = kf.GetInt(INI_S_SETTINGS, INI_K_LAST, 0);
   DBG("SetStartupInfoW: enabled=%d, hotkey=%d, last=%d", (int)g_enabled, (int)g_useHotkey, g_currentMemo);
-  if (g_useHotkey) 
-    UpdateGlobalMacro(true);
+  if (g_useHotkey) {
+    // If CtrlS already belongs to someone else, respect it and quietly disable our hotkey
+    KeyFileHelper kfh(InMyConfig(MACROS_INI, false));
+    if (kfh.HasSection(MACRO_SECTION) && !IsMacroOurs(kfh)) {
+      DBG("SetStartupInfoW: CtrlS macro is foreign, disabling hotkey");
+      g_useHotkey = false;
+      SaveState();
+    } else {
+      UpdateGlobalMacro(true);
+    }
+  }
 }
 
 SHAREDSYMBOL void WINAPI GetPluginInfoW(struct PluginInfo *Info) {
