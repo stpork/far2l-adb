@@ -129,7 +129,7 @@ const ConfigOpt g_cfg_opts[] {
 	{true,  NSecColors, "TempColors256", TEMP_COLORS256_SIZE, g_tempcolors256, nullptr},
 	{true,  NSecColors, "TempColorsRGB", TEMP_COLORSRGB_SIZE, (BYTE *)g_tempcolorsRGB, nullptr},
 
-	{true,  NSecColors, "CurrentTheme", &Opt.CurrentTheme, nullptr },
+	{true,  NSecColors, "CurrentTheme", &Opt.CurrentTheme, L"" },
 	{true,  NSecColors, "CurrentThemeIsSystemWide", &Opt.IsSystemTheme, 0 },
 
 	{true,  NSecScreen, "Clock", &Opt.Clock, 1},
@@ -271,7 +271,7 @@ const ConfigOpt g_cfg_opts[] {
 	{true,  NSecSystem, "SaveFoldersHistory", &Opt.SaveFoldersHistory, 1},
 	{false, NSecSystem, "SavePluginFoldersHistory", &Opt.SavePluginFoldersHistory, 0},
 	{true,  NSecSystem, "SaveViewHistory", &Opt.SaveViewHistory, 1},
-	{true,  NSecSystem, "HistoryRemoveDupsRule", &Opt.HistoryRemoveDupsRule, 2},
+	{true,  NSecSystem, "HistoryRemoveDupsRule", &Opt.HistoryRemoveDupsRule, HISTORY_REMOVE_DUPS_BY_NAME_EXTRA},
 	{true,  NSecSystem, "AutoHighlightHistory", &Opt.AutoHighlightHistory, 1},
 	{true,  NSecSystem, "AutoSaveSetup", &Opt.AutoSaveSetup, 0},
 	{true,  NSecSystem, "DeleteToRecycleBin", &Opt.DeleteToRecycleBin, 0},
