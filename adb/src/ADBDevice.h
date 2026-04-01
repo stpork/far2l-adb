@@ -53,6 +53,8 @@ public:
     std::string RunAdbCommand(const std::vector<std::string> &args, const std::function<void(const std::string&)> &on_chunk);
     std::string RunAdbCommandWithProgress(const std::vector<std::string> &args, const std::function<void(const std::string&)> &on_chunk, const std::function<bool()> &abort_check = {});
     std::string RunShellCommand(const std::string &command);
+    // Run shell command and stream output via callback (bypasses persistent session echo issues)
+    void RunShellCommandStreaming(const std::string &command, const std::function<void(const std::string&)> &on_line);
     std::string GetCurrentWorkingDirectory();
     ADBDevice(const std::string &device_serial);
     virtual ~ADBDevice();
@@ -96,6 +98,7 @@ public:
     bool IsConnected() const { return _connected; }
     std::string GetDeviceSerial() const { return _device_serial; }
     std::string GetCurrentPath() const { return _current_path; }
+    void SyncPath();  // Query shell's actual cwd and update internal path
 
     // Utility functions
     std::string WStringToString(const std::wstring &wstr);

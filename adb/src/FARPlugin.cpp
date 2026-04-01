@@ -9,8 +9,6 @@
 #include "ADBLog.h"
 #include "FARPlugin.h"
 
-static ADBPlugin *impl = nullptr;
-
 extern "C" {
 
 SHAREDSYMBOL int WINAPI GetMinFarVersionW()
@@ -58,8 +56,8 @@ SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int OpenFrom, INT_PTR Item)
 	DBG("OpenPluginW called: OpenFrom=%d, Item=%ld\n", OpenFrom, (long)Item);
 	try {
 		// Create new plugin instance
-		impl = new ADBPlugin();
-		return (HANDLE)impl;
+		ADBPlugin* plugin = new ADBPlugin();
+		return (HANDLE)plugin;
 	} catch (const std::exception& e) {
 		return INVALID_HANDLE_VALUE;
 	} catch (...) {
@@ -73,7 +71,6 @@ SHAREDSYMBOL void WINAPI ClosePluginW(HANDLE hPlugin)
 	if (hPlugin && hPlugin != INVALID_HANDLE_VALUE) {
 		ADBPlugin *plugin = (ADBPlugin*)hPlugin;
 		delete plugin;
-		impl = nullptr;
 	}
 }
 

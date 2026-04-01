@@ -215,16 +215,14 @@ bool ADBShell::start() {
     int pipe_stdin[2] = {-1, -1};
     int pipe_stdout[2] = {-1, -1};
 
-    if (pipe(pipe_stdin) < 0 || pipe(pipe_stdout) < 0) {
-        setError("Failed to create pipes");
-        if (pipe_stdin[0] >= 0) { 
-            close(pipe_stdin[0]); 
-            close(pipe_stdin[1]); 
-        }
-        if (pipe_stdout[0] >= 0) { 
-            close(pipe_stdout[0]); 
-            close(pipe_stdout[1]); 
-        }
+    if (pipe(pipe_stdin) < 0) {
+        setError("Failed to create stdin pipe");
+        return false;
+    }
+    if (pipe(pipe_stdout) < 0) {
+        setError("Failed to create stdout pipe");
+        close(pipe_stdin[0]);
+        close(pipe_stdin[1]);
         return false;
     }
 
