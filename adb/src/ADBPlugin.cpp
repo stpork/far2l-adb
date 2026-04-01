@@ -81,20 +81,6 @@ static bool NoControls(unsigned int control_state) {
 	return (control_state & (PKF_CONTROL | PKF_ALT | PKF_SHIFT)) == 0;
 }
 
-static void ShowCommandOutputMessage(const std::string &output)
-{
-	if (output.empty()) {
-		return;
-	}
-	std::wstring woutput = StrMB2Wide(output);
-	const size_t kMaxChars = 3000;
-	if (woutput.size() > kMaxChars) {
-		woutput.resize(kMaxChars);
-		woutput += L"\n...(truncated)";
-	}
-	ADBDialogs::Message(FMSG_WARNING, L"ADB command output", woutput);
-}
-
 
 PluginStartupInfo g_Info = {};
 FarStandardFunctions g_FSF = {};
@@ -271,7 +257,7 @@ bool ADBPlugin::CrossPanelCopyMoveSameDevice(bool move)
 	}
 
 	auto* dst = (ADBPlugin*)passive;
-	if (!dst || dst == this || !dst->_isConnected || !dst->_adbDevice) {
+	if (!dst || dst == this || dst->_signature != PLUGIN_SIGNATURE || !dst->_isConnected || !dst->_adbDevice) {
 		return false;
 	}
 	if (dst->_deviceSerial != _deviceSerial) {
@@ -287,7 +273,9 @@ bool ADBPlugin::CrossPanelCopyMoveSameDevice(bool move)
 	}
 
 	PanelInfo pi = {};
-	g_Info.Control(PANEL_ACTIVE, FCTL_GETPANELINFO, 0, (LONG_PTR)(void*)&pi);
+	if (g_Info.Control(PANEL_ACTIVE, FCTL_GETPANELINFO, 0, (LONG_PTR)(void*)&pi) == 0) {
+		return false;
+	}
 
 	auto getItem = [&](int cmd, int index, PluginPanelItem& out, std::vector<char>& buf) -> bool {
 		intptr_t size = g_Info.Control(PANEL_ACTIVE, cmd, index, 0);
@@ -814,23 +802,67 @@ int ADBPlugin::ProcessEventCommand(const wchar_t *cmd, HANDLE hPlugin)
 	if (*commandToExecute == L'\0') return FALSE;
 
 	std::string command = StrWide2MB(commandToExecute);
+
+	// Use persistent stateful session
 	std::string output = _adbDevice->RunShellCommand(command);
 
-	if (!output.empty()) {
-        // More robust output display for far2l
-		std::wstring wideOutput = StrMB2Wide(output);
-		if (g_FSF.Execute) {
-            if (wideOutput.length() < 500) {
-                std::string quoted = ADBUtils::ShellQuote(output);
-                if (!quoted.empty()) {
-                    g_FSF.Execute((L"echo " + StrMB2Wide(quoted)).c_str(), EF_NOCMDPRINT);
-                }
-            } else {
-                ShowCommandOutputMessage(output);
-            }
+	// Sync path after every command - run pwd to get current directory
+	_adbDevice->SyncPath();
+	std::string newPath = _adbDevice->GetCurrentPath();
+	if (newPath != _CurrentDir) {
+		_CurrentDir = newPath;
+		UpdatePanelTitle(_deviceSerial, _CurrentDir);
+		g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
+		g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, 0);
+	}
+
+	if (!output.empty() && g_FSF.Execute) {
+		// Parse output, filter out prompt/echo lines, collect clean lines
+		std::vector<std::string> clean_lines;
+		std::istringstream iss(output);
+		std::string line;
+		while (std::getline(iss, line)) {
+			// Trim CR
+			if (!line.empty() && line.back() == '\r') {
+				line.pop_back();
+			}
+			// Skip empty lines
+			if (line.empty()) {
+				continue;
+			}
+			// Skip lines that are just prompts
+			if (line == "/$" || line == "/#" || line == "$" || line == "#") {
+				continue;
+			}
+			// Skip lines containing "$ " or "# " (prompt with command echo)
+			if (line.find("$ ") != std::string::npos || line.find("# ") != std::string::npos) {
+				continue;
+			}
+			// Skip lines ending with just $ or # (blank prompt after output)
+			if (line.back() == '$' || line.back() == '#') {
+				continue;
+			}
+			clean_lines.push_back(line);
+		}
+
+		// Build output with embedded newlines
+		if (!clean_lines.empty()) {
+			std::string all;
+			for (size_t i = 0; i < clean_lines.size(); i++) {
+				if (i > 0) all += "\\n";
+				// Escape backslashes and quotes for shell
+				for (char c : clean_lines[i]) {
+					if (c == '\\') all += "\\\\";
+					else if (c == '"') all += "\\\"";
+					else all += c;
+				}
+			}
+			// Single echo with embedded \n
+			std::wstring echo_cmd = L"echo -e \"" + StrMB2Wide(all) + L"\"";
+			g_FSF.Execute(echo_cmd.c_str(), EF_NOCMDPRINT);
 		}
 	}
-	
+
 	g_Info.Control(hPlugin, FCTL_SETCMDLINE, 0, (LONG_PTR)L"");
 	return TRUE;
 }
@@ -974,6 +1006,10 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 		op.Run([&](ProgressState& state) {
 			uint64_t processedBytes = 0;
 			uint64_t completedCount = 0;
+			// Validate connection at start
+			if (!adb || !adb->IsConnected()) {
+				return;
+			}
 			for (int i = 0; i < itemsCount && !state.ShouldAbort(); i++) {
 				std::string fileName = StrWide2MB(items[i].FindData.lpwszFileName);
 				std::string devicePath = ADBUtils::JoinPath(deviceDir, fileName);
@@ -1157,6 +1193,10 @@ int ADBPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 		op.Run([&](ProgressState& state) {
 			uint64_t processedBytes = 0;
 			uint64_t completedCount = 0;
+			// Validate connection at start
+			if (!adb || !adb->IsConnected()) {
+				return;
+			}
 			for (int i = 0; i < itemsCount && !state.ShouldAbort(); i++) {
 				std::string fileName = StrWide2MB(items[i].FindData.lpwszFileName);
 				std::string localPath = ADBUtils::JoinPath(srcDir, fileName);

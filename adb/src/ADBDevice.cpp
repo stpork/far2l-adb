@@ -280,7 +280,7 @@ std::string ADBDevice::GetCurrentWorkingDirectory()
     if (!_connected || !_adb_shell) {
         return "/";
     }
-    
+
     try {
         std::string pwd_output = _adb_shell->shellCommand("pwd");
         return ExtractPathFromPwd(pwd_output);
@@ -289,14 +289,84 @@ std::string ADBDevice::GetCurrentWorkingDirectory()
     }
 }
 
+void ADBDevice::SyncPath()
+{
+    if (!_connected || !_adb_shell) {
+        return;
+    }
+    try {
+        std::string pwd_output = _adb_shell->shellCommand("pwd");
+        _current_path = ExtractPathFromPwd(pwd_output);
+    } catch (const std::exception& e) {
+        // Ignore - keep current path
+    }
+}
+
+void ADBDevice::RunShellCommandStreaming(const std::string &command, const std::function<void(const std::string&)> &on_line)
+{
+    // Build args: shell, -c, command
+    std::vector<std::string> args = {"shell", "-c", command};
+
+    // Buffer for incomplete lines
+    std::string buffer;
+
+    // Callback to process chunks and extract complete lines
+    auto process_chunk = [&](const std::string &chunk) {
+        buffer += chunk;
+        size_t pos;
+        while ((pos = buffer.find('\n')) != std::string::npos) {
+            std::string line = buffer.substr(0, pos);
+            buffer.erase(0, pos + 1);
+            // Trim CR
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            // Skip lines that are just shell prompts (e.g., "/$", "/#")
+            if (line == "/$" || line == "/#" || line == "$" || line == "#") {
+                continue;
+            }
+            // Skip lines that are just the command echo (e.g., "ls", "pwd")
+            // Heuristic: if line contains only alphanumeric chars and looks like a command, skip
+            if (line.find(' ') == std::string::npos && line.find('/') == std::string::npos &&
+                line.find('.') == std::string::npos && !line.empty()) {
+                bool looks_like_cmd = true;
+                for (char c : line) {
+                    if (!std::isalnum(c) && c != '_' && c != '-') {
+                        looks_like_cmd = false;
+                        break;
+                    }
+                }
+                if (looks_like_cmd) {
+                    continue;
+                }
+            }
+            on_line(line);
+        }
+    };
+
+    // Use PTY-based execution for streaming
+    RunAdbCommandWithProgress(args, process_chunk, [] { return false; });
+
+    // Flush remaining buffer
+    if (!buffer.empty()) {
+        if (!buffer.empty() && buffer.back() == '\r') {
+            buffer.pop_back();
+        }
+        if (!buffer.empty()) {
+            on_line(buffer);
+        }
+    }
+}
+
 wchar_t* ADBDevice::AllocateItemString(const std::string& s) {
     if (s.empty()) return nullptr;
     std::wstring ws = StrMB2Wide(s);
     size_t len = ws.length() + 1;
     wchar_t* buf = (wchar_t*)malloc(len * sizeof(wchar_t));
-    if (buf) {
-        wcscpy(buf, ws.c_str());
+    if (!buf) {
+        throw std::bad_alloc();
     }
+    wcscpy(buf, ws.c_str());
     return buf;
 }
 
@@ -305,6 +375,11 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
 
     if (!_connected || !_adb_shell) {
         throw std::runtime_error("ADB shell not connected");
+    }
+
+    // Validate path doesn't contain problematic characters that could break bulk command parsing
+    if (path.find('\0') != std::string::npos || path.find('\n') != std::string::npos) {
+        throw std::runtime_error("Invalid path: contains null or newline characters");
     }
 
     const std::string separator = "<<<!>>>";

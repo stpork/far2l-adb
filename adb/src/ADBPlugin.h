@@ -21,6 +21,10 @@ extern FarStandardFunctions g_FSF;
 
 class ADBPlugin
 {
+public:
+	static constexpr uint64_t PLUGIN_SIGNATURE = 0x414442434C49454FULL; // "ADBCLIEF"
+	uint64_t _signature = PLUGIN_SIGNATURE;
+
 private:
 	// Panel state
 	wchar_t _PanelTitle[64];
