@@ -33,16 +33,14 @@ private:
 
 	// Standalone config
 	std::wstring _standalone_config;
+	std::wstring _curDirW;
+	std::wstring _formatW;
 	bool _allow_remember_location_dir;
 	
 	bool _isConnected;               // true = connected to device (file mode), false = device selection mode
 	std::string _deviceSerial;      // Current device serial
 	std::string _CurrentDir;        // Current path on device
-	
-	// Cursor position tracking for better UX
-	std::string _lastEnteredDir;
-	
-	// ADBDevice for file operations
+
 	std::shared_ptr<class ADBDevice> _adbDevice;
 	
 	// Cache for device friendly names to avoid N+1 process spawns
@@ -63,6 +61,12 @@ private:
 	};
 	std::vector<DeviceInfo> EnumerateDevices();
 	bool CrossPanelCopyMoveSameDevice(bool move);
+
+	// Shared transfer engine for GetFiles/PutFiles (DRY)
+	int RunTransfer(PluginPanelItem *items, int itemsCount, bool is_upload, bool move,
+	                const std::string& localDir, const std::string& deviceDir,
+	                const std::map<std::string, uint64_t>& dirSizes,
+	                uint64_t totalBytes, uint64_t totalFiles, int OpMode);
 
 public:
 	ADBPlugin(const wchar_t *path = nullptr, bool path_is_standalone_config = false, int OpMode = 0);

@@ -246,7 +246,6 @@ std::string ADBDevice::RunAdbCommandWithProgress(const std::vector<std::string> 
 
 bool ADBDevice::IsSuccessResult(const std::string& result, bool is_push) const
 {
-    if (result.empty()) return true;
     if (result.find("skipped") != std::string::npos) return true;
 
     if (is_push) {
@@ -261,18 +260,12 @@ bool ADBDevice::IsSuccessResult(const std::string& result, bool is_push) const
 std::string ADBDevice::RunShellCommand(const std::string &command)
 {
     EnsureConnection();
-    
-    if (!_connected || !_adb_shell) {
-        return "";
-    }
-    
-    try {
-        std::string output = _adb_shell->shellCommand(command);
-        return output;
-        
-    } catch (const std::exception& e) {
-        return "";
-    }
+    return _adb_shell->shellCommand(command);
+}
+
+int ADBDevice::LastShellExitCode() const
+{
+    return _adb_shell ? _adb_shell->lastExitCode() : -1;
 }
 
 std::string ADBDevice::GetCurrentWorkingDirectory()
@@ -296,7 +289,11 @@ void ADBDevice::SyncPath()
     }
     try {
         std::string pwd_output = _adb_shell->shellCommand("pwd");
-        _current_path = ExtractPathFromPwd(pwd_output);
+        std::string extracted = ExtractPathFromPwd(pwd_output);
+        // Keep previous path if validation rejected pwd output (timeout / malformed marker) — don't blank a valid path.
+        if (!extracted.empty()) {
+            _current_path = extracted;
+        }
     } catch (const std::exception& e) {
         // Ignore - keep current path
     }
@@ -325,21 +322,6 @@ void ADBDevice::RunShellCommandStreaming(const std::string &command, const std::
             if (line == "/$" || line == "/#" || line == "$" || line == "#") {
                 continue;
             }
-            // Skip lines that are just the command echo (e.g., "ls", "pwd")
-            // Heuristic: if line contains only alphanumeric chars and looks like a command, skip
-            if (line.find(' ') == std::string::npos && line.find('/') == std::string::npos &&
-                line.find('.') == std::string::npos && !line.empty()) {
-                bool looks_like_cmd = true;
-                for (char c : line) {
-                    if (!std::isalnum(c) && c != '_' && c != '-') {
-                        looks_like_cmd = false;
-                        break;
-                    }
-                }
-                if (looks_like_cmd) {
-                    continue;
-                }
-            }
             on_line(line);
         }
     };
@@ -359,8 +341,7 @@ void ADBDevice::RunShellCommandStreaming(const std::string &command, const std::
 }
 
 wchar_t* ADBDevice::AllocateItemString(const std::string& s) {
-    if (s.empty()) return nullptr;
-    std::wstring ws = StrMB2Wide(s);
+    std::wstring ws = s.empty() ? std::wstring() : StrMB2Wide(s);
     size_t len = ws.length() + 1;
     wchar_t* buf = (wchar_t*)malloc(len * sizeof(wchar_t));
     if (!buf) {
@@ -426,7 +407,7 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
     for (const auto& ls_line : ls_lines) {
         if (ls_line.find("Permission denied") != std::string::npos || ls_line.find("total") == 0)
             continue;
-        if (ls_line.find('?') != std::string::npos)
+        if (ls_line.size() > 0 && ls_line[0] == '?')
             continue;
 
         std::istringstream ls_stream(ls_line);
@@ -503,19 +484,19 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
 
 std::string ADBDevice::ExtractPathFromPwd(const std::string &pwd_output)
 {
-    std::string path = pwd_output;
-    
-    // Remove trailing newline
-    if (!path.empty() && path[path.length()-1] == '\n') {
-        path.erase(path.length()-1);
+    // Reject non-absolute / contaminated output: a broken session returns error text or shell fragments, which poison _current_path and leak into cmd-line echo.
+    size_t end = pwd_output.size();
+    while (end > 0 && (pwd_output[end - 1] == '\n' || pwd_output[end - 1] == '\r')) --end;
+    if (end == 0 || pwd_output[0] != '/') {
+        return "";
     }
-    
-    // Remove trailing carriage return if present
-    if (!path.empty() && path[path.length()-1] == '\r') {
-        path.erase(path.length()-1);
+    for (size_t i = 0; i < end; ++i) {
+        char c = pwd_output[i];
+        if (c == '\n' || c == '\r' || c == ';' || c == '`' || c == '$') {
+            return "";
+        }
     }
-    
-    return path;
+    return pwd_output.substr(0, end);
 }
 
 time_t ADBDevice::ParseLsDateTime(const std::string &date, const std::string &time_str) {
@@ -645,14 +626,20 @@ int ADBDevice::PushDirectory(const std::string &localPath, const std::string &de
 
 
 
+// Exit-code-first errno mapping: `result.empty()` alone confused warnings-on-success with real errors; the marker-protocol exit code is authoritative.
+static int MutationResultToErrno(int exitCode, const std::string &result) {
+    if (exitCode == 0) return 0;
+    if (result.empty()) return EIO;
+    return ADBDevice::Str2Errno(result);
+}
+
 int ADBDevice::DeleteFile(const std::string &devicePath) {
     EnsureConnection();
     if (int err = ADBUtils::CheckConnection(_connected)) return err;
 
     std::string command = "rm -- " + ADBUtils::ShellQuote(devicePath);
     std::string result = RunShellCommand(command);
-
-    return result.empty() ? 0 : Str2Errno(result);
+    return MutationResultToErrno(LastShellExitCode(), result);
 }
 
 int ADBDevice::DeleteDirectory(const std::string &devicePath) {
@@ -661,8 +648,7 @@ int ADBDevice::DeleteDirectory(const std::string &devicePath) {
 
     std::string command = "rm -rf -- " + ADBUtils::ShellQuote(devicePath);
     std::string result = RunShellCommand(command);
-
-    return result.empty() ? 0 : Str2Errno(result);
+    return MutationResultToErrno(LastShellExitCode(), result);
 }
 
 int ADBDevice::CreateDirectory(const std::string &devicePath) {
@@ -671,8 +657,7 @@ int ADBDevice::CreateDirectory(const std::string &devicePath) {
 
     std::string command = "mkdir -p -- " + ADBUtils::ShellQuote(devicePath);
     std::string result = RunShellCommand(command);
-
-    return result.empty() ? 0 : Str2Errno(result);
+    return MutationResultToErrno(LastShellExitCode(), result);
 }
 
 int ADBDevice::CopyRemote(const std::string &srcDevicePath, const std::string &dstDeviceDir) {
@@ -684,7 +669,7 @@ int ADBDevice::CopyRemote(const std::string &srcDevicePath, const std::string &d
         "cp -a -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDeviceDir) +
         " 2>/dev/null || cp -r -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDeviceDir);
     std::string result = RunShellCommand(command);
-    return result.empty() ? 0 : Str2Errno(result);
+    return MutationResultToErrno(LastShellExitCode(), result);
 }
 
 int ADBDevice::MoveRemote(const std::string &srcDevicePath, const std::string &dstDeviceDir) {
@@ -693,7 +678,7 @@ int ADBDevice::MoveRemote(const std::string &srcDevicePath, const std::string &d
 
     std::string command = "mv -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDeviceDir);
     std::string result = RunShellCommand(command);
-    return result.empty() ? 0 : Str2Errno(result);
+    return MutationResultToErrno(LastShellExitCode(), result);
 }
 
 bool ADBDevice::FileExists(const std::string &devicePath) {
@@ -719,19 +704,14 @@ ADBDevice::DirectoryInfo ADBDevice::GetDirectoryInfo(const std::string &devicePa
         return info;
     }
 
-    // Get file count and total size in one command
-    // Output format: "count size" where size is in bytes
+    // One-shot count+size via find+ls (stat -c not portable across BusyBox/toybox); output: "count size".
     std::string command = "find " + ADBUtils::ShellQuote(devicePath) +
-        " -type f -exec stat -c '%s ' {} \\; 2>/dev/null | awk '{c++;s+=$1}END{print c,s}'";
+        " -type f -exec ls -l {} \\; 2>/dev/null | awk '{c++;s+=$5}END{print c,s}'";
     std::string result = RunShellCommand(command);
 
-    // Trim whitespace
     ADBUtils::TrimTrailingNewlines(result);
-    while (!result.empty() && result.front() == ' ') result.erase(0, 1);
-    while (!result.empty() && result.back() == ' ') result.pop_back();
+    StrTrim(result);
 
-    // Parse result: "count size"
-    // Validate that we have two numbers separated by space
     size_t space = result.find(' ');
     if (space != std::string::npos && space > 0 && space < result.size() - 1) {
         std::string count_str = result.substr(0, space);

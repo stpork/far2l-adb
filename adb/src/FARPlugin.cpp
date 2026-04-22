@@ -38,9 +38,11 @@ SHAREDSYMBOL void WINAPI GetPluginInfoW(PluginInfo *Info)
 		return;
 	}
 	Info->StructSize = sizeof(*Info);
+	Info->SysID = 0x41444250; // 'ADBP'
 	Info->Flags = PF_FULLCMDLINE;
-	Info->DiskMenuStrings = nullptr;
-	Info->DiskMenuStringsNumber = 0;
+	static const wchar_t *s_disk_menu_strings[] = {L"ADB"};
+	Info->DiskMenuStrings = s_disk_menu_strings;
+	Info->DiskMenuStringsNumber = 1;
 	static const wchar_t *s_menu_strings[] = {L"ADB Plugin"};
 	static const wchar_t *s_config_strings[] = {L"ADB Plugin"};
 	Info->PluginMenuStrings = s_menu_strings;
