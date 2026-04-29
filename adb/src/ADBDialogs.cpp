@@ -46,9 +46,26 @@ static std::wstring FormatBytes(uint64_t bytes) {
     return out.str();
 }
 
+// Native far2l Total separator format: raw byte count with thousands
+// separated by spaces. Example: "2 761 173 732".
+static std::wstring FormatBytesWithSpaces(uint64_t bytes) {
+    std::wstring s = std::to_wstring(bytes);
+    if (s.size() <= 3) return s;
+    std::wstring out;
+    out.reserve(s.size() + s.size() / 3);
+    int n = static_cast<int>(s.size());
+    for (int i = 0; i < n; ++i) {
+        if (i > 0 && ((n - i) % 3) == 0) out.push_back(L' ');
+        out.push_back(s[i]);
+    }
+    return out;
+}
+
+// Native CopyTimeInfo speed format: "<value> <prefix>b/s" — lowercase
+// 'b' is literal in the native format string ("%8.8lsb/s").
 static std::wstring FormatSpeed(uint64_t bytes_per_sec) {
-    if (bytes_per_sec == 0) return L"- B/s";
-    static const wchar_t* units[] = {L"B/s", L"KB/s", L"MB/s", L"GB/s"};
+    if (bytes_per_sec == 0) return L"- b/s";
+    static const wchar_t* units[] = {L"", L"K", L"M", L"G"};
     size_t unit = 0;
     double value = static_cast<double>(bytes_per_sec);
     while (value >= 1024.0 && unit < 3) {
@@ -57,9 +74,9 @@ static std::wstring FormatSpeed(uint64_t bytes_per_sec) {
     }
     std::wostringstream out;
     if (unit == 0) {
-        out << bytes_per_sec << L" " << units[unit];
+        out << bytes_per_sec << L" b/s";
     } else {
-        out << std::fixed << std::setprecision(1) << value << L" " << units[unit];
+        out << std::fixed << std::setprecision(2) << value << L" " << units[unit] << L"b/s";
     }
     return out.str();
 }
@@ -293,9 +310,10 @@ bool AbortConfirmDialog::Ask() {
 }
 
 static std::wstring FormatFileInfo(const wchar_t* label, uint64_t size, int64_t mtime) {
-    // Native far2l format (copy.cpp:3090): label expanded to 17 cells,
-    // size right-aligned in 25 cells, then date and time. We render a
-    // close approximation: "<label>            <size>   YYYY-MM-DD HH:MM:SS".
+    // Native far2l format (copy.cpp:3090): label left-aligned and
+    // expanded to 17 cells, size right-aligned in 25 cells, then date
+    // and time. Date format DD-MM-YYYY matches FarEng.lng screenshot
+    // output from the reference dialogs.
     std::wostringstream out;
     out << label;
     int pad = 17 - (int)wcslen(label);
@@ -310,8 +328,8 @@ static std::wstring FormatFileInfo(const wchar_t* label, uint64_t size, int64_t 
         if (localtime_r(&t, &tm)) {
             wchar_t buf[64];
             swprintf(buf, sizeof(buf)/sizeof(buf[0]),
-                     L"   %04d-%02d-%02d %02d:%02d:%02d",
-                     tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                     L" %02d-%02d-%04d %02d:%02d:%02d",
+                     tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900,
                      tm.tm_hour, tm.tm_min, tm.tm_sec);
             out << buf;
         }
@@ -322,8 +340,12 @@ static std::wstring FormatFileInfo(const wchar_t* label, uint64_t size, int64_t 
 OverwriteDialog::OverwriteDialog(const std::wstring& dest_name,
                                  uint64_t src_size, int64_t src_mtime,
                                  uint64_t dst_size, int64_t dst_mtime) {
-    // Width 88 inner content matches WARN_DLG_WIDTH in copy.cpp:3015.
-    // X1=5..X2=82 == native (5, ..., WARN_DLG_WIDTH-6 = 82).
+    // Native WARN_DLG_WIDTH = 88 (copy.cpp:3015). Box X1=3, X2=84
+    // (88-4) — 82-cell-wide inner area. Separators stretch from box
+    // left edge (X1=3) to box right edge (X2=84) so they join cleanly
+    // with box border corners; box.X2 is capped manually afterwards
+    // because AddInternal would otherwise auto-grow the box and break
+    // the join.
     _di.SetBoxTitleItem(L"Warning");
     _di.SetLine(2);
     _di.AddAtLine(DI_TEXT, 5, 82, DIF_CENTERGROUP, L"File already exists");
@@ -331,7 +353,7 @@ OverwriteDialog::OverwriteDialog(const std::wstring& dest_name,
     _i_filename = _di.AddAtLine(DI_EDIT, 5, 82, DIF_READONLY,
                                 AbbreviatePathLeft(dest_name, 78).c_str());
     _di.NextLine();
-    _di.AddAtLine(DI_TEXT, 4, 83, DIF_BOXCOLOR | DIF_SEPARATOR);
+    _di.AddAtLine(DI_TEXT, 3, 84, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
     _i_src_info = _di.AddAtLine(DI_BUTTON, 5, 82,
                                 DIF_BTNNOCLOSE | DIF_NOBRACKETS,
@@ -341,17 +363,21 @@ OverwriteDialog::OverwriteDialog(const std::wstring& dest_name,
                                 DIF_BTNNOCLOSE | DIF_NOBRACKETS,
                                 FormatFileInfo(L"Existing", dst_size, dst_mtime).c_str());
     _di.NextLine();
-    _di.AddAtLine(DI_TEXT, 4, 83, DIF_BOXCOLOR | DIF_SEPARATOR);
+    _di.AddAtLine(DI_TEXT, 3, 84, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
     _i_remember = _di.AddAtLine(DI_CHECKBOX, 5, 30, 0, L"&Remember choice");
     _di.NextLine();
-    _di.AddAtLine(DI_TEXT, 4, 83, DIF_BOXCOLOR | DIF_SEPARATOR);
+    _di.AddAtLine(DI_TEXT, 3, 84, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
     _i_overwrite = _di.AddAtLine(DI_BUTTON, 0, 0, DIF_CENTERGROUP, L"&Overwrite");
     _i_skip      = _di.AddAtLine(DI_BUTTON, 0, 0, DIF_CENTERGROUP, L"&Skip");
     _i_cancel    = _di.AddAtLine(DI_BUTTON, 0, 0, DIF_CENTERGROUP, L"&Cancel");
     SetFocusedDialogControl(_i_remember);
     SetDefaultDialogControl(_i_overwrite);
+    // Cap box back to native width 88 — separators at X2=84 grew the
+    // box to X2=86, which would leave 2 dead cells at the right edge
+    // and visually shift the dialog wider than native every redraw.
+    _di[0].X2 = 84;
 }
 
 LONG_PTR OverwriteDialog::DlgProc(int msg, int param1, LONG_PTR param2) {
@@ -396,18 +422,22 @@ void ProgressDialog::InitLayout() {
     _i_percent = _di.AddAtLine(DI_TEXT, 57, 61, 0, L"0%");  // 5-cell "100%"
     _di.NextLine();
     if (_is_multi) {
-        _i_total_bytes = _di.AddAtLine(DI_TEXT, 4, 61, DIF_BOXCOLOR | DIF_SEPARATOR, L"");
+        _i_total_bytes = _di.AddAtLine(DI_TEXT, 3, 63, DIF_BOXCOLOR | DIF_SEPARATOR, L"");
         _di.NextLine();
         _i_total_bar = _di.AddAtLine(DI_TEXT, 5, 56, 0);    // 52-cell total bar
         _di.NextLine();
     }
-    _di.AddAtLine(DI_TEXT, 4, 61, DIF_BOXCOLOR | DIF_SEPARATOR);
+    _di.AddAtLine(DI_TEXT, 3, 63, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
-    _i_files_processed = _di.AddAtLine(DI_TEXT, 5, 60, DIF_CENTERGROUP, L"");
+    _i_files_processed = _di.AddAtLine(DI_TEXT, 5, 60, 0, L"");
     _di.NextLine();
-    _di.AddAtLine(DI_TEXT, 4, 61, DIF_BOXCOLOR | DIF_SEPARATOR);
+    _di.AddAtLine(DI_TEXT, 3, 63, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
     _i_time = _di.AddAtLine(DI_TEXT, 5, 60, 0, L"");
+    // Cap box back to natural width — separators at X2=63 grew it to
+    // 65, leaving 2 dead cells at the right edge that visually shift
+    // the dialog wider than native every redraw.
+    _di[0].X2 = 63;
 }
 
 void ProgressDialog::Show() {
@@ -509,8 +539,12 @@ void ProgressDialog::UpdateDialog() {
     if (path_changed) {
         _last_from = full_from;
         _last_to = full_to;
-        TextToDialogControl(_i_from_path, AbbreviatePathLeft(full_from, 60));
-        TextToDialogControl(_i_to_path, AbbreviatePathRight(full_to, 60));
+        // Truncate to the exact item width (56 cells = X1=5..X2=60)
+        // so the displayed text never overflows the row; otherwise
+        // the longer strings spill past the right edge and the frame
+        // visually "shifts" between updates.
+        TextToDialogControl(_i_from_path, AbbreviatePathLeft(full_from, 56));
+        TextToDialogControl(_i_to_path, AbbreviatePathRight(full_to, 56));
     }
     if (progress_changed) {
         _last_complete = all_complete;
@@ -520,15 +554,15 @@ void ProgressDialog::UpdateDialog() {
         ProgressBarToDialogControl(_i_progress_bar, file_percent);
         TextToDialogControl(_i_percent, std::to_wstring(file_percent) + L"%");
         if (_is_multi) {
-            // Native CopyProgress puts " Total <bytes> " in the separator
-            // (just the grand total, not done/total — the bar
-            // visualizes the ratio). Match exactly.
+            // Native CopyProgress puts " Total: <raw-bytes-with-spaces> "
+            // in the separator (copy.cpp:331). Raw byte count with
+            // thousands separated by spaces, "Total:" with colon.
             ProgressBarToDialogControl(_i_total_bar, total_percent);
             std::wstring bytes_str = L" Total ";
             if (all_total > 0) {
-                bytes_str = L" Total " + FormatBytes(all_total) + L" ";
+                bytes_str = L" Total: " + FormatBytesWithSpaces(all_total) + L" ";
             } else if (file_total_bytes > 0) {
-                bytes_str = L" Total " + FormatBytes(file_total_bytes) + L" ";
+                bytes_str = L" Total: " + FormatBytesWithSpaces(file_total_bytes) + L" ";
             }
             TextToDialogControl(_i_total_bytes, bytes_str);
         }
