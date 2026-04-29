@@ -730,20 +730,35 @@ bool ADBDevice::IsDirectory(const std::string &devicePath) {
 }
 
 ADBDevice::PathStat ADBDevice::StatPath(const std::string &devicePath) {
-    PathStat info{false, false};
+    PathStat info{false, false, 0, 0};
     EnsureConnection();
     if (!_connected) return info;
 
     std::string sq = ADBUtils::ShellQuote(devicePath);
-    // Single roundtrip: emit "dir" / "file" / "nope" for caller to parse.
-    std::string command = "if [ -d " + sq + " ]; then echo dir; elif [ -e " + sq + " ]; then echo file; else echo nope; fi";
+    // Single roundtrip: kind ("dir"/"file"/"nope") + a second line with
+    // "<size> <mtime>" from `stat -c`. stat failures are silent and we
+    // just keep size/mtime at 0 — the overwrite dialog still renders,
+    // it just shows blanks for the missing metadata.
+    std::string command =
+        "if [ -d " + sq + " ]; then echo dir; "
+        "elif [ -e " + sq + " ]; then echo file; "
+        "else echo nope; fi; "
+        "stat -c '%s %Y' " + sq + " 2>/dev/null || echo '0 0'";
     std::string result = RunShellCommand(command);
     ADBUtils::TrimTrailingNewlines(result);
-    while (!result.empty() && (result.back() == ' ' || result.back() == '\r')) {
-        result.pop_back();
+    size_t nl = result.find('\n');
+    std::string kind = result.substr(0, nl);
+    while (!kind.empty() && (kind.back() == ' ' || kind.back() == '\r')) kind.pop_back();
+    if (kind == "dir")       { info.exists = true;  info.is_dir = true;  }
+    else if (kind == "file") { info.exists = true;  info.is_dir = false; }
+    if (info.exists && nl != std::string::npos) {
+        unsigned long long sz = 0;
+        long long mt = 0;
+        if (sscanf(result.c_str() + nl + 1, "%llu %lld", &sz, &mt) == 2) {
+            info.size  = static_cast<uint64_t>(sz);
+            info.mtime = static_cast<int64_t>(mt);
+        }
     }
-    if (result == "dir")       { info.exists = true;  info.is_dir = true;  }
-    else if (result == "file") { info.exists = true;  info.is_dir = false; }
     return info;
 }
 

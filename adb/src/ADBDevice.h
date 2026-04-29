@@ -90,9 +90,16 @@ public:
     // True only if devicePath exists AND is a directory (test -d).
     bool IsDirectory(const std::string &devicePath);
 
-    // {exists, is_dir} via a single shell roundtrip — cheaper than calling
-    // FileExists then IsDirectory (each is its own marker-bound shell command).
-    struct PathStat { bool exists; bool is_dir; };
+    // {exists, is_dir, size, mtime} via a single shell roundtrip — cheaper
+    // than calling FileExists then IsDirectory (each is its own marker-bound
+    // shell command). size/mtime are filled when available (Android `stat -c`
+    // is supported on every Android since 4.x); 0 otherwise.
+    struct PathStat {
+        bool     exists;
+        bool     is_dir;
+        uint64_t size;   // bytes; 0 for dirs / unavailable
+        int64_t  mtime;  // unix epoch seconds; 0 if unknown
+    };
     PathStat StatPath(const std::string &devicePath);
 
     // Directory info (file count, total size in bytes)

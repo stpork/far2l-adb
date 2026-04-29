@@ -21,12 +21,15 @@
 
 // Returns 0=proceed / 1=skip / 2=abort; overwriteMode carries state (0=ask, 1=overwrite all, 2=skip all) across calls.
 // state is optional — same-device F5/F6 has no progress UI to abort, so pass nullptr.
-static int CheckOverwrite(const std::wstring& destPath, bool isMultiple, bool isDir,
+// Native far2l WarnCopyDlg shows New/Existing size+mtime side by side, so callers must supply both.
+static int CheckOverwrite(const std::wstring& destPath,
+                          uint64_t src_size, int64_t src_mtime,
+                          uint64_t dst_size, int64_t dst_mtime,
                           int& overwriteMode, ProgressState* state) {
 	if (overwriteMode == 1) return 0;  // Overwrite all
 	if (overwriteMode == 2) return 1;  // Skip all
 
-	OverwriteDialog dlg(destPath, isMultiple, isDir);
+	OverwriteDialog dlg(destPath, src_size, src_mtime, dst_size, dst_mtime);
 	switch (dlg.Ask()) {
 		case OverwriteDialog::OVERWRITE:
 			return 0;
@@ -602,7 +605,11 @@ bool ADBPlugin::HandleCopyMove(bool move, bool in_place)
 		// reason (rare: disconnect, EROFS, ENOSPC), the original dst content is lost.
 		ADBDevice::PathStat dp = _adbDevice->StatPath(dstPath);
 		if (dp.exists) {
-			int action = CheckOverwrite(StrMB2Wide(dstPath), isMultiple, dp.is_dir, overwriteMode, nullptr);
+			ADBDevice::PathStat sp = _adbDevice->StatPath(srcPath);
+			int action = CheckOverwrite(StrMB2Wide(dstPath),
+			                            sp.size, sp.mtime,
+			                            dp.size, dp.mtime,
+			                            overwriteMode, nullptr);
 			if (action == 1) continue;          // skip this one
 			if (action == 2) { aborted = true; break; }  // user cancelled
 			const int delRc = dp.is_dir ? _adbDevice->DeleteDirectory(dstPath) : _adbDevice->DeleteFile(dstPath);
@@ -1410,10 +1417,8 @@ int ADBPlugin::RunTransfer(PluginPanelItem *items, int itemsCount, bool is_uploa
 			lastErrorCode = EIO;
 		}
 	} else {
-		std::wstring title = move
-			? (is_upload ? L"Move to device" : L"Move from device")
-			: (is_upload ? L"Copy to device" : L"Copy from device");
-		ProgressOperation op(title);
+		const bool isMultiple = itemsCount > 1;
+		ProgressOperation op(/*is_move=*/move, /*is_multi=*/isMultiple);
 		op.GetState().file_total = totalBytes;
 		op.GetState().all_total = totalBytes;
 		op.GetState().count_total = totalFiles;
@@ -1421,7 +1426,6 @@ int ADBPlugin::RunTransfer(PluginPanelItem *items, int itemsCount, bool is_uploa
 		op.GetState().dest_path = is_upload ? StrMB2Wide(deviceDir) : StrMB2Wide(localDir);
 
 		int overwriteMode = 0;
-		const bool isMultiple = itemsCount > 1;
 
 		op.Run([&](ProgressState& state) {
 			uint64_t processedBytes = 0;
@@ -1447,7 +1451,17 @@ int ADBPlugin::RunTransfer(PluginPanelItem *items, int itemsCount, bool is_uploa
 				if (is_upload) {
 					ADBDevice::PathStat dp = adb->StatPath(devicePath);
 					if (dp.exists) {
-						int action = CheckOverwrite(StrMB2Wide(devicePath), isMultiple, dp.is_dir, overwriteMode, &state);
+						struct stat sst{};
+						uint64_t src_sz = 0;
+						int64_t  src_mt = 0;
+						if (lstat(localPath.c_str(), &sst) == 0) {
+							src_sz = static_cast<uint64_t>(sst.st_size);
+							src_mt = static_cast<int64_t>(sst.st_mtime);
+						}
+						int action = CheckOverwrite(StrMB2Wide(devicePath),
+						                            src_sz, src_mt,
+						                            dp.size, dp.mtime,
+						                            overwriteMode, &state);
 						if (action == 1 || action == 2) continue;
 						int delRc = dp.is_dir ? adb->DeleteDirectory(devicePath) : adb->DeleteFile(devicePath);
 						if (delRc != 0) {
@@ -1459,9 +1473,14 @@ int ADBPlugin::RunTransfer(PluginPanelItem *items, int itemsCount, bool is_uploa
 				} else {
 					struct stat st;
 					if (lstat(localPath.c_str(), &st) == 0) {
-						bool dstIsDir = S_ISDIR(st.st_mode);
-						int action = CheckOverwrite(StrMB2Wide(localPath), isMultiple, dstIsDir, overwriteMode, &state);
+						ADBDevice::PathStat sp = adb->StatPath(devicePath);
+						int action = CheckOverwrite(StrMB2Wide(localPath),
+						                            sp.size, sp.mtime,
+						                            static_cast<uint64_t>(st.st_size),
+						                            static_cast<int64_t>(st.st_mtime),
+						                            overwriteMode, &state);
 						if (action == 1 || action == 2) continue;
+						bool dstIsDir = S_ISDIR(st.st_mode);
 						int delRc = dstIsDir ? RemoveLocalPathRecursively(localPath)
 						                     : (unlink(localPath.c_str()) == 0 ? 0 : (errno ? errno : EIO));
 						if (delRc != 0) {
@@ -1587,50 +1606,43 @@ int ADBPlugin::DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMo
 		return TRUE;  // nothing to delete; consume the key without prompting
 	}
 
+	const int total = static_cast<int>(realIdx.size());
+	int folderCount = 0;
+	for (int idx : realIdx) {
+		if (PanelItem[idx].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ++folderCount;
+	}
+
 	if (!(OpMode & OPM_SILENT)) {
-		int fileCount = 0;
-		int folderCount = 0;
-		for (int idx : realIdx) {
-			if (PanelItem[idx].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-				folderCount++;
-			else
-				fileCount++;
-		}
-
-		// Single confirmation dialog, use warning style for dirs/multiple items
-		int result = 0;
-		bool dangerous = (folderCount > 0 || ItemsNumber > 1);
-		unsigned int flags = dangerous ? (FMSG_WARNING | FMSG_MB_YESNO) : FMSG_MB_YESNO;
-
-		if (ItemsNumber == 1 && folderCount == 1) {
-			result = ADBDialogs::Message(flags,
-				L"Delete folder",
-				L"Do you wish to delete the folder",
-				std::wstring(PanelItem[0].FindData.lpwszFileName));
-		} else if (ItemsNumber == 1) {
-			result = ADBDialogs::Message(flags,
-				L"Delete",
-				L"Do you wish to delete the file",
-				std::wstring(PanelItem[0].FindData.lpwszFileName));
-		} else if (fileCount > 0 && folderCount > 0) {
-			result = ADBDialogs::Message(flags,
-				L"Delete items",
-				L"Do you wish to delete",
-				std::to_wstring(folderCount) + L" folders and " + std::to_wstring(fileCount) + L" files");
-		} else if (folderCount > 0) {
-			result = ADBDialogs::Message(flags,
-				L"Delete folders",
-				L"Do you wish to delete",
-				std::to_wstring(folderCount) + L" folders");
+		// Stage 1 confirmation — title is always Msg::DeleteTitle = "Delete",
+		// prompt is AskDeleteFile / AskDeleteFolder / AskDelete (delete.cpp:302).
+		const wchar_t* title = L"Delete";
+		std::wstring prompt, target;
+		if (total == 1) {
+			const bool isFolder = (folderCount == 1);
+			prompt = isFolder ? L"Do you wish to delete the folder"
+			                  : L"Do you wish to delete the file";
+			target = PanelItem[realIdx[0]].FindData.lpwszFileName;
 		} else {
-			result = ADBDialogs::Message(flags,
+			prompt = L"Do you wish to delete";
+			target = std::to_wstring(total) + L" item" + (total == 1 ? L"" : L"s");
+		}
+		if (ADBDialogs::Message(FMSG_MB_YESNO, title, prompt, target) != 0) return -1;
+
+		// Stage 2 — native far2l (delete.cpp:331) shows a second WARNING
+		// confirmation when more than one item is selected. Title becomes
+		// Msg::DeleteFilesTitle = "Delete files", buttons [&All][&Cancel].
+		if (total > 1) {
+			const wchar_t* items[] = {
 				L"Delete files",
 				L"Do you wish to delete",
-				std::to_wstring(fileCount) + L" files");
-		}
-
-		if (result != 0) {
-			return -1;
+				target.c_str(),
+				L"&All",
+				L"&Cancel"
+			};
+			if (g_Info.Message(g_Info.ModuleNumber, FMSG_WARNING, nullptr,
+			                   items, ARRAYSIZE(items), 2) != 0) {
+				return -1;
+			}
 		}
 	}
 	
@@ -1667,8 +1679,10 @@ int ADBPlugin::DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMo
 			lastErrorCode = EIO;
 		}
 	} else {
-		// Show progress dialog with worker thread
-		ProgressOperation op(L"Delete from device");
+		// Native far2l shell-delete UI: small centered "Delete: Deleting
+		// the file or folder <name>" with debounce — DeleteOperation
+		// matches that. Heavy CopyProgress-style dialog is wrong here.
+		DeleteOperation op;
 		op.GetState().count_total = realCount;
 
 	op.Run([&](ProgressState& state) {
