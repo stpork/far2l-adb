@@ -387,17 +387,18 @@ LONG_PTR OverwriteDialog::DlgProc(int msg, int param1, LONG_PTR param2) {
 }
 
 OverwriteDialog::Result OverwriteDialog::Ask() {
-    // extra_width=3, extra_height=2 → outer 88x13 (= native WARN_DLG_*).
-    // 3 cells right padding + 1 row bottom padding match the etalon.
-    int reply = Show(L"ADBOverwrite", 3, 2, FDLG_WARNING);
+    // Layout: <content> <1 cell inner pad> <box border> <2 cells outer pad>.
+    // Buttons at X1=0 drag min_x=0 in EstimateWidth, so EW = box.X2+1.
+    // extra_width=2 → W = box.X2 + 1 + 2 (2 outer cells right padding).
+    int reply = Show(L"ADBOverwrite", 2, 2, FDLG_WARNING);
     const bool remember = (SendDlgMessage(DM_GETCHECK, _i_remember, 0) == BSTATE_CHECKED);
     if (reply == _i_overwrite) return remember ? OVERWRITE_ALL : OVERWRITE;
     if (reply == _i_skip)      return remember ? SKIP_ALL : SKIP;
     return CANCEL;
 }
 
-ProgressDialog::ProgressDialog(ProgressState& state, bool is_move, bool is_multi)
-    : _state(state), _is_move(is_move), _is_multi(is_multi) {
+ProgressDialog::ProgressDialog(ProgressState& state, bool is_move, bool is_multi, bool is_upload)
+    : _state(state), _is_move(is_move), _is_multi(is_multi), _is_upload(is_upload) {
     InitLayout();
 }
 
@@ -407,7 +408,15 @@ void ProgressDialog::InitLayout() {
     // multi-file (Total=true) inserts " Total <bytes> " separator and
     // a second bar — 11 content rows. BarSize=52 cells, no Cancel
     // button, Esc-only abort — all matching native exactly.
-    _di.SetBoxTitleItem(_is_move ? L"Rename/Move" : L"Copy");
+    // Direction-aware titles per user request: "Copy/Move from device"
+    // for download (host pull), "Copy/Move to device" for upload.
+    const wchar_t* title;
+    if (_is_move) {
+        title = _is_upload ? L"Move to device" : L"Move from device";
+    } else {
+        title = _is_upload ? L"Copy to device" : L"Copy from device";
+    }
+    _di.SetBoxTitleItem(title);
     _di.SetLine(2);
     _i_verb = _di.AddAtLine(DI_TEXT, 5, 60, 0,
                             _is_move ? L"Moving the file" : L"Copying the file");
@@ -419,37 +428,34 @@ void ProgressDialog::InitLayout() {
     _i_to_path = _di.AddAtLine(DI_TEXT, 5, 60, 0, L"");
     _di.NextLine();
     _i_progress_bar = _di.AddAtLine(DI_TEXT, 5, 56, 0);     // 52-cell bar
-    _i_percent = _di.AddAtLine(DI_TEXT, 57, 61, 0, L"0%");  // 5-cell "100%"
+    _i_percent = _di.AddAtLine(DI_TEXT, 58, 62, 0, L"0%");  // " 100%" — 1 col gap from bar
     _di.NextLine();
     if (_is_multi) {
-        _i_total_bytes = _di.AddAtLine(DI_TEXT, 3, 63, DIF_BOXCOLOR | DIF_SEPARATOR, L"");
+        _i_total_bytes = _di.AddAtLine(DI_TEXT, 3, 0, DIF_BOXCOLOR | DIF_SEPARATOR, L"");
         _di.NextLine();
         _i_total_bar = _di.AddAtLine(DI_TEXT, 5, 56, 0);    // 52-cell total bar
         _di.NextLine();
     }
-    _di.AddAtLine(DI_TEXT, 3, 63, DIF_BOXCOLOR | DIF_SEPARATOR);
+    // X2=0 lets FAR auto-stretch the separator to the box right edge
+    // and join with the border via T-junctions. Items already drove
+    // box.X2 to 64 (percent X2=62 + 2), so no manual cap is needed.
+    _di.AddAtLine(DI_TEXT, 3, 0, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
     _i_files_processed = _di.AddAtLine(DI_TEXT, 5, 60, 0, L"");
     _di.NextLine();
-    _di.AddAtLine(DI_TEXT, 3, 63, DIF_BOXCOLOR | DIF_SEPARATOR);
+    _di.AddAtLine(DI_TEXT, 3, 0, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
     _i_time = _di.AddAtLine(DI_TEXT, 5, 60, 0, L"");
-    // Cap box back to natural width — separators at X2=63 grew it to
-    // 65, leaving 2 dead cells at the right edge that visually shift
-    // the dialog wider than native every redraw.
-    _di[0].X2 = 63;
 }
 
 void ProgressDialog::Show() {
     while (!_state.finished) {
         _finished = false;
-        // extra_width=4 / extra_height=2 — gives 1-cell right and
-        // bottom padding outside the box. Without buttons (we removed
-        // Cancel for native parity), EstimateWidth = box.X2+1-3 strips
-        // the left padding, so any extra_width<3 actually crops the
-        // box's right border (DialogInit W = EstimateWidth+extra <
-        // box.X2+1).
-        BaseDialog::Show(L"ADBProgress", 4, 2, FDLG_REGULARIDLE);
+        // Layout: <content> <1 cell inner pad> <box border> <2 cells outer pad>
+        // Content max X2=62 (percent), box.X2=64 (auto-grown). For 2 cells
+        // outer padding need W = box.X2 + 1 + 2 = 67. EstimateWidth =
+        // box.X2 + 1 - 3 = 62 (no buttons → min_x=3). extra_width = 5.
+        BaseDialog::Show(L"ADBProgress", 5, 2, FDLG_REGULARIDLE);
         if (_finished) break;
         if (ShowAbortConfirmation()) {
             _state.SetAborting();
@@ -641,14 +647,15 @@ static void RunModalProgress(std::shared_ptr<ProgressState> state,
     if (worker.joinable()) worker.join();
 }
 
-ProgressOperation::ProgressOperation(bool is_move, bool is_multi)
-    : _state(std::make_shared<ProgressState>()), _is_move(is_move), _is_multi(is_multi) {
+ProgressOperation::ProgressOperation(bool is_move, bool is_multi, bool is_upload)
+    : _state(std::make_shared<ProgressState>()),
+      _is_move(is_move), _is_multi(is_multi), _is_upload(is_upload) {
     _state->Reset();
 }
 
 void ProgressOperation::Run(WorkFunc work_func) {
     RunModalProgress(_state, std::move(work_func), [this]() {
-        ProgressDialog dlg(*_state, _is_move, _is_multi);
+        ProgressDialog dlg(*_state, _is_move, _is_multi, _is_upload);
         dlg.Show();
     });
 }
@@ -668,8 +675,8 @@ DeleteProgressDialog::DeleteProgressDialog(ProgressState& state)
 void DeleteProgressDialog::Show() {
     while (!_state.finished) {
         _finished = false;
-        // Same 4/2 padding rationale as ProgressDialog::Show.
-        BaseDialog::Show(L"ADBProgress", 4, 2, FDLG_REGULARIDLE);
+        // Same 5/2 padding rationale as ProgressDialog::Show.
+        BaseDialog::Show(L"ADBProgress", 5, 2, FDLG_REGULARIDLE);
         if (_finished) break;
         if (ShowAbortConfirmation()) {
             _state.SetAborting();

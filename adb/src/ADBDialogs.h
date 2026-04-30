@@ -156,7 +156,7 @@ private:
 // multi-file uses 11 (adds " Total <bytes> " separator + total bar).
 class ProgressDialog : protected BaseDialog {
 public:
-    ProgressDialog(ProgressState& state, bool is_move, bool is_multi);
+    ProgressDialog(ProgressState& state, bool is_move, bool is_multi, bool is_upload);
     void Show();
 protected:
     LONG_PTR DlgProc(int msg, int param1, LONG_PTR param2) override;
@@ -164,6 +164,7 @@ private:
     ProgressState& _state;
     bool _is_move;
     bool _is_multi;
+    bool _is_upload;
     bool _finished = false;
     bool _first_update = true;
     int _i_verb, _i_from_path, _i_to_path;
@@ -203,7 +204,7 @@ public:
 class ProgressOperation {
 public:
     using WorkFunc = std::function<void(ProgressState&)>;
-    ProgressOperation(bool is_move, bool is_multi);
+    ProgressOperation(bool is_move, bool is_multi, bool is_upload);
     void Run(WorkFunc work_func);
     bool WasAborted() const { return _state->IsAborting(); }
     ProgressState& GetState() { return *_state; }
@@ -211,6 +212,7 @@ private:
     std::shared_ptr<ProgressState> _state;
     bool _is_move;
     bool _is_multi;
+    bool _is_upload;
 };
 
 // Mirrors far2l's native shell-delete UI: small centered modal with

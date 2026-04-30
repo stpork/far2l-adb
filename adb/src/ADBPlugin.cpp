@@ -1418,7 +1418,7 @@ int ADBPlugin::RunTransfer(PluginPanelItem *items, int itemsCount, bool is_uploa
 		}
 	} else {
 		const bool isMultiple = itemsCount > 1;
-		ProgressOperation op(/*is_move=*/move, /*is_multi=*/isMultiple);
+		ProgressOperation op(/*is_move=*/move, /*is_multi=*/isMultiple, /*is_upload=*/is_upload);
 		op.GetState().file_total = totalBytes;
 		op.GetState().all_total = totalBytes;
 		op.GetState().count_total = totalFiles;
