@@ -457,6 +457,9 @@ void ProgressDialog::Show() {
         // box.X2 + 1 - 3 = 62 (no buttons → min_x=3). extra_width = 5.
         BaseDialog::Show(L"ADBProgress", 5, 2, FDLG_REGULARIDLE);
         if (_finished) break;
+        // Esc-driven abort path already set state.aborting and Close()'d
+        // the dialog from DlgProc — bail out without re-prompting.
+        if (_state.IsAborting()) break;
         if (ShowAbortConfirmation()) {
             _state.SetAborting();
             break;
@@ -678,6 +681,7 @@ void DeleteProgressDialog::Show() {
         // Same 5/2 padding rationale as ProgressDialog::Show.
         BaseDialog::Show(L"ADBProgress", 5, 2, FDLG_REGULARIDLE);
         if (_finished) break;
+        if (_state.IsAborting()) break;  // Esc path already aborted.
         if (ShowAbortConfirmation()) {
             _state.SetAborting();
             break;

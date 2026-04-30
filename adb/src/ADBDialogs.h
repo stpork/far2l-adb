@@ -115,7 +115,16 @@ struct ProgressState {
     }
     bool IsAborting() const { return aborting.load(); }
     bool IsFinished() const { return finished.load(); }
-    void SetAborting() { aborting = true; }
+
+    // Fired exactly once when SetAborting flips the flag false→true.
+    // Caller installs this to forward the abort to whatever is blocking
+    // the worker (e.g. an adb pull/push child process). Without it
+    // cancel only takes effect at the next progress callback.
+    std::function<void()> on_abort;
+
+    void SetAborting() {
+        if (!aborting.exchange(true) && on_abort) on_abort();
+    }
     void SetFinished() { finished = true; }
     bool ShouldAbort() const { return aborting.load(); }
 };
