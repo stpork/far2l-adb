@@ -355,7 +355,13 @@ OverwriteDialog::OverwriteDialog(const std::wstring& dest_name,
     _i_filename = _di.AddAtLine(DI_TEXT, 5, 82, 0,
                                 AbbreviatePathLeft(dest_name, 78).c_str());
     _di.NextLine();
-    _di.AddAtLine(DI_TEXT, 3, 0, DIF_BOXCOLOR | DIF_SEPARATOR);
+    // FDLG_WARNING uses a 2-cell-wide box border (║║); the box's
+    // inner area is X1+2..X2-2 = 5..82. Separators run inside that
+    // area, sitting flush against the inner edge of both border pairs.
+    // X2=0 (auto-stretch) leaves a 1-cell gap on the right; explicit
+    // X2=box.X2 erases the border on the separator's row (separators
+    // are drawn after the box).
+    _di.AddAtLine(DI_TEXT, 5, 82, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
     _i_src_info = _di.AddAtLine(DI_BUTTON, 5, 82,
                                 DIF_BTNNOCLOSE | DIF_NOBRACKETS,
@@ -365,11 +371,11 @@ OverwriteDialog::OverwriteDialog(const std::wstring& dest_name,
                                 DIF_BTNNOCLOSE | DIF_NOBRACKETS,
                                 FormatFileInfo(L"Existing", dst_size, dst_mtime).c_str());
     _di.NextLine();
-    _di.AddAtLine(DI_TEXT, 3, 0, DIF_BOXCOLOR | DIF_SEPARATOR);
+    _di.AddAtLine(DI_TEXT, 5, 82, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
     _i_remember = _di.AddAtLine(DI_CHECKBOX, 5, 30, 0, L"&Remember choice");
     _di.NextLine();
-    _di.AddAtLine(DI_TEXT, 3, 0, DIF_BOXCOLOR | DIF_SEPARATOR);
+    _di.AddAtLine(DI_TEXT, 5, 82, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
     _i_overwrite = _di.AddAtLine(DI_BUTTON, 0, 0, DIF_CENTERGROUP, L"&Overwrite");
     _i_skip      = _di.AddAtLine(DI_BUTTON, 0, 0, DIF_CENTERGROUP, L"&Skip");
@@ -387,10 +393,11 @@ LONG_PTR OverwriteDialog::DlgProc(int msg, int param1, LONG_PTR param2) {
 }
 
 OverwriteDialog::Result OverwriteDialog::Ask() {
-    // Layout: <content> <1 cell inner pad> <box border> <2 cells outer pad>.
-    // Buttons at X1=0 drag min_x=0 in EstimateWidth, so EW = box.X2+1.
-    // extra_width=2 → W = box.X2 + 1 + 2 (2 outer cells right padding).
-    int reply = Show(L"ADBOverwrite", 2, 2, FDLG_WARNING);
+    // Native WARN_DLG_WIDTH=88. Buttons at X1=0 drag min_x=0 so
+    // EstimateWidth = box.X2+1 = 85. extra_width=3 → W=88, with
+    // 3-cell padding on each side around the box (cols 0..2 left,
+    // 85..87 right) — symmetric, matching the native etalon.
+    int reply = Show(L"ADBOverwrite", 3, 2, FDLG_WARNING);
     const bool remember = (SendDlgMessage(DM_GETCHECK, _i_remember, 0) == BSTATE_CHECKED);
     if (reply == _i_overwrite) return remember ? OVERWRITE_ALL : OVERWRITE;
     if (reply == _i_skip)      return remember ? SKIP_ALL : SKIP;
@@ -431,19 +438,22 @@ void ProgressDialog::InitLayout() {
     _i_percent = _di.AddAtLine(DI_TEXT, 58, 62, 0, L"0%");  // " 100%" — 1 col gap from bar
     _di.NextLine();
     if (_is_multi) {
-        _i_total_bytes = _di.AddAtLine(DI_TEXT, 3, 0, DIF_BOXCOLOR | DIF_SEPARATOR, L"");
+        _i_total_bytes = _di.AddAtLine(DI_TEXT, 4, 63, DIF_BOXCOLOR | DIF_SEPARATOR, L"");
         _di.NextLine();
         _i_total_bar = _di.AddAtLine(DI_TEXT, 5, 56, 0);    // 52-cell total bar
         _di.NextLine();
     }
-    // X2=0 lets FAR auto-stretch the separator to the box right edge
-    // and join with the border via T-junctions. Items already drove
-    // box.X2 to 64 (percent X2=62 + 2), so no manual cap is needed.
-    _di.AddAtLine(DI_TEXT, 3, 0, DIF_BOXCOLOR | DIF_SEPARATOR);
+    // Regular FDLG_REGULARIDLE box has a 1-cell border (a single ║ on
+    // each side). Separator runs from X1=4 (one cell past the left
+    // border at col 3) to X2=63 (one cell before the right border at
+    // col 64). Drawn after the box, separator overlap would erase the
+    // border on its row — keeping it 1 cell inside on each end gives
+    // "║─...─║" with no gap and no break.
+    _di.AddAtLine(DI_TEXT, 4, 63, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
     _i_files_processed = _di.AddAtLine(DI_TEXT, 5, 60, 0, L"");
     _di.NextLine();
-    _di.AddAtLine(DI_TEXT, 3, 0, DIF_BOXCOLOR | DIF_SEPARATOR);
+    _di.AddAtLine(DI_TEXT, 4, 63, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
     _i_time = _di.AddAtLine(DI_TEXT, 5, 60, 0, L"");
 }
@@ -455,7 +465,7 @@ void ProgressDialog::Show() {
         // Content max X2=62 (percent), box.X2=64 (auto-grown). For 2 cells
         // outer padding need W = box.X2 + 1 + 2 = 67. EstimateWidth =
         // box.X2 + 1 - 3 = 62 (no buttons → min_x=3). extra_width = 5.
-        BaseDialog::Show(L"ADBProgress", 5, 2, FDLG_REGULARIDLE);
+        BaseDialog::Show(L"ADBProgress", 6, 2, FDLG_REGULARIDLE);
         if (_finished) break;
         // Esc-driven abort path already set state.aborting and Close()'d
         // the dialog from DlgProc — bail out without re-prompting.
@@ -679,7 +689,7 @@ void DeleteProgressDialog::Show() {
     while (!_state.finished) {
         _finished = false;
         // Same 5/2 padding rationale as ProgressDialog::Show.
-        BaseDialog::Show(L"ADBProgress", 5, 2, FDLG_REGULARIDLE);
+        BaseDialog::Show(L"ADBProgress", 6, 2, FDLG_REGULARIDLE);
         if (_finished) break;
         if (_state.IsAborting()) break;  // Esc path already aborted.
         if (ShowAbortConfirmation()) {
