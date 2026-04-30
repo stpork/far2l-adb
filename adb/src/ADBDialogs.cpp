@@ -443,7 +443,13 @@ void ProgressDialog::InitLayout() {
 void ProgressDialog::Show() {
     while (!_state.finished) {
         _finished = false;
-        BaseDialog::Show(L"ADBProgress", 2, 1, FDLG_REGULARIDLE);
+        // extra_width=4 / extra_height=2 — gives 1-cell right and
+        // bottom padding outside the box. Without buttons (we removed
+        // Cancel for native parity), EstimateWidth = box.X2+1-3 strips
+        // the left padding, so any extra_width<3 actually crops the
+        // box's right border (DialogInit W = EstimateWidth+extra <
+        // box.X2+1).
+        BaseDialog::Show(L"ADBProgress", 4, 2, FDLG_REGULARIDLE);
         if (_finished) break;
         if (ShowAbortConfirmation()) {
             _state.SetAborting();
@@ -662,7 +668,8 @@ DeleteProgressDialog::DeleteProgressDialog(ProgressState& state)
 void DeleteProgressDialog::Show() {
     while (!_state.finished) {
         _finished = false;
-        BaseDialog::Show(L"ADBProgress", 2, 1, FDLG_REGULARIDLE);
+        // Same 4/2 padding rationale as ProgressDialog::Show.
+        BaseDialog::Show(L"ADBProgress", 4, 2, FDLG_REGULARIDLE);
         if (_finished) break;
         if (ShowAbortConfirmation()) {
             _state.SetAborting();
