@@ -340,20 +340,22 @@ static std::wstring FormatFileInfo(const wchar_t* label, uint64_t size, int64_t 
 OverwriteDialog::OverwriteDialog(const std::wstring& dest_name,
                                  uint64_t src_size, int64_t src_mtime,
                                  uint64_t dst_size, int64_t dst_mtime) {
-    // Native WARN_DLG_WIDTH = 88 (copy.cpp:3015). Box X1=3, X2=84
-    // (88-4) — 82-cell-wide inner area. Separators stretch from box
-    // left edge (X1=3) to box right edge (X2=84) so they join cleanly
-    // with box border corners; box.X2 is capped manually afterwards
-    // because AddInternal would otherwise auto-grow the box and break
-    // the join.
+    // Native WARN_DLG_WIDTH=88, WARN_DLG_HEIGHT=13 (copy.cpp:3014).
+    // Box X1=3, X2=84 (88-4) — 82-cell inner area. Content items at
+    // X1=5..X2=82 (= WARN_DLG_WIDTH-6). Separators use X2=0 for FAR's
+    // auto-stretch with proper border-corner joins; AddInternal won't
+    // grow the box past X2=84 because (0+2) < 84. Filename rendered
+    // as DI_TEXT (not DI_EDIT) so it shares the dialog background;
+    // DI_EDIT in plugin SDK paints the editor color across the whole
+    // field which doesn't match native's WarnCopyDlg appearance.
     _di.SetBoxTitleItem(L"Warning");
     _di.SetLine(2);
     _di.AddAtLine(DI_TEXT, 5, 82, DIF_CENTERGROUP, L"File already exists");
     _di.NextLine();
-    _i_filename = _di.AddAtLine(DI_EDIT, 5, 82, DIF_READONLY,
+    _i_filename = _di.AddAtLine(DI_TEXT, 5, 82, 0,
                                 AbbreviatePathLeft(dest_name, 78).c_str());
     _di.NextLine();
-    _di.AddAtLine(DI_TEXT, 3, 84, DIF_BOXCOLOR | DIF_SEPARATOR);
+    _di.AddAtLine(DI_TEXT, 3, 0, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
     _i_src_info = _di.AddAtLine(DI_BUTTON, 5, 82,
                                 DIF_BTNNOCLOSE | DIF_NOBRACKETS,
@@ -363,21 +365,17 @@ OverwriteDialog::OverwriteDialog(const std::wstring& dest_name,
                                 DIF_BTNNOCLOSE | DIF_NOBRACKETS,
                                 FormatFileInfo(L"Existing", dst_size, dst_mtime).c_str());
     _di.NextLine();
-    _di.AddAtLine(DI_TEXT, 3, 84, DIF_BOXCOLOR | DIF_SEPARATOR);
+    _di.AddAtLine(DI_TEXT, 3, 0, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
     _i_remember = _di.AddAtLine(DI_CHECKBOX, 5, 30, 0, L"&Remember choice");
     _di.NextLine();
-    _di.AddAtLine(DI_TEXT, 3, 84, DIF_BOXCOLOR | DIF_SEPARATOR);
+    _di.AddAtLine(DI_TEXT, 3, 0, DIF_BOXCOLOR | DIF_SEPARATOR);
     _di.NextLine();
     _i_overwrite = _di.AddAtLine(DI_BUTTON, 0, 0, DIF_CENTERGROUP, L"&Overwrite");
     _i_skip      = _di.AddAtLine(DI_BUTTON, 0, 0, DIF_CENTERGROUP, L"&Skip");
     _i_cancel    = _di.AddAtLine(DI_BUTTON, 0, 0, DIF_CENTERGROUP, L"&Cancel");
     SetFocusedDialogControl(_i_remember);
     SetDefaultDialogControl(_i_overwrite);
-    // Cap box back to native width 88 — separators at X2=84 grew the
-    // box to X2=86, which would leave 2 dead cells at the right edge
-    // and visually shift the dialog wider than native every redraw.
-    _di[0].X2 = 84;
 }
 
 LONG_PTR OverwriteDialog::DlgProc(int msg, int param1, LONG_PTR param2) {
@@ -389,7 +387,9 @@ LONG_PTR OverwriteDialog::DlgProc(int msg, int param1, LONG_PTR param2) {
 }
 
 OverwriteDialog::Result OverwriteDialog::Ask() {
-    int reply = Show(L"ADBOverwrite", 2, 1, FDLG_WARNING);
+    // extra_width=3, extra_height=2 → outer 88x13 (= native WARN_DLG_*).
+    // 3 cells right padding + 1 row bottom padding match the etalon.
+    int reply = Show(L"ADBOverwrite", 3, 2, FDLG_WARNING);
     const bool remember = (SendDlgMessage(DM_GETCHECK, _i_remember, 0) == BSTATE_CHECKED);
     if (reply == _i_overwrite) return remember ? OVERWRITE_ALL : OVERWRITE;
     if (reply == _i_skip)      return remember ? SKIP_ALL : SKIP;
