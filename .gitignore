@@ -30,3 +30,4 @@ far2l_sudoapp
 _release/
 _debug/
 
+/compile_commands.json

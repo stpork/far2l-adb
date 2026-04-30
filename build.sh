@@ -59,6 +59,7 @@ mkdir -p "$DIR" && cd "$DIR"
 if [[ ! -f "CMakeCache.txt" ]]; then
     cmake -G "$GEN" -DCMAKE_BUILD_TYPE="$TYPE" \
         -DPYTHON=yes \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCMAKE_PREFIX_PATH="/opt/homebrew" \
         -DCMAKE_INSTALL_RPATH="/opt/homebrew/lib" \
         -DCMAKE_BUILD_RPATH="/opt/homebrew/lib" \
@@ -67,6 +68,14 @@ if [[ ! -f "CMakeCache.txt" ]]; then
 fi
 
 $BUILD
+
+# Surface compile_commands.json at the repo root so clangd / LSP
+# editors pick up the same -I and -D flags the build uses, killing
+# the noisy "PluginPanelItem unknown type" diagnostics that come from
+# running clangd against far2l-SDK headers without those flags.
+if [[ -f "$DIR/compile_commands.json" ]]; then
+    ln -sf "$DIR/compile_commands.json" "$SCRIPT_DIR/compile_commands.json"
+fi
 
 if [[ $DO_DMG -eq 1 ]]; then
     $BUILD install
