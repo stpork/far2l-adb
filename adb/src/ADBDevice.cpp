@@ -111,27 +111,39 @@ void ProgressParser::complete() { _on_progress(100, std::string()); }
 void ProgressParser::start()    { _on_progress(0,   std::string()); }
 
 bool ProgressParser::ExtractProgress(const std::string &s, int &percent, std::string &path) {
-    size_t p = s.find('%');
+    // Find the LAST '%' so we don't accidentally match an in-path '%'.
+    size_t p = s.rfind('%');
     if (p == std::string::npos || p == 0) return false;
     size_t start = p;
-    while (start > 0 && std::isdigit(static_cast<unsigned char>(s[start - 1]))) {
-        --start;
+    while (start > 0 && std::isdigit(static_cast<unsigned char>(s[start - 1]))) --start;
+    if (start == p) return false;
+    int v = std::atoi(s.substr(start, p - start).c_str());
+    if (v < 0 || v > 100) return false;
+    percent = v;
+    path.clear();
+
+    // Legacy adb -p format: "[ NN%] /path".
+    // Detect by checking the '[' before the digits and '<spaces>'.
+    if (start >= 2 && s[start - 1] == ' ' && s[start - 2] == '[') {
+        size_t close = s.find(']', p);
+        if (close != std::string::npos) {
+            size_t ps = close + 1;
+            while (ps < s.size() && std::isspace(static_cast<unsigned char>(s[ps]))) ++ps;
+            path.assign(s, ps, std::string::npos);
+        }
     }
-    if (start == p) {
-        return -1;
+    // Modern adb -p format: "<path>: NN%[\x1B[K]".
+    // Detect by ": " just before the digits.
+    else if (start >= 2 && s[start - 1] == ' ' && s[start - 2] == ':') {
+        path.assign(s, 0, start - 2);
     }
-    percent = std::atoi(s.substr(start, p - start).c_str());
-    if (percent < 0 || percent > 100) return false;
-    // Path follows the closing ']'; absent on the trailing summary line.
-    size_t close = s.find(']', p);
-    if (close == std::string::npos) {
-        path.clear();
-        return true;
+    // Strip trailing whitespace AND ANSI/control bytes (\r, \x1B, etc.)
+    // — adb's "[K" clear-EOL gets concatenated to lines on some setups.
+    while (!path.empty()) {
+        unsigned char c = static_cast<unsigned char>(path.back());
+        if (std::isspace(c) || c == 0x1B || c < 0x20) { path.pop_back(); continue; }
+        break;
     }
-    size_t ps = close + 1;
-    while (ps < s.size() && std::isspace(static_cast<unsigned char>(s[ps]))) ++ps;
-    path.assign(s, ps, std::string::npos);
-    while (!path.empty() && std::isspace(static_cast<unsigned char>(path.back()))) path.pop_back();
     return true;
 }
 

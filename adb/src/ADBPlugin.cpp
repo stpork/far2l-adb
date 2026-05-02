@@ -1856,42 +1856,39 @@ int ADBPlugin::RunTransfer(PluginPanelItem *items, int itemsCount, bool is_uploa
 				const uint64_t bytesBefore = processedBytes;
 				int lastReportedPercent = -1;
 				// Per-file progress: when adb's reported path's basename
-				// changes, we treat the previous file as 100%-complete and
-				// reset the file bar to the new file's size. Cumulative
-				// (all_complete) sums completed files + current's progress.
+				// changes, treat previous file as fully transferred and
+				// reset the file bar. Cumulative all_complete sums
+				// completed files + current's bytes-in-progress.
 				std::string current_basename;
 				uint64_t current_file_size = isDir ? 0 : itemSize;
 				uint64_t bytes_done_in_dir = 0;
-				int last_pct_for_current = 0;
 				auto progressCallback = [&](int percent, const std::string& path) {
 					std::string bn = PathBasename(path);
-					if (!bn.empty() && bn != current_basename) {
-						// Previous file finished — credit its full size.
-						bytes_done_in_dir += (current_file_size * last_pct_for_current) / 100;
-						// We've passed the boundary; treat the just-ended
-						// file as fully transferred (last_pct_for_current
-						// was likely 100, but if adb dropped a line we
-						// still account for the bytes via map lookup).
-						auto it_prev = fileSizesByBasename.find(current_basename);
-						if (!current_basename.empty() && it_prev != fileSizesByBasename.end()
-								&& last_pct_for_current < 100) {
-							bytes_done_in_dir += it_prev->second
-								- (it_prev->second * last_pct_for_current) / 100;
+					// Sanity: reject "basenames" that look like garbage
+					// (contain '%' or ':' — wouldn't survive a real fs).
+					// Keeps state.current_file clean if parser ever drifts.
+					const bool bn_looks_clean = !bn.empty()
+						&& bn.find('%') == std::string::npos
+						&& bn.find(':') == std::string::npos;
+					if (bn_looks_clean && bn != current_basename) {
+						if (!current_basename.empty()) {
+							// Previous file is done — credit its full size
+							// (sizes map for accuracy, fall back to current_file_size).
+							auto it_prev = fileSizesByBasename.find(current_basename);
+							bytes_done_in_dir += (it_prev != fileSizesByBasename.end())
+								? it_prev->second : current_file_size;
 						}
 						current_basename = bn;
 						auto it = fileSizesByBasename.find(bn);
 						current_file_size = (it != fileSizesByBasename.end()) ? it->second
 								: (dirTotalSize > 0 ? dirTotalSize : itemSize);
-						last_pct_for_current = 0;
 						state.file_total = current_file_size;
-						state.file_complete = 0;
 						state.is_directory = false;
 						{
 							std::lock_guard<std::mutex> lock(state.mtx_strings);
 							state.current_file = StrMB2Wide(bn);
 						}
 					}
-					last_pct_for_current = percent;
 					state.file_complete = (current_file_size * percent) / 100;
 					if (dirTotalSize > 0) {
 						const uint64_t this_done = (current_file_size * percent) / 100;
