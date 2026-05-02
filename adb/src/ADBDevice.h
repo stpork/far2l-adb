@@ -83,24 +83,14 @@ public:
     int CreateDirectory(const std::string &devicePath);
     int CopyRemote(const std::string &srcDevicePath, const std::string &dstDeviceDir);
     int MoveRemote(const std::string &srcDevicePath, const std::string &dstDeviceDir);
+    // *As variants take a full destination PATH (caller renames in
+    // flight) instead of a destination directory; used by Shift+F5/F6.
+    int CopyRemoteAs(const std::string &srcDevicePath, const std::string &dstDevicePath);
+    int MoveRemoteAs(const std::string &srcDevicePath, const std::string &dstDevicePath);
 
     // File existence check
     bool FileExists(const std::string &devicePath);
-
-    // True only if devicePath exists AND is a directory (test -d).
     bool IsDirectory(const std::string &devicePath);
-
-    // {exists, is_dir, size, mtime} via a single shell roundtrip — cheaper
-    // than calling FileExists then IsDirectory (each is its own marker-bound
-    // shell command). size/mtime are filled when available (Android `stat -c`
-    // is supported on every Android since 4.x); 0 otherwise.
-    struct PathStat {
-        bool     exists;
-        bool     is_dir;
-        uint64_t size;   // bytes; 0 for dirs / unavailable
-        int64_t  mtime;  // unix epoch seconds; 0 if unknown
-    };
-    PathStat StatPath(const std::string &devicePath);
 
     // Directory info (file count, total size in bytes)
     struct DirectoryInfo {

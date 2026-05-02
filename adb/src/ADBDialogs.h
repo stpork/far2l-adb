@@ -1,23 +1,5 @@
 #pragma once
 
-// Native-parity rewrite ported from mtp/src/MTPDialogs.h. Provides:
-//   FarDialogItems / FarDialogItemsLineGrouped — dialog item builders
-//   BaseDialog                                 — DM_* plumbing + DlgProc dispatch
-//   ProgressState / ProgressOperation          — atomic-counter state shared
-//                                                between worker thread and the
-//                                                ProgressDialog UI thread
-//   AbortConfirmDialog                         — Esc → confirm
-//   OverwriteDialog                            — WarnCopyDlg-style collision prompt
-//   ProgressDialog                             — Copy/Move CopyProgress-style UI
-//                                                (single-file 9 rows / multi 11 rows)
-//   DeleteProgressDialog                       — ShellDeleteMsg-style UI
-//   ADBDialogs                                 — AskCopyMove / AskCreateDirectory /
-//                                                AskInput / AskConfirmation /
-//                                                AskWarning / Message
-//
-// Help topics: ADBOverwrite / ADBProgress / ADBAbortConfirm.
-// History names: ADB_CopyMove / ADB_MakeDir.
-
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -35,51 +17,77 @@
 extern PluginStartupInfo g_Info;
 extern FarStandardFunctions g_FSF;
 
-struct FarDialogItems : std::vector<struct FarDialogItem> {
+// --- FarDialogItems: dialog item container ---
+struct FarDialogItems : std::vector<struct FarDialogItem>
+{
     FarDialogItems();
-    int SetBoxTitleItem(const wchar_t* title);
-    int Add(int type, int x1, int y1, int x2, int y2, unsigned int flags = 0, const wchar_t* data = nullptr);
-    int Add(int type, int x1, int y1, int x2, int y2, unsigned int flags, const char* data);
+
+    int SetBoxTitleItem(const wchar_t *title);
+
+    int Add(int type, int x1, int y1, int x2, int y2, unsigned int flags = 0, const wchar_t *data = nullptr);
+    int Add(int type, int x1, int y1, int x2, int y2, unsigned int flags, const char *data);
+
     int EstimateWidth() const;
     int EstimateHeight() const;
-    const wchar_t* MB2WidePooled(const char* sz);
-    const wchar_t* WidePooled(const wchar_t* wz);
+
+    const wchar_t *MB2WidePooled(const char *sz);
+    const wchar_t *WidePooled(const wchar_t *wz);
+
 private:
-    int AddInternal(int type, int x1, int y1, int x2, int y2, unsigned int flags, const wchar_t* data);
+    int AddInternal(int type, int x1, int y1, int x2, int y2, unsigned int flags, const wchar_t *data);
+
     std::set<std::wstring> _str_pool;
     std::wstring _str_pool_tmp;
 };
 
-struct FarDialogItemsLineGrouped : FarDialogItems {
+// --- FarDialogItemsLineGrouped: auto line increment ---
+struct FarDialogItemsLineGrouped : FarDialogItems
+{
     void SetLine(int y);
     void NextLine();
-    int AddAtLine(int type, int x1, int x2, unsigned int flags = 0, const char* data = nullptr);
-    int AddAtLine(int type, int x1, int x2, unsigned int flags, const wchar_t* data);
+
+    int AddAtLine(int type, int x1, int x2, unsigned int flags = 0, const char *data = nullptr);
+    int AddAtLine(int type, int x1, int x2, unsigned int flags, const wchar_t *data);
+
 private:
     int _y = 1;
 };
 
-class BaseDialog {
+// --- BaseDialog ---
+class BaseDialog
+{
     HANDLE _dlg = INVALID_HANDLE_VALUE;
     wchar_t _progress_bg = 0, _progress_fg = 0;
+
 protected:
     FarDialogItemsLineGrouped _di;
+
     static LONG_PTR sSendDlgMessage(HANDLE dlg, int msg, int param1, LONG_PTR param2);
     static LONG_PTR WINAPI sDlgProc(HANDLE dlg, int msg, int param1, LONG_PTR param2);
+
     LONG_PTR SendDlgMessage(int msg, int param1, LONG_PTR param2);
     virtual LONG_PTR DlgProc(int msg, int param1, LONG_PTR param2);
-    int Show(const wchar_t* help_topic, int extra_width, int extra_height, unsigned int flags = 0);
+
+    int Show(const wchar_t *help_topic, int extra_width, int extra_height, unsigned int flags = 0);
+
     void Close(int code = -1);
+
     void SetDefaultDialogControl(int ctl = -1);
     void SetFocusedDialogControl(int ctl = -1);
-    void TextToDialogControl(int ctl, const std::wstring& str);
-    void TextToDialogControl(int ctl, const char* str);
+
+    void TextToDialogControl(int ctl, const std::wstring &str);
+    void TextToDialogControl(int ctl, const char *str);
+
     void ProgressBarToDialogControl(int ctl, int percents = -1);
+
 public:
     virtual ~BaseDialog();
 };
 
-struct ProgressState {
+// --- ProgressState: thread-safe shared state ---
+struct ProgressState
+{
+    // Use atomics for flags and numeric values (fork-safe, no mutex needed)
     std::atomic<bool> finished{false};
     std::atomic<bool> aborting{false};
     std::atomic<uint64_t> file_complete{0};
@@ -89,7 +97,10 @@ struct ProgressState {
     std::atomic<uint64_t> count_complete{0};
     std::atomic<uint64_t> count_total{0};
     std::atomic<bool> is_directory{false};
+
     std::chrono::steady_clock::time_point start_time;
+
+    // Mutex only for string access (strings are complex, need protection)
     mutable std::mutex mtx_strings;
     std::wstring current_file;
     std::wstring source_path;
@@ -106,127 +117,95 @@ struct ProgressState {
         count_total = 0;
         is_directory = false;
         {
-            std::lock_guard<std::mutex> lk(mtx_strings);
+            std::lock_guard<std::mutex> lock(mtx_strings);
             current_file.clear();
             source_path.clear();
             dest_path.clear();
         }
         start_time = std::chrono::steady_clock::now();
     }
+
     bool IsAborting() const { return aborting.load(); }
     bool IsFinished() const { return finished.load(); }
 
-    // Fired exactly once when SetAborting flips the flag false→true.
-    // Caller installs this to forward the abort to whatever is blocking
-    // the worker (e.g. an adb pull/push child process). Without it
-    // cancel only takes effect at the next progress callback.
-    std::function<void()> on_abort;
-
-    void SetAborting() {
-        if (!aborting.exchange(true) && on_abort) on_abort();
-    }
+    void SetAborting() { aborting = true; }
     void SetFinished() { finished = true; }
+
     bool ShouldAbort() const { return aborting.load(); }
 };
 
-class AbortConfirmDialog : protected BaseDialog {
+// --- AbortConfirmDialog ---
+class AbortConfirmDialog : protected BaseDialog
+{
 public:
     AbortConfirmDialog();
     bool Ask();
+
 protected:
     LONG_PTR DlgProc(int msg, int param1, LONG_PTR param2) override;
+
 private:
     int _i_confirm, _i_cancel;
 };
 
-// Mirrors far2l's WarnCopyDlg (copy.cpp:3017): title "Warning",
-// "File already exists", read-only edit with destination name, two
-// info "buttons" (DIF_NOBRACKETS) showing "&New" and "E&xisting"
-// metadata, "&Remember choice" checkbox, then Overwrite/Skip/Cancel
-// buttons. Append/Resume/Rename are present in native but hidden
-// here — they don't apply to MTP transfers.
-class OverwriteDialog : protected BaseDialog {
+// --- OverwriteDialog ---
+class OverwriteDialog : protected BaseDialog
+{
 public:
     enum Result { OVERWRITE = 0, SKIP = 1, CANCEL = 2, OVERWRITE_ALL = 3, SKIP_ALL = 4 };
-    OverwriteDialog(const std::wstring& dest_name,
-                    uint64_t src_size, int64_t src_mtime,
-                    uint64_t dst_size, int64_t dst_mtime);
+
+    OverwriteDialog(const std::wstring &filename, bool is_multiple, bool is_directory);
     Result Ask();
+
 protected:
     LONG_PTR DlgProc(int msg, int param1, LONG_PTR param2) override;
+
 private:
-    int _i_filename, _i_src_info, _i_dst_info, _i_remember;
-    int _i_overwrite, _i_skip, _i_cancel;
+    int _i_overwrite, _i_skip, _i_cancel, _i_overwrite_all, _i_skip_all;
+    bool _is_multiple;
 };
 
-// Mirrors far2l's CopyProgress::CreateBackground (copy.cpp:312)
-// branching on Total flag: single-file uses 9 content rows (verb,
-// src, "to", dst, file bar, separator, files, separator, time);
-// multi-file uses 11 (adds " Total <bytes> " separator + total bar).
-class ProgressDialog : protected BaseDialog {
+// --- ProgressDialog ---
+class ProgressDialog : protected BaseDialog
+{
 public:
-    ProgressDialog(ProgressState& state, bool is_move, bool is_multi, bool is_upload);
+    ProgressDialog(ProgressState &state, const std::wstring &title, bool is_multi = false);
     void Show();
+
 protected:
     LONG_PTR DlgProc(int msg, int param1, LONG_PTR param2) override;
+
 private:
-    ProgressState& _state;
-    bool _is_move;
+    ProgressState &_state;
+    std::wstring _title;
     bool _is_multi;
-    bool _is_upload;
     bool _finished = false;
     bool _first_update = true;
-    int _i_verb, _i_from_path, _i_to_path;
-    int _i_progress_bar, _i_percent;
-    int _i_total_bytes = -1, _i_total_bar = -1;  // present only in multi mode
-    int _i_files_processed, _i_time;
+
+    // Dialog control indices (assigned during InitLayout)
+    int _i_title, _i_operation_label, _i_from_path, _i_to_path;
+    int _i_total_bytes, _i_progress_bar, _i_percent, _i_files_processed;
+    int _i_time, _i_cancel;
+    // Multi-mode only: aggregate-bytes bar + percent. -1 in single mode.
+    int _i_total_bar = -1, _i_total_pct = -1;
+
+    // Cached values for change detection
     uint64_t _last_complete = 0, _last_total = 0, _last_count = 0;
-    int _last_file_percent = -1, _last_total_percent = -1;
+    int _last_file_percent = -1;  // Track file percentage changes
+    int _last_total_percent = -1; // Track aggregate percentage changes
     std::wstring _last_from, _last_to;
-    uint64_t _speed = 0;
+
+    // Speed calculation
+    uint64_t _prev_bytes = 0, _speed = 0;
     std::chrono::steady_clock::time_point _prev_ts;
-    void InitLayout();
+
+    void InitLayout(const std::wstring &title);
     void UpdateDialog();
     bool ShowAbortConfirmation();
 };
 
-class ADBDialogs {
-public:
-    static bool AskCopyMove(bool is_move, bool is_upload, std::string& destination,
-                            const std::string& source_name = "", int item_count = 0);
-    static bool AskCreateDirectory(std::string& dir_name);
-    static bool AskInput(const wchar_t* title, const wchar_t* prompt,
-                         const wchar_t* history_name, std::string& input,
-                         const std::string& default_value = "");
-    static bool AskConfirmation(const wchar_t* title, const wchar_t* message);
-    static bool AskWarning(const wchar_t* title, const wchar_t* message);
-    template<typename... Args>
-    static int Message(unsigned int flags, Args&&... extra_lines) {
-        std::vector<std::wstring> storage{ std::wstring(extra_lines)... };
-        std::vector<const wchar_t*> ptrs;
-        ptrs.reserve(storage.size());
-        for (auto& s : storage) ptrs.push_back(s.c_str());
-        return g_Info.Message(g_Info.ModuleNumber, flags, nullptr, ptrs.data(), (int)ptrs.size(), 0);
-    }
-};
-
-class ProgressOperation {
-public:
-    using WorkFunc = std::function<void(ProgressState&)>;
-    ProgressOperation(bool is_move, bool is_multi, bool is_upload);
-    void Run(WorkFunc work_func);
-    bool WasAborted() const { return _state->IsAborting(); }
-    ProgressState& GetState() { return *_state; }
-private:
-    std::shared_ptr<ProgressState> _state;
-    bool _is_move;
-    bool _is_multi;
-    bool _is_upload;
-};
-
 // Mirrors far2l's native shell-delete UI: small centered modal with
-// "Deleting the file or folder" + the current item name (debounced —
-// repainted only when the worker advances to a new item).
+// "Deleting the file or folder" + the current item name, debounced.
 class DeleteProgressDialog : protected BaseDialog {
 public:
     DeleteProgressDialog(ProgressState& state);
@@ -236,7 +215,7 @@ protected:
 private:
     ProgressState& _state;
     bool _finished = false;
-    int _i_filename;
+    int _i_filename = -1;
     std::wstring _last_filename;
     void UpdateDialog();
     bool ShowAbortConfirmation();
@@ -251,4 +230,57 @@ public:
     ProgressState& GetState() { return *_state; }
 private:
     std::shared_ptr<ProgressState> _state;
+};
+
+// --- ADBDialogs: top-level dialog helpers ---
+class ADBDialogs
+{
+public:
+    static bool AskCopyMove(bool is_move, bool is_upload, std::string& destination,
+                            const std::string& source_name = "", int item_count = 0);
+    static bool AskCreateDirectory(std::string& dir_name);
+    static bool AskInput(const wchar_t* title, const wchar_t* prompt,
+                        const wchar_t* history_name, std::string& input,
+                        const std::string& default_value = "");
+    static bool AskConfirmation(const wchar_t* title, const wchar_t* message);
+    static bool AskWarning(const wchar_t* title, const wchar_t* message);
+
+    template<typename... Args>
+    static int Message(unsigned int flags, Args&&... extra_lines) {
+        std::vector<std::wstring> storage{ std::wstring(extra_lines)... };
+        std::vector<const wchar_t*> ptrs;
+        ptrs.reserve(storage.size());
+        for (auto& s : storage)
+            ptrs.push_back(s.c_str());
+        return g_Info.Message(g_Info.ModuleNumber, flags, nullptr, ptrs.data(), (int)ptrs.size(), 0);
+    }
+
+    // Title + body where body is wrapped to fit. Long shell-error
+    // messages can exceed the screen width otherwise.
+    static int MessageWrapped(unsigned int flags,
+                              const std::wstring& title,
+                              const std::wstring& body,
+                              size_t wrap = 70);
+};
+
+// --- ProgressOperation: worker + progress dialog ---
+class ProgressOperation
+{
+public:
+    using WorkFunc = std::function<void(ProgressState&)>;
+
+    // is_multi=true adds the aggregate-bytes bar; single-item omits it.
+    ProgressOperation(const std::wstring& title, bool is_multi = false);
+    ~ProgressOperation();
+
+    void Run(WorkFunc work_func);
+    bool WasAborted() const { return _state->IsAborting(); }
+    ProgressState& GetState() { return *_state; }
+
+private:
+    std::shared_ptr<ProgressState> _state;
+    std::wstring _title;
+    bool _is_multi;
+    std::thread _worker_thread;
+    static constexpr int JOIN_TIMEOUT_MS = 5000; // 5 second timeout for thread join
 };

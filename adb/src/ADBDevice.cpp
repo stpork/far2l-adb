@@ -14,12 +14,8 @@
 #include <fstream>
 #include <chrono>
 #include <cctype>
-#include <dirent.h>
 
-// ============================================================================
-// ADBUtils namespace implementation
-// ============================================================================
-
+// --- ADBUtils ---
 namespace ADBUtils {
 
 std::string ShellQuote(const std::string &value)
@@ -67,10 +63,7 @@ int CheckConnection(bool connected)
 } // namespace ADBUtils
 
 
-// ============================================================================
-// ProgressParser implementation
-// ============================================================================
-
+// --- ProgressParser ---
 ProgressParser::ProgressParser(std::function<void(int)> on_progress, bool debug_log)
     : _on_progress(std::move(on_progress)), _debug_log(debug_log), _last_percent(-1) {}
 
@@ -617,35 +610,11 @@ int ADBDevice::PullDirectory(const std::string &devicePath, const std::string &l
     return TransferItem(devicePath, localPath, false, true, on_progress, abort_check);
 }
 
-// adb push of an empty source directory is a silent no-op — no files transferred,
-// and the destination directory is *not* created. We mkdir on the device only when
-// the local source is empty, so non-empty pushes (the common case) don't add an
-// extra shell roundtrip after the heavy transfer.
-static bool IsLocalDirectoryEmpty(const std::string &path) {
-    DIR* d = opendir(path.c_str());
-    if (!d) return false;
-    bool empty = true;
-    while (auto* ent = readdir(d)) {
-        if (strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0) {
-            empty = false;
-            break;
-        }
-    }
-    closedir(d);
-    return empty;
-}
-
 int ADBDevice::PushDirectory(const std::string &localPath, const std::string &devicePath) {
-    if (IsLocalDirectoryEmpty(localPath)) {
-        return CreateDirectory(devicePath);
-    }
     return TransferItem(localPath, devicePath, true, true);
 }
 
 int ADBDevice::PushDirectory(const std::string &localPath, const std::string &devicePath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check) {
-    if (IsLocalDirectoryEmpty(localPath)) {
-        return CreateDirectory(devicePath);
-    }
     return TransferItem(localPath, devicePath, true, true, on_progress, abort_check);
 }
 
@@ -701,65 +670,57 @@ int ADBDevice::MoveRemote(const std::string &srcDevicePath, const std::string &d
     EnsureConnection();
     if (int err = ADBUtils::CheckConnection(_connected)) return err;
 
-    // Try mv first (atomic within a single FS). On Android, /sdcard is FUSE-mounted
-    // separately from /data*, so mv across them fails with "Invalid cross-device link"
-    // — toybox/busybox mv has no auto cp+rm fallback. Fall back to on-device cp+rm
-    // (still avoids the slow host-roundtrip path).
-    //
-    // mv's stderr is captured (not silenced) so that if the fallback also fails, the
-    // user gets the *real* root cause — a permission/EROFS error from mv would
-    // otherwise be hidden behind a confusing "cp/rm failed" message.
-    std::string sq_src = ADBUtils::ShellQuote(srcDevicePath);
-    std::string sq_dst = ADBUtils::ShellQuote(dstDeviceDir);
+    std::string command = "mv -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDeviceDir);
+    std::string result = RunShellCommand(command);
+    return MutationResultToErrno(LastShellExitCode(), result);
+}
+
+int ADBDevice::CopyRemoteAs(const std::string &srcDevicePath, const std::string &dstDevicePath) {
+    EnsureConnection();
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    // cp -a/cp -r dual fallback to a full destination path (basename
+    // may change). Caller pre-handles overwrite.
     std::string command =
-        "mv_err=$(mv -- " + sq_src + " " + sq_dst + " 2>&1) || {"
-        "  if { cp -a -- " + sq_src + " " + sq_dst + " 2>/dev/null"
-        "       || cp -r -- " + sq_src + " " + sq_dst + "; } && rm -rf -- " + sq_src + "; then :;"
-        "  else [ -n \"$mv_err\" ] && printf 'mv: %s\\n' \"$mv_err\"; false; fi;"
-        "}";
+        "cp -a -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDevicePath) +
+        " 2>/dev/null || cp -r -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDevicePath);
+    std::string result = RunShellCommand(command);
+    return MutationResultToErrno(LastShellExitCode(), result);
+}
+
+int ADBDevice::MoveRemoteAs(const std::string &srcDevicePath, const std::string &dstDevicePath) {
+    EnsureConnection();
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+
+    std::string command = "mv -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDevicePath);
     std::string result = RunShellCommand(command);
     return MutationResultToErrno(LastShellExitCode(), result);
 }
 
 bool ADBDevice::FileExists(const std::string &devicePath) {
-    return StatPath(devicePath).exists;
+    EnsureConnection();
+    if (!_connected) return false;
+
+    std::string command = "test -e " + ADBUtils::ShellQuote(devicePath) + " && echo 1 || echo 0";
+    std::string result = RunShellCommand(command);
+
+    ADBUtils::TrimTrailingNewlines(result);
+    // Also trim spaces
+    while (!result.empty() && result.back() == ' ') {
+        result.pop_back();
+    }
+
+    return result == "1";
 }
 
 bool ADBDevice::IsDirectory(const std::string &devicePath) {
-    return StatPath(devicePath).is_dir;
-}
-
-ADBDevice::PathStat ADBDevice::StatPath(const std::string &devicePath) {
-    PathStat info{false, false, 0, 0};
     EnsureConnection();
-    if (!_connected) return info;
-
-    std::string sq = ADBUtils::ShellQuote(devicePath);
-    // Single roundtrip: kind ("dir"/"file"/"nope") + a second line with
-    // "<size> <mtime>" from `stat -c`. stat failures are silent and we
-    // just keep size/mtime at 0 — the overwrite dialog still renders,
-    // it just shows blanks for the missing metadata.
-    std::string command =
-        "if [ -d " + sq + " ]; then echo dir; "
-        "elif [ -e " + sq + " ]; then echo file; "
-        "else echo nope; fi; "
-        "stat -c '%s %Y' " + sq + " 2>/dev/null || echo '0 0'";
+    if (!_connected) return false;
+    std::string command = "test -d " + ADBUtils::ShellQuote(devicePath) + " && echo 1 || echo 0";
     std::string result = RunShellCommand(command);
     ADBUtils::TrimTrailingNewlines(result);
-    size_t nl = result.find('\n');
-    std::string kind = result.substr(0, nl);
-    while (!kind.empty() && (kind.back() == ' ' || kind.back() == '\r')) kind.pop_back();
-    if (kind == "dir")       { info.exists = true;  info.is_dir = true;  }
-    else if (kind == "file") { info.exists = true;  info.is_dir = false; }
-    if (info.exists && nl != std::string::npos) {
-        unsigned long long sz = 0;
-        long long mt = 0;
-        if (sscanf(result.c_str() + nl + 1, "%llu %lld", &sz, &mt) == 2) {
-            info.size  = static_cast<uint64_t>(sz);
-            info.mtime = static_cast<int64_t>(mt);
-        }
-    }
-    return info;
+    while (!result.empty() && result.back() == ' ') result.pop_back();
+    return result == "1";
 }
 
 ADBDevice::DirectoryInfo ADBDevice::GetDirectoryInfo(const std::string &devicePath) {
@@ -769,9 +730,10 @@ ADBDevice::DirectoryInfo ADBDevice::GetDirectoryInfo(const std::string &devicePa
         return info;
     }
 
-    // One-shot count+size via find+ls (stat -c not portable across BusyBox/toybox); output: "count size".
+    // find ... -exec ls -l {} + (batched, 50-100x faster than \\;);
+    // parse ls -l $5 since stat -c isn't BusyBox-portable.
     std::string command = "find " + ADBUtils::ShellQuote(devicePath) +
-        " -type f -exec ls -l {} \\; 2>/dev/null | awk '{c++;s+=$5}END{print c,s}'";
+        " -type f -exec ls -l {} + 2>/dev/null | awk '{c++;s+=$5}END{print c,s}'";
     std::string result = RunShellCommand(command);
 
     ADBUtils::TrimTrailingNewlines(result);
