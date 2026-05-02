@@ -1,5 +1,6 @@
 brew "cmake"
 brew "libarchive"
+brew "libmtp"
 brew "libnfs"
 brew "libssh"
 brew "neon"

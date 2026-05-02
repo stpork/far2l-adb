@@ -19,6 +19,7 @@ SHAREDSYMBOL void WINAPI SetStartupInfoW(const PluginStartupInfo* Info)
         return;
     }
 
+    MTPLog_Init(Info->ModuleName);
     memcpy(&g_Info, Info, std::min((size_t)Info->StructSize, sizeof(PluginStartupInfo)));
     if (Info->FSF) {
         g_FSF = *(Info->FSF);
@@ -33,24 +34,27 @@ SHAREDSYMBOL void WINAPI GetPluginInfoW(PluginInfo* Info)
     }
 
     Info->StructSize = sizeof(*Info);
+    Info->SysID = 0x4D545050;  // 'MTPP'
     Info->Flags = PF_FULLCMDLINE;
-    Info->DiskMenuStrings = nullptr;
-    Info->DiskMenuStringsNumber = 0;
+
+    // Disk-menu only (Alt+F1/F2); no F9 entry since plugin has no settings.
+    static const wchar_t* s_disk_menu_strings[] = {L"MTP"};
+    Info->DiskMenuStrings = s_disk_menu_strings;
+    Info->DiskMenuStringsNumber = 1;
 
     static const wchar_t* s_menu_strings[] = {L"MTP Plugin"};
-    static const wchar_t* s_config_strings[] = {L"MTP Plugin"};
     static const wchar_t* s_command_prefix = L"mtp";
 
     Info->PluginMenuStrings = s_menu_strings;
     Info->PluginMenuStringsNumber = 1;
-    Info->PluginConfigStrings = s_config_strings;
-    Info->PluginConfigStringsNumber = 1;
+    Info->PluginConfigStrings = nullptr;
+    Info->PluginConfigStringsNumber = 0;
     Info->CommandPrefix = s_command_prefix;
 }
 
 SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int, INT_PTR)
 {
-    DBG("OpenPluginW build_marker=mtp_dbg_v2");
+    DBG("OpenPluginW build_marker=mtp_dbg_v2\n");
     try {
         return reinterpret_cast<HANDLE>(new MTPPlugin());
     } catch (...) {
@@ -60,7 +64,7 @@ SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int, INT_PTR)
 
 SHAREDSYMBOL void WINAPI ClosePluginW(HANDLE hPlugin)
 {
-    DBG("ClosePluginW hPlugin=%p", hPlugin);
+    DBG("ClosePluginW hPlugin=%p\n", hPlugin);
     if (!hPlugin || hPlugin == INVALID_HANDLE_VALUE) {
         return;
     }
@@ -69,7 +73,7 @@ SHAREDSYMBOL void WINAPI ClosePluginW(HANDLE hPlugin)
 
 SHAREDSYMBOL int WINAPI GetFindDataW(HANDLE hPlugin, PluginPanelItem** pPanelItem, int* pItemsNumber, int OpMode)
 {
-    DBG("GetFindDataW hPlugin=%p opmode=0x%x", hPlugin, OpMode);
+    DBG("GetFindDataW hPlugin=%p opmode=0x%x\n", hPlugin, OpMode);
     if (!hPlugin || hPlugin == INVALID_HANDLE_VALUE) {
         return FALSE;
     }
@@ -94,7 +98,7 @@ SHAREDSYMBOL void WINAPI GetOpenPluginInfoW(HANDLE hPlugin, OpenPluginInfo* Info
 
 SHAREDSYMBOL int WINAPI ProcessKeyW(HANDLE hPlugin, int Key, unsigned int ControlState)
 {
-    DBG("ProcessKeyW hPlugin=%p key=%d ctrl=0x%x", hPlugin, Key, ControlState);
+    DBG("ProcessKeyW hPlugin=%p key=%d ctrl=0x%x\n", hPlugin, Key, ControlState);
     if (!hPlugin || hPlugin == INVALID_HANDLE_VALUE) {
         return FALSE;
     }
@@ -111,7 +115,7 @@ SHAREDSYMBOL int WINAPI ProcessEventW(HANDLE hPlugin, int Event, void* Param)
 
 SHAREDSYMBOL int WINAPI SetDirectoryW(HANDLE hPlugin, const wchar_t* Dir, int OpMode)
 {
-    DBG("SetDirectoryW hPlugin=%p dir=%s opmode=0x%x", hPlugin, Dir ? StrWide2MB(Dir).c_str() : "(null)", OpMode);
+    DBG("SetDirectoryW hPlugin=%p dir=%s opmode=0x%x\n", hPlugin, Dir ? StrWide2MB(Dir).c_str() : "(null)", OpMode);
     if (!hPlugin || hPlugin == INVALID_HANDLE_VALUE) {
         return FALSE;
     }

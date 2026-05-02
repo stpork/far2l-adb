@@ -1,8 +1,10 @@
 #include "MTPPlugin.h"
+#include "MTPDialogs.h"
 #include "MTPLog.h"
 
 #include <IntStrConv.h>
 #include <WideMB.h>
+#include <utils.h>
 
 #include <cerrno>
 #include <climits>
@@ -18,12 +20,12 @@ PluginStartupInfo g_Info = {};
 FarStandardFunctions g_FSF = {};
 
 namespace {
-std::string BackendTag(proto::BackendKind kind) {
-    switch (kind) {
-        case proto::BackendKind::MTP: return "MTP";
-        case proto::BackendKind::PTP: return "PTP";
-        default: return "UNKNOWN";
-    }
+using proto::kRootParent;
+
+// Aside-rename suffix for atomic-overwrite. PID-scoped to avoid clashes
+// across plugin instances.
+std::string AsideName(const std::string& base) {
+    return base + ".far2l-tmp." + std::to_string(getpid());
 }
 
 std::string JoinPath(const std::string& base, const std::string& name) {
@@ -32,6 +34,22 @@ std::string JoinPath(const std::string& base, const std::string& name) {
         return base + name;
     }
     return base + "/" + name;
+}
+
+uint64_t LocalRecursiveSize(const std::string& path) {
+    struct stat st{};
+    if (::lstat(path.c_str(), &st) != 0) return 0;
+    if (S_ISREG(st.st_mode)) return static_cast<uint64_t>(st.st_size);
+    if (!S_ISDIR(st.st_mode)) return 0;
+    DIR* d = opendir(path.c_str());
+    if (!d) return 0;
+    uint64_t sum = 0;
+    while (dirent* ent = readdir(d)) {
+        if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) continue;
+        sum += LocalRecursiveSize(path + "/" + ent->d_name);
+    }
+    closedir(d);
+    return sum;
 }
 
 bool RemoveLocalPathRecursively(const std::string& path) {
@@ -175,11 +193,10 @@ uint32_t PackDeviceTriplet(uint8_t bus, uint8_t addr, uint8_t iface) {
            static_cast<uint32_t>(iface);
 }
 
-bool UnpackDeviceTriplet(uint32_t packed, uint8_t& bus, uint8_t& addr, uint8_t& iface) {
+void UnpackDeviceTriplet(uint32_t packed, uint8_t& bus, uint8_t& addr, uint8_t& iface) {
     bus = static_cast<uint8_t>((packed >> 16) & 0xFFu);
     addr = static_cast<uint8_t>((packed >> 8) & 0xFFu);
     iface = static_cast<uint8_t>(packed & 0xFFu);
-    return true;
 }
 
 uint32_t PackDeviceFromKey(const std::string& key) {
@@ -201,34 +218,33 @@ std::string DeviceKeyFromPacked(uint32_t packed) {
     uint8_t bus = 0;
     uint8_t addr = 0;
     uint8_t iface = 0;
-    if (!UnpackDeviceTriplet(packed, bus, addr, iface)) {
-        return std::string();
-    }
+    UnpackDeviceTriplet(packed, bus, addr, iface);
     return std::to_string(static_cast<int>(bus)) + ":" +
            std::to_string(static_cast<int>(addr)) + ":" +
            std::to_string(static_cast<int>(iface));
 }
 }
 
-MTPPlugin::MTPPlugin(const wchar_t* path, bool path_is_standalone_config, int)
-    : _transfer(new proto::TransferManager(nullptr)) {
+MTPPlugin::MTPPlugin(const wchar_t* path, bool path_is_standalone_config, int) {
     if (path && path_is_standalone_config) {
         _standalone_config = path;
     }
     _panel_title = L"MTP/PTP Devices";
-    DBG("MTPPlugin constructed");
+    DBG("MTPPlugin constructed\n");
 }
 
 MTPPlugin::~MTPPlugin() {
-    DBG("MTPPlugin destructed, current_device_key=%s", _current_device_key.c_str());
+    DBG("MTPPlugin destructed, current_device_key=%s\n", _current_device_key.c_str());
     if (_backend) {
-        _backend->Disconnect();
-        _router.Release(_current_device_key);
+        // Drop ref only; backend's dtor disconnects on last shared_ptr
+        // — explicit Disconnect would kill another panel's session.
+        _backend.reset();
+        proto::LibMtpBackend::ReleaseShared(_current_device_key);
     }
 }
 
 int MTPPlugin::GetFindData(PluginPanelItem** panel_items, int* items_number, int) {
-    DBG("GetFindData mode=%d", static_cast<int>(_view_mode));
+    DBG("GetFindData mode=%d\n", static_cast<int>(_view_mode));
     if (!panel_items || !items_number) {
         return FALSE;
     }
@@ -262,41 +278,88 @@ void MTPPlugin::GetOpenPluginInfo(OpenPluginInfo* info) {
     }
 
     info->StructSize = sizeof(OpenPluginInfo);
-    info->Flags = OPIF_SHOWPRESERVECASE | OPIF_USEHIGHLIGHTING | OPIF_ADDDOTS;
+    info->Flags = OPIF_SHOWPRESERVECASE | OPIF_USEHIGHLIGHTING;
     info->HostFile = nullptr;
-    info->CurDir = L"/";
-    info->Format = L"libusb-mtp-ptp";
+    // CurDir feeds Ctrl+F + Copy/Move dialog; "/Internal/Temp/foo" or "/".
+    if (_view_mode == ViewMode::Objects) {
+        std::string rel = BuildPanelRelativePath();
+        if (!rel.empty() && rel.back() == '/') rel.pop_back();
+        _cur_dir_buf = L"/" + StrMB2Wide(rel);
+    } else {
+        _cur_dir_buf = L"/";
+    }
+    info->CurDir = _cur_dir_buf.c_str();
+    info->Format = L"mtp";
     info->PanelTitle = _panel_title.c_str();
     info->InfoLines = nullptr;
     info->DescrFiles = nullptr;
-    info->PanelModesArray = nullptr;
-    info->PanelModesNumber = 0;
     info->StartPanelMode = 0;
     info->StartSortMode = SM_NAME;
     info->StartSortOrder = 0;
     info->KeyBar = nullptr;
     info->ShortcutData = nullptr;
+
+    // Custom Ctrl+0 panel modes — adb-style. One mode per view-state.
+    // The other Ctrl+1..9 stay default (FAR's built-in).
+    static PanelMode devicesMode = {
+        .ColumnTypes        = (wchar_t*)L"N,C0,C1,C2",
+        .ColumnWidths       = (wchar_t*)L"0,0,18,9",
+        .ColumnTitles       = nullptr,
+        .FullScreen         = 0,
+        .DetailedStatus     = 1,
+        .AlignExtensions    = 0,
+        .CaseConversion     = 0,
+        .StatusColumnTypes  = (wchar_t*)L"N,C0,C1,C2",
+        .StatusColumnWidths = (wchar_t*)L"0,0,18,9",
+        .Reserved           = {0, 0}
+    };
+    static const wchar_t* devicesTitles[] = {
+        L"Device", L"Manufacturer", L"Serial", L"VID:PID"
+    };
+    devicesMode.ColumnTitles = (wchar_t**)devicesTitles;
+
+    // Storages and Objects share a "files-like" mode (N + Size).
+    static PanelMode filesMode = {
+        .ColumnTypes        = (wchar_t*)L"N,S",
+        .ColumnWidths       = (wchar_t*)L"0,9",
+        .ColumnTitles       = nullptr,
+        .FullScreen         = 0,
+        .DetailedStatus     = 1,
+        .AlignExtensions    = 0,
+        .CaseConversion     = 0,
+        .StatusColumnTypes  = (wchar_t*)L"N,S",
+        .StatusColumnWidths = (wchar_t*)L"0,9",
+        .Reserved           = {0, 0}
+    };
+    static const wchar_t* filesTitles[] = { L"Name", L"Size" };
+    filesMode.ColumnTitles = (wchar_t**)filesTitles;
+
+    info->PanelModesNumber = 1;
+    info->PanelModesArray = (_view_mode == ViewMode::Devices) ? &devicesMode : &filesMode;
 }
 
 void MTPPlugin::UpdateObjectsPanelTitle() {
-    std::string title = _current_storage_name.empty() ? "Objects" : _current_storage_name;
-    for (const auto& part : _dir_stack) {
-        if (part.empty()) {
-            continue;
-        }
-        if (!title.empty()) {
-            title += "/";
-        }
-        title += part;
+    // "<serial>:<storage>/<path>"; trailing "/" at storage root so it
+    // doesn't read like a filename.
+    std::string title;
+    if (!_current_device_serial.empty()) {
+        title = _current_device_serial + ":";
     }
-    if (title.empty()) {
-        title = "Objects";
+    title += _current_storage_name.empty() ? "Storage" : _current_storage_name;
+    if (_dir_stack.empty()) {
+        title += "/";
+    } else {
+        for (const auto& part : _dir_stack) {
+            if (part.empty()) continue;
+            title += "/";
+            title += part;
+        }
     }
     _panel_title = StrMB2Wide(title);
 }
 
 int MTPPlugin::SetDirectory(const wchar_t* dir, int) {
-    DBG("SetDirectory dir=%s view_mode=%d cur_dev=%s cur_storage=%u cur_parent=%u",
+    DBG("SetDirectory dir=%s view_mode=%d cur_dev=%s cur_storage=%u cur_parent=%u\n",
         dir ? StrWide2MB(dir).c_str() : "(null)",
         static_cast<int>(_view_mode),
         _current_device_key.c_str(),
@@ -313,13 +376,12 @@ int MTPPlugin::SetDirectory(const wchar_t* dir, int) {
         _current_parent = 0;
         _current_storage_name.clear();
         _current_device_name.clear();
+        _current_device_serial.clear();
         _dir_stack.clear();
         _name_token_index.clear();
         if (_backend) {
-            _backend->Disconnect();
-            _router.Release(_current_device_key);
-            _backend.reset();
-            _transfer->SetBackend(nullptr);
+            _backend.reset();  // last-ref drop → backend's dtor disconnects
+            proto::LibMtpBackend::ReleaseShared(_current_device_key);
         }
         _current_device_key.clear();
         _panel_title = L"MTP/PTP Devices";
@@ -327,7 +389,10 @@ int MTPPlugin::SetDirectory(const wchar_t* dir, int) {
     }
 
     if (d == "..") {
-        if (_view_mode == ViewMode::Objects && _current_parent != 0) {
+        // 0 and kRootParent both mean "at storage root" — fall through
+        // to Storages on next ".." instead of two-press behavior.
+        bool at_root = (_current_parent == 0 || _current_parent == kRootParent);
+        if (_view_mode == ViewMode::Objects && !at_root) {
             const uint32_t prev = _current_parent;
             auto st = _backend->Stat(_current_parent);
             if (st.ok) {
@@ -339,7 +404,7 @@ int MTPPlugin::SetDirectory(const wchar_t* dir, int) {
                 _dir_stack.pop_back();
             }
             UpdateObjectsPanelTitle();
-            DBG("SetDirectory back object=%u new_parent=%u", prev, _current_parent);
+            DBG("SetDirectory back object=%u new_parent=%u\n", prev, _current_parent);
             return TRUE;
         }
         if (_view_mode == ViewMode::Objects && _current_storage_id != 0) {
@@ -358,15 +423,20 @@ int MTPPlugin::SetDirectory(const wchar_t* dir, int) {
             _name_token_index.clear();
             _current_storage_name.clear();
             _current_device_name.clear();
+            _current_device_serial.clear();
             _dir_stack.clear();
             if (_backend) {
-                _backend->Disconnect();
-                _router.Release(_current_device_key);
-                _backend.reset();
-                _transfer->SetBackend(nullptr);
+                _backend.reset();  // last-ref drop → backend's dtor disconnects
+                proto::LibMtpBackend::ReleaseShared(_current_device_key);
             }
             _current_device_key.clear();
             _panel_title = L"MTP/PTP Devices";
+            return TRUE;
+        }
+        // ".." at root (Devices view) → close plugin (Esc-equivalent).
+        if (_view_mode == ViewMode::Devices) {
+            DBG("SetDirectory '..' at root → closing plugin\n");
+            g_Info.Control(this, FCTL_CLOSEPLUGIN, 0, 0);
             return TRUE;
         }
         return TRUE;
@@ -374,15 +444,15 @@ int MTPPlugin::SetDirectory(const wchar_t* dir, int) {
 
     auto it = _name_token_index.find(d);
     if (it == _name_token_index.end() || it->second.empty()) {
-        DBG("SetDirectory unresolved dir=%s", d.c_str());
+        DBG("SetDirectory unresolved dir=%s\n", d.c_str());
         return FALSE;
     }
-    DBG("SetDirectory dir=%s token=%s", d.c_str(), it->second.c_str());
+    DBG("SetDirectory dir=%s token=%s\n", d.c_str(), it->second.c_str());
     return EnterByToken(it->second) ? TRUE : FALSE;
 }
 
 int MTPPlugin::ProcessKey(int key, unsigned int control_state) {
-    DBG("ProcessKey key=%d ctrl=0x%x mode=%d", key, control_state, static_cast<int>(_view_mode));
+    DBG("ProcessKey key=%d ctrl=0x%x mode=%d\n", key, control_state, static_cast<int>(_view_mode));
     if (key == VK_F3 && NoControls(control_state)) {
         return ExecuteSelected(OPM_VIEW) ? TRUE : FALSE;
     }
@@ -395,124 +465,443 @@ int MTPPlugin::ProcessKey(int key, unsigned int control_state) {
         }
     }
     if (key == VK_F6 && control_state == PKF_SHIFT) {
-        return RenameSelectedItem() ? TRUE : FALSE;
+        // Always claim; falling through to far2l's ShellCopy on cancel
+        // would show a second dialog the user already dismissed.
+        RenameSelectedItem();
+        return TRUE;
+    }
+    if (key == VK_F5 && control_state == PKF_SHIFT) {
+        // Same rule as Shift+F6 — claim regardless of user-cancel.
+        ShiftF5CopyInPlace();
+        return TRUE;
     }
     return FALSE;
 }
 
-int MTPPlugin::ProcessEvent(int event, void* param) {
-    (void)param;
+int MTPPlugin::ProcessEvent(int /*event*/, void* /*param*/) {
+    return FALSE;
+}
+
+int MTPPlugin::MakeDirectory(const wchar_t** name, int op_mode) {
     if (!_backend || !_backend->IsReady()) {
         return FALSE;
     }
-
-    // Poll transport events on idle redraw cycles to invalidate stale cache on device-side changes.
-    if (event == FE_IDLE) {
-        _backend->PollEvents();
-    }
-    return FALSE;
-}
-
-int MTPPlugin::MakeDirectory(const wchar_t** name, int) {
-    if (!_backend || !_backend->IsReady() || !name || !*name) {
+    if (_view_mode != ViewMode::Objects) {
+        // F7 outside the Objects view doesn't have a meaningful target.
         return FALSE;
     }
 
-    std::string dir = StrWide2MB(*name);
+    std::string dir = (name && *name) ? StrWide2MB(*name) : std::string();
+    if (!(op_mode & OPM_SILENT)) {
+        if (!MTPDialogs::AskCreateDirectory(dir)) {
+            return -1;
+        }
+    } else if (dir.empty()) {
+        return FALSE;
+    }
+
+    DBG("MakeDirectory call: name=%s storage_id=%u parent=%u\n",
+        dir.c_str(), _current_storage_id, _current_parent);
     auto st = _backend->MakeDirectory(dir, _current_storage_id, _current_parent);
     if (!st.ok) {
-        SetErrorFromStatus(st);
-        return FALSE;
+        DBG("MakeDirectory failed code=%d msg=%s\n",
+            static_cast<int>(st.code), st.message.c_str());
+        if (!(op_mode & OPM_SILENT)) {
+            MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+                L"Create directory failed", StrMB2Wide(st.message));
+        }
+        // -1: error already shown; FAR skips its generic dialog.
+        return -1;
     }
+    // No RefreshCache: Galaxy's device-side index lags 50-200ms after
+    // Create_Folder; reopening now would briefly hide the new folder.
+    DBG("MakeDirectory ok name=%s new_handle=%u\n", dir.c_str(), st.value);
+
+    // Member buffer keeps the wchar_t* valid until next call.
+    _last_made_dir = StrMB2Wide(dir);
+    if (name) *name = _last_made_dir.c_str();
     return TRUE;
 }
 
-int MTPPlugin::DeleteFiles(PluginPanelItem* panel_item, int items_number, int) {
+int MTPPlugin::DeleteFiles(PluginPanelItem* panel_item, int items_number, int op_mode) {
     if (!_backend || !_backend->IsReady() || !panel_item || items_number <= 0) {
         return FALSE;
     }
 
+    // Skip the synthetic ".." / "." rows added for navigation — F8 on
+    // ".." was offering to delete it.
+    std::vector<int> deletable;
+    deletable.reserve(items_number);
+    for (int i = 0; i < items_number; ++i) {
+        const wchar_t* n = panel_item[i].FindData.lpwszFileName;
+        if (!n) continue;
+        if (n[0] == L'.' && (n[1] == 0 || (n[1] == L'.' && n[2] == 0))) continue;
+        deletable.push_back(i);
+    }
+    if (deletable.empty()) return -1;
+
+    int folderCount = 0;
+    for (int idx : deletable) {
+        if (panel_item[idx].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ++folderCount;
+    }
+    const int total = static_cast<int>(deletable.size());
+
+    if (!(op_mode & OPM_SILENT)) {
+        // Mirror native ShellConfirmDeletion (delete.cpp).
+        const wchar_t* title = L"Delete";
+        std::wstring prompt, target;
+        if (total == 1) {
+            const bool isFolder = (folderCount == 1);
+            prompt = isFolder ? L"Do you wish to delete the folder"
+                              : L"Do you wish to delete the file";
+            target = panel_item[deletable[0]].FindData.lpwszFileName;
+        } else {
+            prompt = L"Do you wish to delete";
+            target = std::to_wstring(total) + L" item" + (total == 1 ? L"" : L"s");
+        }
+        if (MTPDialogs::Message(FMSG_MB_YESNO, title, prompt, target) != 0) return -1;
+
+        // Native multi-delete second-stage WARNING (delete.cpp:331).
+        if (total > 1) {
+            const wchar_t* items[] = {
+                L"Delete files",
+                L"Do you wish to delete",
+                target.c_str(),
+                L"&All",
+                L"&Cancel"
+            };
+            if (g_Info.Message(g_Info.ModuleNumber, FMSG_WARNING, nullptr,
+                               items, ARRAYSIZE(items), 2) != 0) {
+                return -1;
+            }
+        }
+    }
+
     int okCount = 0;
     int lastErr = 0;
-    for (int i = 0; i < items_number; ++i) {
-        std::string token;
-        if (!ResolvePanelToken(panel_item[i], token)) {
-            continue;
-        }
-        uint32_t handle = 0;
-        if (!ParseObjectToken(token, handle)) {
-            continue;
-        }
 
-        auto st = _backend->Delete(handle, true);
-        if (st.ok) {
-            ++okCount;
-        } else {
-            lastErr = MapErrorToErrno(st);
+    auto worker = [&](ProgressState& st) {
+        st.count_total = static_cast<uint64_t>(total);
+        uint64_t k = 0;
+        for (int idx : deletable) {
+            if (st.ShouldAbort()) break;
+            std::string token;
+            uint32_t handle = 0;
+            if (!ResolvePanelToken(panel_item[idx], token)
+                || !ParseObjectToken(token, handle)) {
+                ++k;
+                continue;
+            }
+            {
+                std::lock_guard<std::mutex> lk(st.mtx_strings);
+                st.current_file = panel_item[idx].FindData.lpwszFileName
+                    ? std::wstring(panel_item[idx].FindData.lpwszFileName)
+                    : std::wstring();
+            }
+            st.is_directory = (panel_item[idx].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            st.count_complete = k++;
+
+            auto on_progress = [&](const std::string& name) {
+                std::lock_guard<std::mutex> lk(st.mtx_strings);
+                st.current_file = StrMB2Wide(name);
+            };
+            auto status = _backend->Delete(handle, true, on_progress);
+            if (status.ok) ++okCount;
+            else lastErr = MapErrorToErrno(status);
         }
+        st.count_complete = static_cast<uint64_t>(total);
+    };
+
+    if (!(op_mode & OPM_SILENT)) {
+        DeleteOperation pop;
+        pop.Run(worker);
+        if (pop.WasAborted() && okCount == 0) return -1;
+    } else {
+        ProgressState dummy;
+        dummy.Reset();
+        worker(dummy);
     }
 
     if (okCount == 0 && lastErr != 0) {
         WINPORT(SetLastError)(lastErr);
     }
+    // No RefreshCache: Galaxy reindex after delete renumbers handles and
+    // invalidates _current_parent, breaking the next F7/F5/F8.
     return okCount > 0 ? TRUE : FALSE;
 }
 
-int MTPPlugin::GetFiles(PluginPanelItem* panel_item, int items_number, int, const wchar_t** dest_path, int) {
-    if (!_backend || !_backend->IsReady() || !_transfer || !panel_item || items_number <= 0 || !dest_path || !dest_path[0]) {
+int MTPPlugin::GetFiles(PluginPanelItem* panel_item, int items_number, int move,
+                        const wchar_t** dest_path, int op_mode) {
+    if (!_backend || !_backend->IsReady() || !panel_item || items_number <= 0
+            || !dest_path || !dest_path[0]) {
         return FALSE;
     }
 
-    const std::string baseDest = StrWide2MB(dest_path[0]);
-    proto::CancellationSource cancelSrc;
+    std::string baseDest = StrWide2MB(dest_path[0]);
 
-    int okCount = 0;
-    int lastErr = 0;
-    for (int i = 0; i < items_number; ++i) {
+    // F3/F4 viewer path: no dialog/progress; quick land at dest_path.
+    if (op_mode & OPM_VIEW) {
+        proto::CancellationSource cancelSrc;
+        if (panel_item[0].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            return FALSE;
+        }
         std::string token;
-        if (!ResolvePanelToken(panel_item[i], token)) {
-            continue;
-        }
-
+        if (!ResolvePanelToken(panel_item[0], token)) return FALSE;
         uint32_t handle = 0;
-        if (!ParseObjectToken(token, handle)) {
-            continue;
-        }
-
+        if (!ParseObjectToken(token, handle)) return FALSE;
         auto st = _backend->Stat(handle);
         if (!st.ok) {
-            lastErr = MapErrorToErrno(st.code);
-            continue;
+            SetErrorFromStatus(proto::Status::Failure(st.code, st.message));
+            return FALSE;
         }
+        std::string localPath = JoinPath(baseDest, st.value.name);
+        auto op = _backend->Download(st.value.handle, localPath,
+                                     [](uint64_t, uint64_t) {}, cancelSrc.Token());
+        if (!op.ok) { SetErrorFromStatus(op); return FALSE; }
+        return TRUE;
+    }
 
-        const std::string localPath = JoinPath(baseDest, st.value.name);
-        proto::Status op;
-        if (st.value.is_dir) {
-            uint64_t done = 0;
-            uint64_t total = 0;
-            op = DownloadRecursive(st.value.storage_id, st.value.handle, localPath, cancelSrc.Token(), done, total);
-        } else {
-            op = _transfer->Download(st.value.handle,
-                                     localPath,
-                                     [](uint64_t, uint64_t) {},
-                                     cancelSrc.Token());
+    if (!(op_mode & OPM_SILENT)) {
+        std::string firstName;
+        if (items_number > 0 && panel_item[0].FindData.lpwszFileName) {
+            firstName = StrWide2MB(panel_item[0].FindData.lpwszFileName);
         }
-
-        if (op.ok) {
-            ++okCount;
-        } else {
-            lastErr = MapErrorToErrno(op);
+        if (!MTPDialogs::AskCopyMove(move != 0, /*is_upload=*/false,
+                                     baseDest, firstName, items_number)) {
+            return -1;
         }
     }
 
-    if (okCount == 0 && lastErr != 0) {
-        WINPORT(SetLastError)(lastErr);
+    // Reroute device-path inputs (".."/"./"/storage-rooted/existing-name)
+    // to in-device copy/move; anything else falls through to host xfer.
+    {
+        const std::string& s = baseDest;
+        bool looks_in_device = false;
+        // Cheap syntactic checks first.
+        if (s == "." || s == "./" || s == ".\\"
+                || s == ".." || s == "../" || s == "..\\"
+                || s.compare(0, 2, "./") == 0
+                || s.compare(0, 2, ".\\") == 0
+                || s.compare(0, 3, "../") == 0
+                || s.compare(0, 3, "..\\") == 0
+                || s.find("/..") != std::string::npos) {
+            looks_in_device = true;
+        }
+        // Storage-rooted: "Internal/...", "External/...", "Card/..." —
+        // first slash-separated component matches storage name.
+        if (!looks_in_device && !_current_storage_name.empty()) {
+            size_t slash = s.find_first_of("/\\");
+            std::string head = (slash == std::string::npos) ? s : s.substr(0, slash);
+            if (head == _current_storage_name) {
+                looks_in_device = true;
+            }
+        }
+        // Single-component "mydir" match an existing folder. Skip when
+        // name has '.' to avoid a USB round-trip on every "foo.txt".
+        if (!looks_in_device && _backend && _backend->IsReady()
+                && s.find_first_of("/\\") == std::string::npos
+                && s.find('.') == std::string::npos
+                && !s.empty()) {
+            auto kids = _backend->ListChildren(_current_storage_id, _current_parent);
+            if (kids.ok) {
+                for (const auto& k : kids.value) {
+                    if (k.is_dir && _backend->NamesEqual(
+                            _current_storage_id, k.name, s)) {
+                        looks_in_device = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (looks_in_device) {
+            // ResolveDestinationFolder treats input as folder-only;
+            // each queued item keeps its own basename in the loop.
+            auto resolved = ResolveDestinationFolder(baseDest);
+            if (!resolved.ok) {
+                MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+                    move ? L"Move failed" : L"Copy failed",
+                    L"Could not resolve destination on device. Check "
+                    L"that all path components exist or can be created.");
+                return FALSE;
+            }
+            return InDeviceCopyMoveTo(panel_item, items_number, move != 0,
+                                      resolved.storage_id, resolved.parent);
+        }
     }
 
+    // Host-fs pre-flight collision (mirrors native WarnCopyDlg).
+    enum DLCollisionAct : uint8_t { DL_PROCEED, DL_OVERWRITE, DL_SKIP };
+    std::vector<DLCollisionAct> dl_decisions(items_number, DL_PROCEED);
+    if (!(op_mode & OPM_SILENT)) {
+        bool overwrite_all = false, skip_all = false;
+        for (int i = 0; i < items_number; ++i) {
+            std::string token;
+            if (!ResolvePanelToken(panel_item[i], token)) continue;
+            uint32_t handle = 0;
+            if (!ParseObjectToken(token, handle)) continue;
+            auto sstat = _backend->Stat(handle);
+            if (!sstat.ok) continue;
+            std::string localPath = JoinPath(baseDest, sstat.value.name);
+            struct stat fs{};
+            if (::stat(localPath.c_str(), &fs) != 0) continue;  // no collision
+            if (overwrite_all) { dl_decisions[i] = DL_OVERWRITE; continue; }
+            if (skip_all)      { dl_decisions[i] = DL_SKIP;      continue; }
+            // Full destination path in dialog (matches native ShellCopy).
+            uint64_t src_show = sstat.value.is_dir
+                ? ComputeRecursiveSize(sstat.value.storage_id, sstat.value.handle)
+                : sstat.value.size;
+            uint64_t dst_show = S_ISDIR(fs.st_mode)
+                ? LocalRecursiveSize(localPath)
+                : static_cast<uint64_t>(fs.st_size);
+            OverwriteDialog dlg(StrMB2Wide(localPath),
+                                src_show, static_cast<int64_t>(sstat.value.mtime_epoch),
+                                dst_show, static_cast<int64_t>(fs.st_mtime));
+            switch (dlg.Ask()) {
+                case OverwriteDialog::OVERWRITE:     dl_decisions[i] = DL_OVERWRITE; break;
+                case OverwriteDialog::SKIP:          dl_decisions[i] = DL_SKIP;      break;
+                case OverwriteDialog::OVERWRITE_ALL: overwrite_all = true; dl_decisions[i] = DL_OVERWRITE; break;
+                case OverwriteDialog::SKIP_ALL:      skip_all = true;      dl_decisions[i] = DL_SKIP;      break;
+                case OverwriteDialog::CANCEL:        return -1;
+            }
+        }
+    }
+
+    proto::CancellationSource cancelSrc;
+    auto cancel_tok = cancelSrc.Token();
+    int okCount = 0;
+    int lastErr = 0;
+    uint64_t bytes_done_so_far = 0;
+
+    // Pre-scan top-level files for an upfront all_total; folder bytes
+    // accumulate during the recursive walk.
+    uint64_t prescanned_total = 0;
+    for (int i = 0; i < items_number; ++i) {
+        std::string token;
+        if (!ResolvePanelToken(panel_item[i], token)) continue;
+        uint32_t handle = 0;
+        if (!ParseObjectToken(token, handle)) continue;
+        auto st = _backend->Stat(handle);
+        if (st.ok) prescanned_total += st.value.size;
+    }
+    DBG("GetFiles: prescanned total=%llu\n", (unsigned long long)prescanned_total);
+
+    auto worker = [&](ProgressState& st) {
+        DBG("GetFiles worker: entered, items=%d\n", items_number);
+        st.count_total = static_cast<uint64_t>(items_number);
+        st.all_total = prescanned_total;
+        {
+            std::lock_guard<std::mutex> lk(st.mtx_strings);
+            st.source_path = _panel_title;
+            st.dest_path = StrMB2Wide(baseDest);
+        }
+
+        for (int i = 0; i < items_number; ++i) {
+            if (st.IsAborting()) { cancelSrc.Cancel(); break; }
+            if (dl_decisions[i] == DL_SKIP) {
+                DBG("GetFiles worker: skipping item %d per overwrite decision\n", i);
+                continue;
+            }
+            std::string token;
+            if (!ResolvePanelToken(panel_item[i], token)) continue;
+            uint32_t handle = 0;
+            if (!ParseObjectToken(token, handle)) continue;
+            auto stat = _backend->Stat(handle);
+            if (!stat.ok) { lastErr = MapErrorToErrno(stat.code); continue; }
+            if (dl_decisions[i] == DL_OVERWRITE) {
+                // Folder Overwrite must wipe host dir or libmtp's
+                // recursive walk silently merges, leaving stale files.
+                if (stat.value.is_dir) {
+                    const std::string hostDir = JoinPath(baseDest, stat.value.name);
+                    struct stat probe{};
+                    if (::stat(hostDir.c_str(), &probe) == 0
+                            && S_ISDIR(probe.st_mode)
+                            && !RemoveLocalPathRecursively(hostDir)) {
+                        // Wipe failed; skip rather than stale-merge.
+                        DBG("Folder Overwrite: wipe of %s failed (errno=%d) — "
+                            "skipping to avoid stale-merge\n",
+                            hostDir.c_str(), errno);
+                        lastErr = errno ? errno : EIO;
+                        continue;
+                    }
+                    DBG("Folder Overwrite: wiped host dir %s\n", hostDir.c_str());
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> lk(st.mtx_strings);
+                st.current_file = StrMB2Wide(stat.value.name);
+            }
+            st.is_directory = stat.value.is_dir;
+            st.file_total = stat.value.size;
+            st.file_complete = 0;
+
+            const std::string localPath = JoinPath(baseDest, stat.value.name);
+            DBG("GetFiles worker: downloading file=%s size=%llu\n",
+                stat.value.name.c_str(), (unsigned long long)stat.value.size);
+            proto::Status op;
+            uint64_t this_item_bytes = 0;
+            if (stat.value.is_dir) {
+                uint64_t done = bytes_done_so_far;
+                uint64_t total = 0;
+                op = DownloadRecursive(stat.value.storage_id, stat.value.handle,
+                                       localPath, cancel_tok, done, total, &st);
+                this_item_bytes = done - bytes_done_so_far;
+            } else {
+                uint64_t before = bytes_done_so_far;
+                op = _backend->Download(stat.value.handle, localPath,
+                    [&st, &cancelSrc, before](uint64_t sent, uint64_t total) {
+                        if (st.IsAborting()) cancelSrc.Cancel();
+                        st.file_complete = sent;
+                        if (total > 0) st.file_total = total;
+                        st.all_complete = before + sent;
+                    }, cancel_tok);
+                this_item_bytes = stat.value.size;
+            }
+            DBG("GetFiles worker: download returned file=%s ok=%d code=%d\n",
+                stat.value.name.c_str(), op.ok ? 1 : 0, static_cast<int>(op.code));
+
+            bytes_done_so_far += this_item_bytes;
+            st.all_complete = bytes_done_so_far;
+            if (op.ok) st.file_complete = st.file_total.load();
+
+            if (op.ok) {
+                ++okCount;
+                if (move) {
+                    auto del = _backend->Delete(stat.value.handle, true);
+                    if (!del.ok) DBG("F6 move: delete-after-copy failed: %s\n", del.message.c_str());
+                }
+            } else if (op.code != proto::ErrorCode::Cancelled) {
+                lastErr = MapErrorToErrno(op);
+            }
+            st.count_complete = static_cast<uint64_t>(i + 1);
+        }
+        DBG("GetFiles worker: exiting, ok=%d\n", okCount);
+    };
+
+    if (!(op_mode & OPM_SILENT)) {
+        // A single directory is still a multi-file operation.
+        bool is_multi = items_number > 1;
+        for (int i = 0; !is_multi && i < items_number; ++i)
+            if (panel_item[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) is_multi = true;
+        // GetFiles is the device→host path: is_upload=false.
+        ProgressOperation pop(move != 0, is_multi, /*is_upload=*/false);
+        // Forward Esc-abort to cancel source so libmtp sees it now,
+        // not on next progress callback.
+        pop.GetState().on_abort = [&cancelSrc]() { cancelSrc.Cancel(); };
+        pop.Run(worker);
+        if (pop.WasAborted() && okCount == 0) return -1;
+    } else {
+        ProgressState dummy;
+        dummy.Reset();
+        worker(dummy);
+    }
+
+    if (okCount == 0 && lastErr != 0) WINPORT(SetLastError)(lastErr);
     return okCount > 0 ? TRUE : FALSE;
 }
 
-int MTPPlugin::PutFiles(PluginPanelItem* panel_item, int items_number, int move, const wchar_t* src_path, int) {
+int MTPPlugin::PutFiles(PluginPanelItem* panel_item, int items_number, int move,
+                        const wchar_t* src_path, int op_mode) {
     if (!_backend || !_backend->IsReady() || !panel_item || items_number <= 0 || !src_path) {
         return FALSE;
     }
@@ -526,37 +915,204 @@ int MTPPlugin::PutFiles(PluginPanelItem* panel_item, int items_number, int move,
         WINPORT(SetLastError)(EINVAL);
         return FALSE;
     }
+    // Dest is fixed at _current_storage_id/_current_parent; synthetic
+    // path string is just for the collision-dialog display.
+    std::string deviceDestDisplay = StrWide2MB(_panel_title);
 
-    proto::CancellationSource cancelSrc;
-    int successCount = 0;
-    int lastErr = 0;
-
-    for (int i = 0; i < items_number; ++i) {
-        if (!panel_item[i].FindData.lpwszFileName) {
-            continue;
+    // We own collision UI (far2l skips WarnCopyDlg for plugin dst).
+    // Delete-then-upload on OVERWRITE; libmtp would otherwise duplicate.
+    enum CollisionAct : uint8_t { ACT_PROCEED, ACT_OVERWRITE, ACT_SKIP };
+    std::vector<CollisionAct> decisions(items_number, ACT_PROCEED);
+    std::map<std::string, proto::ObjectEntry> existing_by_name;
+    if (!(op_mode & OPM_SILENT)) {
+        auto kids = _backend->ListChildren(_current_storage_id, _current_parent);
+        if (kids.ok) {
+            for (const auto& k : kids.value) existing_by_name[k.name] = k;
         }
-        std::string fileName = StrWide2MB(panel_item[i].FindData.lpwszFileName);
-        if (fileName.empty() || fileName == "." || fileName == "..") {
-            continue;
-        }
-
-        std::string localPath = JoinPath(baseSrc, fileName);
-        auto st = _backend->Upload(localPath,
-                                   fileName,
-                                   _current_storage_id,
-                                   _current_parent,
-                                   [](uint64_t, uint64_t) {},
-                                   cancelSrc.Token());
-        if (st.ok) {
-            ++successCount;
-            if (move) {
-                (void)RemoveLocalPathRecursively(localPath);
+        bool overwrite_all = false, skip_all = false;
+        for (int i = 0; i < items_number; ++i) {
+            if (!panel_item[i].FindData.lpwszFileName) continue;
+            std::string fileName = StrWide2MB(panel_item[i].FindData.lpwszFileName);
+            if (fileName.empty() || fileName == "." || fileName == "..") continue;
+            // Case-fold on FAT-class storages; strict on ext4.
+            const proto::ObjectEntry* existing = FindExistingByName(
+                existing_by_name, fileName, _current_storage_id);
+            if (!existing) continue;
+            if (overwrite_all) { decisions[i] = ACT_OVERWRITE; continue; }
+            if (skip_all)      { decisions[i] = ACT_SKIP;      continue; }
+            struct stat fs{};
+            uint64_t src_sz = 0;
+            int64_t  src_mt = 0;
+            std::string srcLocal = JoinPath(baseSrc, fileName);
+            if (::stat(srcLocal.c_str(), &fs) == 0) {
+                src_sz = S_ISDIR(fs.st_mode) ? LocalRecursiveSize(srcLocal)
+                                             : static_cast<uint64_t>(fs.st_size);
+                src_mt = static_cast<int64_t>(fs.st_mtime);
             }
-        } else {
-            lastErr = MapErrorToErrno(st);
+            std::string fullDevicePath = deviceDestDisplay;
+            auto colon = fullDevicePath.find(':');
+            if (colon != std::string::npos) fullDevicePath = fullDevicePath.substr(colon + 1);
+            if (!fullDevicePath.empty() && fullDevicePath.back() != '/') fullDevicePath += '/';
+            fullDevicePath += fileName;
+            uint64_t dst_show = existing->is_dir
+                ? ComputeRecursiveSize(_current_storage_id, existing->handle)
+                : existing->size;
+            OverwriteDialog dlg(StrMB2Wide(fullDevicePath),
+                                src_sz, src_mt,
+                                dst_show, static_cast<int64_t>(existing->mtime_epoch));
+            switch (dlg.Ask()) {
+                case OverwriteDialog::OVERWRITE:     decisions[i] = ACT_OVERWRITE; break;
+                case OverwriteDialog::SKIP:          decisions[i] = ACT_SKIP;      break;
+                case OverwriteDialog::OVERWRITE_ALL: overwrite_all = true; decisions[i] = ACT_OVERWRITE; break;
+                case OverwriteDialog::SKIP_ALL:      skip_all = true;      decisions[i] = ACT_SKIP;      break;
+                case OverwriteDialog::CANCEL:        return -1;
+            }
         }
     }
 
+    proto::CancellationSource cancelSrc;
+    auto cancel_tok = cancelSrc.Token();
+    int successCount = 0;
+    int lastErr = 0;
+    uint64_t bytes_done_so_far = 0;
+
+    // Pre-scan local total so progress is meaningful for dir uploads.
+    std::function<uint64_t(const std::string&)> scanDirBytes;
+    scanDirBytes = [&](const std::string& path) -> uint64_t {
+        uint64_t sum = 0;
+        DIR* d = opendir(path.c_str());
+        if (!d) return 0;
+        struct dirent* ent;
+        while ((ent = readdir(d))) {
+            if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) continue;
+            std::string child = JoinPath(path, ent->d_name);
+            struct stat cs{};
+            if (::lstat(child.c_str(), &cs) != 0) continue;
+            if (S_ISREG(cs.st_mode)) sum += static_cast<uint64_t>(cs.st_size);
+            else if (S_ISDIR(cs.st_mode)) sum += scanDirBytes(child);
+        }
+        closedir(d);
+        return sum;
+    };
+    uint64_t prescanned_total = 0;
+    for (int i = 0; i < items_number; ++i) {
+        if (!panel_item[i].FindData.lpwszFileName) continue;
+        std::string fileName = StrWide2MB(panel_item[i].FindData.lpwszFileName);
+        if (fileName.empty() || fileName == "." || fileName == "..") continue;
+        std::string localPath = JoinPath(baseSrc, fileName);
+        struct stat fs{};
+        if (::stat(localPath.c_str(), &fs) != 0) continue;
+        if (S_ISREG(fs.st_mode) && fs.st_size > 0)
+            prescanned_total += static_cast<uint64_t>(fs.st_size);
+        else if (S_ISDIR(fs.st_mode))
+            prescanned_total += scanDirBytes(localPath);
+    }
+    DBG("PutFiles: prescanned total=%llu\n", (unsigned long long)prescanned_total);
+
+    auto worker = [&](ProgressState& st) {
+        DBG("PutFiles worker: entered, items=%d\n", items_number);
+        st.count_total = static_cast<uint64_t>(items_number);
+        st.all_total = prescanned_total;
+        {
+            std::lock_guard<std::mutex> lk(st.mtx_strings);
+            st.source_path = StrMB2Wide(baseSrc);
+            st.dest_path = StrMB2Wide(deviceDestDisplay);
+        }
+
+        for (int i = 0; i < items_number; ++i) {
+            if (st.IsAborting()) { DBG("PutFiles worker: aborting\n"); cancelSrc.Cancel(); break; }
+            if (!panel_item[i].FindData.lpwszFileName) continue;
+            std::string fileName = StrWide2MB(panel_item[i].FindData.lpwszFileName);
+            if (fileName.empty() || fileName == "." || fileName == "..") continue;
+
+            std::string localPath = JoinPath(baseSrc, fileName);
+            struct stat fs{};
+            uint64_t fsize = 0;
+            if (::stat(localPath.c_str(), &fs) == 0 && fs.st_size > 0) {
+                fsize = static_cast<uint64_t>(fs.st_size);
+            }
+
+            if (decisions[i] == ACT_SKIP) {
+                DBG("PutFiles worker: skipping %s per overwrite decision\n", fileName.c_str());
+                continue;
+            }
+            if (decisions[i] == ACT_OVERWRITE) {
+                const proto::ObjectEntry* existing = FindExistingByName(
+                    existing_by_name, fileName, _current_storage_id);
+                if (existing) {
+                    DBG("PutFiles worker: deleting existing %s handle=%u before upload\n",
+                        fileName.c_str(), existing->handle);
+                    _backend->Delete(existing->handle, /*recursive=*/true);
+                    // Erase by stored key — may differ from fileName on FAT.
+                    existing_by_name.erase(existing->name);
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> lk(st.mtx_strings);
+                st.current_file = StrMB2Wide(fileName);
+            }
+            st.is_directory = (fs.st_mode & S_IFDIR) != 0;
+            st.file_total = fsize;
+            st.file_complete = 0;
+
+            proto::Status upload_status;
+            if (S_ISDIR(fs.st_mode)) {
+                DBG("PutFiles worker: recursive upload dir=%s\n", fileName.c_str());
+                upload_status = UploadRecursive(localPath, fileName,
+                                                _current_storage_id, _current_parent,
+                                                cancel_tok, &cancelSrc, &st, &bytes_done_so_far);
+            } else {
+                DBG("PutFiles worker: uploading file=%s size=%llu\n", fileName.c_str(), (unsigned long long)fsize);
+                uint64_t before = bytes_done_so_far;
+                upload_status = _backend->Upload(localPath, fileName,
+                    _current_storage_id, _current_parent,
+                    [&st, &cancelSrc, before](uint64_t sent, uint64_t total) {
+                        if (st.IsAborting()) cancelSrc.Cancel();
+                        st.file_complete = sent;
+                        if (total > 0) st.file_total = total;
+                        st.all_complete = before + sent;
+                    },
+                    cancel_tok);
+                if (upload_status.ok) {
+                    bytes_done_so_far += fsize;
+                    st.all_complete = bytes_done_so_far;
+                    st.file_complete = fsize;
+                }
+            }
+            DBG("PutFiles worker: upload returned file=%s ok=%d code=%d\n",
+                fileName.c_str(), upload_status.ok ? 1 : 0, static_cast<int>(upload_status.code));
+
+            if (upload_status.ok) {
+                ++successCount;
+                if (move) (void)RemoveLocalPathRecursively(localPath);
+            } else if (upload_status.code != proto::ErrorCode::Cancelled) {
+                lastErr = MapErrorToErrno(upload_status);
+            }
+            st.count_complete = static_cast<uint64_t>(i + 1);
+        }
+        DBG("PutFiles worker: exiting, success=%d\n", successCount);
+    };
+
+    if (!(op_mode & OPM_SILENT)) {
+        // A single directory is still a multi-file operation.
+        bool is_multi = items_number > 1;
+        for (int i = 0; !is_multi && i < items_number; ++i)
+            if (panel_item[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) is_multi = true;
+        // PutFiles is the host→device path: is_upload=true.
+        ProgressOperation pop(move != 0, is_multi, /*is_upload=*/true);
+        // Forward Esc-abort to cancel source so libmtp sees it now.
+        pop.GetState().on_abort = [&cancelSrc]() { cancelSrc.Cancel(); };
+        pop.Run(worker);
+        if (pop.WasAborted() && successCount == 0) return -1;
+    } else {
+        ProgressState dummy;
+        dummy.Reset();
+        worker(dummy);
+    }
+
+    // No RefreshCache: device MTP index lags Send_File_From_File; a
+    // close+reopen would briefly hide the just-uploaded file.
     if (successCount == 0 && lastErr != 0) {
         WINPORT(SetLastError)(lastErr);
     }
@@ -589,7 +1145,7 @@ int MTPPlugin::Execute(PluginPanelItem* panel_item, int items_number, int op_mod
 
     std::string localPath = "/tmp/mtp_view_" + std::to_string(st.value.handle) + "_" + st.value.name;
     proto::CancellationSource cancelSrc;
-    auto dl = _transfer->Download(st.value.handle, localPath, [](uint64_t, uint64_t) {}, cancelSrc.Token());
+    auto dl = _backend->Download(st.value.handle, localPath, [](uint64_t, uint64_t) {}, cancelSrc.Token());
     if (!dl.ok) {
         SetErrorFromStatus(dl);
         return FALSE;
@@ -718,7 +1274,7 @@ PluginPanelItem MTPPlugin::MakeObjectPanelItem(const proto::ObjectEntry& entry,
 bool MTPPlugin::GetSelectedPanelUserData(std::string& out) const {
     out.clear();
     intptr_t size = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, 0);
-    DBG("GetSelectedPanelUserData size=%ld", static_cast<long>(size));
+    DBG("GetSelectedPanelUserData size=%ld\n", static_cast<long>(size));
     if (size < static_cast<intptr_t>(sizeof(PluginPanelItem))) {
         return false;
     }
@@ -730,7 +1286,7 @@ bool MTPPlugin::GetSelectedPanelUserData(std::string& out) const {
 
     memset(item, 0, size + 0x100);
     intptr_t ok = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, reinterpret_cast<LONG_PTR>(item));
-    DBG("GetSelectedPanelUserData fetch_ok=%ld user_data=%llu storage=%llu dev=%llu name=%s",
+    DBG("GetSelectedPanelUserData fetch_ok=%ld user_data=%llu storage=%llu dev=%llu name=%s\n",
         static_cast<long>(ok),
         static_cast<unsigned long long>(item->UserData),
         static_cast<unsigned long long>(item->Reserved[0]),
@@ -739,7 +1295,7 @@ bool MTPPlugin::GetSelectedPanelUserData(std::string& out) const {
     if (ok) {
         (void)ResolvePanelToken(*item, out);
     }
-    DBG("GetSelectedPanelUserData token=%s", out.c_str());
+    DBG("GetSelectedPanelUserData token=%s\n", out.c_str());
     free(item);
     return !out.empty();
 }
@@ -759,7 +1315,7 @@ bool MTPPlugin::GetSelectedPanelFileName(std::string& out) const {
 
     intptr_t ok = g_Info.Control(PANEL_ACTIVE, FCTL_GETSELECTEDPANELITEM, 0, reinterpret_cast<LONG_PTR>(item));
     if (!ok) {
-        DBG("GetSelectedPanelFileName fetch failed");
+        DBG("GetSelectedPanelFileName fetch failed\n");
         free(item);
         return false;
     }
@@ -767,16 +1323,16 @@ bool MTPPlugin::GetSelectedPanelFileName(std::string& out) const {
     if (item->FindData.lpwszFileName) {
         out = StrWide2MB(item->FindData.lpwszFileName);
     }
-    DBG("GetSelectedPanelFileName ok name=%s", out.c_str());
+    DBG("GetSelectedPanelFileName ok name=%s\n", out.c_str());
     free(item);
     return !out.empty();
 }
 
 bool MTPPlugin::EnsureConnected(const std::string& device_key) {
-    DBG("EnsureConnected device_key=%s", device_key.c_str());
+    DBG("EnsureConnected device_key=%s\n", device_key.c_str());
     auto it = _device_binds.find(device_key);
     if (it == _device_binds.end()) {
-        DBG("EnsureConnected missing device bind key=%s", device_key.c_str());
+        DBG("EnsureConnected missing device bind key=%s\n", device_key.c_str());
         return false;
     }
 
@@ -785,77 +1341,76 @@ bool MTPPlugin::EnsureConnected(const std::string& device_key) {
     }
 
     if (_backend) {
-        DBG("EnsureConnected disconnect previous key=%s", _current_device_key.c_str());
-        _backend->Disconnect();
-        _router.Release(_current_device_key);
+        DBG("EnsureConnected drop previous key=%s\n", _current_device_key.c_str());
+        _backend.reset();  // last-ref drop → backend's dtor disconnects
+        proto::LibMtpBackend::ReleaseShared(_current_device_key);
     }
 
-    DBG("EnsureConnected acquire backend kind=%d vid=%04x pid=%04x if=%u ep_in=0x%02x ep_out=0x%02x ep_int=0x%02x",
-        static_cast<int>(it->second.kind),
+    DBG("EnsureConnected acquire backend vid=%04x pid=%04x bus=%d addr=%d\n",
         it->second.candidate.vendor_id,
         it->second.candidate.product_id,
-        it->second.candidate.interface_number,
-        it->second.candidate.endpoint_bulk_in,
-        it->second.candidate.endpoint_bulk_out,
-        it->second.candidate.endpoint_interrupt_in);
-    _backend = _router.Acquire(it->second.candidate, it->second.kind);
+        it->second.candidate.id.bus,
+        it->second.candidate.id.address);
+    _backend = proto::LibMtpBackend::AcquireShared(it->second.candidate);
     if (!_backend) {
-        DBG("EnsureConnected acquire returned null");
+        DBG("EnsureConnected acquire returned null\n");
         return false;
     }
 
     auto st = _backend->Connect();
     if (!st.ok) {
-        DBG("Connect failed code=%d msg=%s", static_cast<int>(st.code), st.message.c_str());
+        DBG("Connect failed code=%d msg=%s\n", static_cast<int>(st.code), st.message.c_str());
         SetErrorFromStatus(st);
         _backend.reset();
         return false;
     }
 
-    DBG("Connect success device_key=%s", device_key.c_str());
+    DBG("Connect success device_key=%s\n", device_key.c_str());
     _current_device_key = device_key;
-    _transfer->SetBackend(_backend);
     return true;
 }
 
 int MTPPlugin::ListDevices(PluginPanelItem** panel_items, int* items_number) {
-    auto devices = _router.EnumerateAndClassify();
+    auto devices = proto::LibMtpBackend::Enumerate();
     if (!devices.ok) {
-        DBG("EnumerateAndClassify failed code=%d msg=%s", static_cast<int>(devices.code), devices.message.c_str());
+        DBG("Enumerate failed code=%d msg=%s\n", static_cast<int>(devices.code), devices.message.c_str());
         WINPORT(SetLastError)(MapErrorToErrno(devices.code));
         return FALSE;
     }
-    DBG("EnumerateAndClassify found=%zu", devices.value.size());
+    DBG("Enumerate found=%zu\n", devices.value.size());
 
     _device_binds.clear();
 
     std::vector<PluginPanelItem> out;
-    out.reserve(devices.value.size());
+    out.reserve(devices.value.size() + 1);
     _name_token_index.clear();
-    for (const auto& p : devices.value) {
+
+    // ".." up-link → SetDirectory("..") → FCTL_CLOSEPLUGIN.
+    out.push_back(MakePanelItem("..", true, 0, 0, 0, 0, 0));
+
+    for (const auto& c : devices.value) {
+        const std::string key = c.id.Key();
         DeviceBind bind;
-        bind.candidate = p.candidate;
-        bind.kind = p.device.backend;
-        _device_binds[p.device.key] = bind;
+        bind.candidate = c;
+        _device_binds[key] = bind;
 
-        std::string name = p.device.product.empty() ? "USB Device" : p.device.product;
-        if (!p.device.serial.empty()) {
-            name += " [" + p.device.serial + "]";
+        std::string name = c.product.empty() ? "USB Device" : c.product;
+        if (!c.serial.empty()) {
+            name += " [" + c.serial + "]";
         }
-        const std::string desc = BackendTag(p.device.backend) + " " +
-                                 (p.device.manufacturer.empty() ? "" : p.device.manufacturer);
+        const std::string desc = std::string("MTP ") +
+                                 (c.manufacturer.empty() ? "" : c.manufacturer);
 
-        std::string token = "DEV|" + p.device.key;
-        const uint32_t packedDev = PackDeviceTriplet(static_cast<uint8_t>(p.candidate.id.bus),
-                                                     static_cast<uint8_t>(p.candidate.id.address),
-                                                     static_cast<uint8_t>(p.candidate.id.interface_number));
-        DBG("ListDevices item name=%s token=%s backend=%d vid=%04x pid=%04x serial=%s",
+        std::string token = "DEV|" + key;
+        const uint32_t packedDev = PackDeviceTriplet(static_cast<uint8_t>(c.id.bus),
+                                                     static_cast<uint8_t>(c.id.address),
+                                                     static_cast<uint8_t>(c.id.interface_number));
+        DBG("ListDevices item name=%s token=%s vid=%04x pid=%04x serial=%s\n",
             name.c_str(),
             token.c_str(),
-            static_cast<int>(p.device.backend),
-            p.device.vendor_id,
-            p.device.product_id,
-            p.device.serial.c_str());
+            c.vendor_id,
+            c.product_id,
+            c.serial.c_str());
         out.push_back(MakePanelItem(name, true, 0, 0, 0, 0, packedDev, desc));
         auto em = _name_token_index.emplace(name, token);
         if (!em.second) {
@@ -881,33 +1436,51 @@ int MTPPlugin::ListDevices(PluginPanelItem** panel_items, int* items_number) {
 
 int MTPPlugin::ListStorages(PluginPanelItem** panel_items, int* items_number) {
     if (!_backend || !_backend->IsReady()) {
-        DBG("ListStorages backend not ready backend=%p", _backend.get());
+        DBG("ListStorages backend not ready backend=%p\n", _backend.get());
         return FALSE;
     }
 
     auto storages = _backend->ListStorages();
     if (!storages.ok) {
-        DBG("ListStorages failed code=%d msg=%s", static_cast<int>(storages.code), storages.message.c_str());
+        DBG("ListStorages failed code=%d msg=%s\n", static_cast<int>(storages.code), storages.message.c_str());
         WINPORT(SetLastError)(MapErrorToErrno(storages.code));
         return FALSE;
     }
-    DBG("ListStorages count=%zu", storages.value.size());
+    DBG("ListStorages count=%zu\n", storages.value.size());
 
     std::vector<PluginPanelItem> out;
-    out.reserve(storages.value.size());
+    out.reserve(storages.value.size() + 1);
     const uint32_t packedDev = PackDeviceFromKey(_current_device_key);
     _name_token_index.clear();
+    out.push_back(MakePanelItem("..", true, 0, 0, 0, 0, packedDev));
+    // Compact "Internal"/"External" labels (verbose StorageDescription
+    // goes in the description column); duplicates get "...2", "...3".
+    int internal_seq = 0, external_seq = 0, unknown_seq = 0;
     for (const auto& s : storages.value) {
-        std::string name = s.description.empty() ? ("Storage " + std::to_string(s.id)) : s.description;
+        std::string name;
+        switch (s.kind) {
+            case proto::StorageKind::Internal:
+                name = (++internal_seq == 1) ? "Internal"
+                                             : "Internal " + std::to_string(internal_seq);
+                break;
+            case proto::StorageKind::External:
+                name = (++external_seq == 1) ? "External"
+                                             : "External " + std::to_string(external_seq);
+                break;
+            default:
+                name = (++unknown_seq == 1) ? "Storage"
+                                            : "Storage " + std::to_string(unknown_seq);
+                break;
+        }
         std::string token = "STO|" + std::to_string(s.id);
-        DBG("ListStorages item id=%u name=%s volume=%s free=%llu cap=%llu token=%s",
-            s.id,
-            name.c_str(),
-            s.volume.c_str(),
+        DBG("ListStorages item id=%u name=%s desc=%s volume=%s kind=%d free=%llu cap=%llu token=%s\n",
+            s.id, name.c_str(), s.description.c_str(), s.volume.c_str(),
+            static_cast<int>(s.kind),
             static_cast<unsigned long long>(s.free_bytes),
             static_cast<unsigned long long>(s.max_capacity),
             token.c_str());
-        out.push_back(MakePanelItem(name, true, s.max_capacity, 0, 0, s.id, packedDev, s.volume));
+        // Description column carries StorageDescription; primary label is name.
+        out.push_back(MakePanelItem(name, true, s.max_capacity, 0, 0, s.id, packedDev, s.description));
         auto em = _name_token_index.emplace(name, token);
         if (!em.second) {
             em.first->second.clear();
@@ -928,7 +1501,7 @@ int MTPPlugin::ListStorages(PluginPanelItem** panel_items, int* items_number) {
 
 int MTPPlugin::ListObjects(PluginPanelItem** panel_items, int* items_number) {
     if (!_backend || !_backend->IsReady() || _current_storage_id == 0) {
-        DBG("ListObjects precondition failed backend=%p ready=%d storage=%u parent=%u",
+        DBG("ListObjects precondition failed backend=%p ready=%d storage=%u parent=%u\n",
             _backend.get(),
             (_backend && _backend->IsReady()) ? 1 : 0,
             _current_storage_id,
@@ -938,20 +1511,21 @@ int MTPPlugin::ListObjects(PluginPanelItem** panel_items, int* items_number) {
 
     auto children = _backend->ListChildren(_current_storage_id, _current_parent);
     if (!children.ok) {
-        DBG("ListChildren failed storage=%u parent=%u code=%d msg=%s",
+        DBG("ListChildren failed storage=%u parent=%u code=%d msg=%s\n",
             _current_storage_id, _current_parent, static_cast<int>(children.code), children.message.c_str());
         WINPORT(SetLastError)(MapErrorToErrno(children.code));
         return FALSE;
     }
-    DBG("ListChildren storage=%u parent=%u count=%zu", _current_storage_id, _current_parent, children.value.size());
+    DBG("ListChildren storage=%u parent=%u count=%zu\n", _current_storage_id, _current_parent, children.value.size());
 
     std::vector<PluginPanelItem> out;
-    out.reserve(children.value.size());
+    out.reserve(children.value.size() + 1);
     const uint32_t packedDev = PackDeviceFromKey(_current_device_key);
     _name_token_index.clear();
+    out.push_back(MakePanelItem("..", true, 0, 0, 0, 0, packedDev));
     for (const auto& e : children.value) {
         std::string token = "OBJ|" + std::to_string(e.handle);
-        DBG("ListObjects item handle=%u parent=%u storage=%u dir=%d size=%llu name=%s token=%s",
+        DBG("ListObjects item handle=%u parent=%u storage=%u dir=%d size=%llu name=%s token=%s\n",
             e.handle,
             e.parent,
             e.storage_id,
@@ -979,7 +1553,7 @@ int MTPPlugin::ListObjects(PluginPanelItem** panel_items, int* items_number) {
 }
 
 bool MTPPlugin::ParseStorageToken(const std::string& token, uint32_t& storage_id) const {
-    if (token.rfind("STO|", 0) != 0) {
+    if (!StrStartsFrom(token, "STO|")) {
         return false;
     }
     try {
@@ -991,7 +1565,7 @@ bool MTPPlugin::ParseStorageToken(const std::string& token, uint32_t& storage_id
 }
 
 bool MTPPlugin::ParseObjectToken(const std::string& token, uint32_t& handle) const {
-    if (token.rfind("OBJ|", 0) != 0) {
+    if (!StrStartsFrom(token, "OBJ|")) {
         return false;
     }
     try {
@@ -1075,6 +1649,7 @@ int MTPPlugin::MapErrorToErrno(proto::ErrorCode code) const {
 
 void MTPPlugin::SetErrorFromStatus(const proto::Status& st) const {
     WINPORT(SetLastError)(MapErrorToErrno(st));
+    _last_error_message = st.message;
 }
 
 bool MTPPlugin::PromptInput(const wchar_t* title,
@@ -1110,49 +1685,845 @@ void MTPPlugin::RefreshPanel() const {
     g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, 0);
 }
 
+MTPPlugin::DirResolution MTPPlugin::ResolveDestinationFolder(const std::string& input) {
+    DirResolution out;
+    out.storage_id = _current_storage_id;
+    out.parent = _current_parent;
+    if (input.empty()) { out.ok = true; return out; }
+
+    std::vector<std::string> parts;
+    std::string cur;
+    for (char c : input) {
+        if (c == '/' || c == '\\') {
+            if (!cur.empty()) parts.push_back(std::move(cur));
+            cur.clear();
+        } else {
+            cur.push_back(c);
+        }
+    }
+    if (!cur.empty()) parts.push_back(std::move(cur));
+
+    // Storage-rooted: leading "Internal/..." walks from storage root.
+    if (!parts.empty() && !_current_storage_name.empty()
+            && parts.front() == _current_storage_name) {
+        out.parent = kRootParent;
+        parts.erase(parts.begin());
+    }
+
+    for (const auto& p : parts) {
+        if (p == "..") {
+            if (out.parent == 0 || out.parent == kRootParent) return out;
+            auto st = _backend->Stat(out.parent);
+            if (!st.ok) return out;
+            out.parent = (st.value.parent == 0) ? kRootParent : st.value.parent;
+        } else if (p == "." || p.empty()) {
+            // skip
+        } else {
+            auto kids = _backend->ListChildren(out.storage_id, out.parent);
+            if (!kids.ok) return out;
+            bool found = false;
+            for (const auto& k : kids.value) {
+                if (k.is_dir && _backend->NamesEqual(out.storage_id, k.name, p)) {
+                    out.parent = k.handle;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                // Auto-mkdir missing component (matches native far2l).
+                auto md = _backend->MakeDirectory(p, out.storage_id, out.parent);
+                if (!md.ok) return out;
+                out.parent = md.value;
+            }
+        }
+    }
+    out.ok = true;
+    return out;
+}
+
+std::string MTPPlugin::BuildPanelRelativePath() const {
+    // "<storage>/<dir>/<dir>/" for ShiftF5/F6 prompt prefills.
+    std::string out = _current_storage_name.empty()
+        ? std::string("Storage") : _current_storage_name;
+    for (const auto& part : _dir_stack) {
+        if (part.empty()) continue;
+        out += "/";
+        out += part;
+    }
+    out += "/";
+    return out;
+}
+
+const proto::ObjectEntry* MTPPlugin::FindExistingByName(
+        const std::map<std::string, proto::ObjectEntry>& m,
+        const std::string& name, uint32_t storage_id) const {
+    auto it = m.find(name);  // strict (works on both fs types)
+    if (it != m.end()) return &it->second;
+    if (!_backend) return nullptr;
+    // Case-fold scan only on FAT-class storages.
+    if (!_backend->StorageIsCaseInsensitive(storage_id)) return nullptr;
+    for (const auto& kv : m) {
+        if (_backend->NamesEqual(storage_id, kv.first, name)) {
+            return &kv.second;
+        }
+    }
+    return nullptr;
+}
+
+uint64_t MTPPlugin::ComputeRecursiveSize(uint32_t storage_id, uint32_t handle, int depth) {
+    // Bounded walk for the Overwrite dialog hint — partial sums are fine.
+    if (!_backend || depth > 8) return 0;
+    auto kids = _backend->ListChildren(storage_id, handle);
+    if (!kids.ok) return 0;
+    uint64_t sum = 0;
+    int seen = 0;
+    for (const auto& k : kids.value) {
+        if (++seen > 2000) break;
+        if (k.is_dir) sum += ComputeRecursiveSize(k.storage_id, k.handle, depth + 1);
+        else sum += k.size;
+    }
+    return sum;
+}
+
+int MTPPlugin::InDeviceCopyMoveTo(PluginPanelItem* panel_item, int items_number,
+                                   bool move, uint32_t dst_storage, uint32_t dst_parent) {
+    DBG("InDeviceCopyMoveTo: items=%d move=%d dst_storage=%u dst_parent=%u\n",
+        items_number, move ? 1 : 0, dst_storage, dst_parent);
+
+    // Pre-list destination folder for collision detection.
+    std::map<std::string, proto::ObjectEntry> dst_existing;
+    {
+        auto kids = _backend->ListChildren(dst_storage, dst_parent);
+        if (kids.ok) {
+            for (const auto& k : kids.value) dst_existing[k.name] = k;
+        }
+    }
+
+    struct Item { uint32_t handle; proto::ObjectEntry stat; bool skip = false; bool overwrite = false; };
+    std::vector<Item> work;
+    work.reserve(items_number);
+    bool overwrite_all = false, skip_all = false;
+    for (int i = 0; i < items_number; ++i) {
+        std::string token;
+        if (!ResolvePanelToken(panel_item[i], token)) continue;
+        uint32_t h = 0;
+        if (!ParseObjectToken(token, h)) continue;
+        auto stat = _backend->Stat(h);
+        if (!stat.ok || stat.value.name == "." || stat.value.name == "..") continue;
+
+        Item it{h, stat.value, false, false};
+        // Case-aware on FAT; strict on ext4.
+        const proto::ObjectEntry* existing = FindExistingByName(
+            dst_existing, stat.value.name, dst_storage);
+        if (existing && existing->handle != h) {
+            if (skip_all) it.skip = true;
+            else if (overwrite_all) it.overwrite = true;
+            else {
+                uint64_t src_show = stat.value.is_dir
+                    ? ComputeRecursiveSize(stat.value.storage_id, stat.value.handle)
+                    : stat.value.size;
+                uint64_t dst_show = existing->is_dir
+                    ? ComputeRecursiveSize(existing->storage_id, existing->handle)
+                    : existing->size;
+                OverwriteDialog dlg(StrMB2Wide(stat.value.name),
+                                    src_show,
+                                    static_cast<int64_t>(stat.value.mtime_epoch),
+                                    dst_show,
+                                    static_cast<int64_t>(existing->mtime_epoch));
+                switch (dlg.Ask()) {
+                    case OverwriteDialog::OVERWRITE:     it.overwrite = true; break;
+                    case OverwriteDialog::SKIP:          it.skip = true; break;
+                    case OverwriteDialog::OVERWRITE_ALL: overwrite_all = true; it.overwrite = true; break;
+                    case OverwriteDialog::SKIP_ALL:      skip_all = true; it.skip = true; break;
+                    case OverwriteDialog::CANCEL:        return -1;
+                }
+            }
+        }
+        work.push_back(std::move(it));
+    }
+
+    // First pass: device-side primitive with aside-rename overwrite.
+    // Items returning Unsupported queue for host fallback.
+    std::vector<HostFallbackItem> fallback;
+    size_t first_pass_ok = 0;
+    proto::Status hard_err = proto::OkStatus();
+    auto first_pass_worker = [&](ProgressState& pst) {
+        pst.count_total = static_cast<uint64_t>(work.size());
+        uint64_t k = 0;
+        for (auto& it : work) {
+            if (pst.IsAborting()) break;
+            if (it.skip) { ++k; continue; }
+            {
+                std::lock_guard<std::mutex> lk(pst.mtx_strings);
+                pst.current_file = StrMB2Wide(it.stat.name);
+            }
+            pst.is_directory = it.stat.is_dir;
+            pst.count_complete = k++;
+
+            uint32_t aside_handle = 0;
+            if (it.overwrite) {
+                const std::string aside = AsideName(it.stat.name);
+                auto rn = _backend->Rename(dst_existing[it.stat.name].handle, aside);
+                if (rn.ok) aside_handle = dst_existing[it.stat.name].handle;
+                else _backend->Delete(dst_existing[it.stat.name].handle, /*recursive=*/true);
+                dst_existing.erase(it.stat.name);
+            }
+
+            // Always try the primitive — capability advertising is
+            // unreliable (Galaxy under-reports pre-Allow); fallback below.
+            proto::Status st;
+            if (move) {
+                st = _backend->MoveObject(it.handle, dst_storage, dst_parent);
+            } else {
+                auto cp = _backend->CopyObject(it.handle, dst_storage, dst_parent);
+                st = cp.ok ? proto::OkStatus()
+                           : proto::Status::Failure(cp.code, cp.message, cp.retryable);
+            }
+
+            if (st.ok) {
+                ++first_pass_ok;
+                if (aside_handle) _backend->Delete(aside_handle, /*recursive=*/true);
+                continue;
+            }
+            if (aside_handle) _backend->Rename(aside_handle, it.stat.name);
+
+            if (st.code == proto::ErrorCode::Unsupported) {
+                DBG("InDeviceCopyMoveTo: %s unsupported, queuing for host fallback name=%s\n",
+                    move ? "MoveObject" : "CopyObject", it.stat.name.c_str());
+                if (it.overwrite) {
+                    auto kids = _backend->ListChildren(dst_storage, dst_parent);
+                    if (kids.ok) {
+                        for (const auto& k2 : kids.value) {
+                            if (k2.name == it.stat.name) {
+                                _backend->Delete(k2.handle, /*recursive=*/true);
+                                break;
+                            }
+                        }
+                    }
+                }
+                fallback.push_back({it.handle, it.stat, dst_storage, dst_parent, it.stat.name});
+                continue;
+            }
+            DBG("InDeviceCopyMoveTo failed handle=%u code=%d msg=%s\n",
+                it.handle, static_cast<int>(st.code), st.message.c_str());
+            hard_err = st;
+            break;
+        }
+        pst.count_complete = static_cast<uint64_t>(work.size());
+    };
+    {
+        bool fp_multi = work.size() > 1;
+        for (size_t i = 0; !fp_multi && i < work.size(); ++i)
+            if (work[i].stat.is_dir) fp_multi = true;
+        ProgressOperation fp_pop(/*is_move=*/move, /*is_multi=*/fp_multi, /*is_upload=*/false);
+        fp_pop.Run(first_pass_worker);
+        if (fp_pop.WasAborted() && first_pass_ok == 0 && fallback.empty()) return -1;
+    }
+    if (!hard_err.ok) {
+        SetErrorFromStatus(hard_err);
+        MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+            move ? L"Move failed" : L"Copy failed",
+            StrMB2Wide(hard_err.message));
+        return FALSE;
+    }
+
+    size_t fallback_ok = 0;
+    if (!fallback.empty()) {
+        DBG("InDeviceCopyMoveTo: host-mediated fallback for %zu item(s)\n", fallback.size());
+        auto fb = RunHostFallbackBatch(fallback, move, &fallback_ok);
+        if (!fb.ok && fb.code != proto::ErrorCode::Cancelled && fallback_ok == 0) {
+            SetErrorFromStatus(fb);
+            MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+                move ? L"Move failed" : L"Copy failed",
+                StrMB2Wide(fb.message));
+            return FALSE;
+        }
+    }
+
+    g_Info.Control(PANEL_ACTIVE, FCTL_CLEARSELECTION, 0, 0);
+    g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
+    g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, 0);
+    DBG("InDeviceCopyMoveTo: done first_pass_ok=%zu fallback_ok=%zu\n",
+        first_pass_ok, fallback_ok);
+    return (first_pass_ok + fallback_ok) > 0 ? TRUE : FALSE;
+}
+
+MTPPlugin::PathResolution MTPPlugin::ResolveNewNamePath(const std::string& input,
+                                                        const std::string& src_name,
+                                                        bool auto_create_dirs,
+                                                        uint32_t base_storage_id,
+                                                        uint32_t base_parent,
+                                                        const std::string& base_storage_name) {
+    // Caller-supplied base for cross-panel; active panel by default.
+    const uint32_t ctx_storage = base_storage_id ? base_storage_id : _current_storage_id;
+    const uint32_t ctx_parent  = base_storage_id ? base_parent     : _current_parent;
+    const std::string& ctx_storage_name =
+        base_storage_id ? base_storage_name : _current_storage_name;
+    PathResolution out;
+    out.storage_id = ctx_storage;
+    out.parent = ctx_parent;
+    if (input.empty()) return out;
+
+    // Trailing slash → destination is a folder; basename = src_name.
+    const bool trailing_sep = (input.back() == '/' || input.back() == '\\');
+
+    std::vector<std::string> parts;
+    std::string cur;
+    for (char c : input) {
+        if (c == '/' || c == '\\') {
+            if (!cur.empty()) parts.push_back(std::move(cur));
+            cur.clear();
+        } else {
+            cur.push_back(c);
+        }
+    }
+    if (!cur.empty()) parts.push_back(std::move(cur));
+    if (parts.empty()) return out;
+
+    // Storage-rooted: leading "Internal/..."/"External/..." walks from
+    // storage root, so prompt prefills round-trip cleanly.
+    if (!parts.empty() && !ctx_storage_name.empty()
+            && parts.front() == ctx_storage_name) {
+        out.parent = kRootParent;  // walk from storage root
+        parts.erase(parts.begin());
+        if (parts.empty()) {
+            // Bare "Internal" → storage root, basename = src_name.
+            if (src_name.empty()) return out;
+            out.basename = src_name;
+            out.ok = true;
+            return out;
+        }
+    }
+
+    // 1=handled, 0=not dot-special, -1=can't (e.g. ".." at root).
+    int dotdot_depth = 0;
+    constexpr int kMaxDotDotDepth = 64;  // pathological / cyclic device guard
+    auto consume_dot_dot_dot = [&](const std::string& p) -> int {
+        if (p == "..") {
+            if (out.parent == 0 || out.parent == kRootParent) return -1;
+            if (++dotdot_depth > kMaxDotDotDepth) return -1;  // cycle break
+            auto st = _backend->Stat(out.parent);
+            if (!st.ok) return -1;
+            out.parent = (st.value.parent == 0) ? kRootParent : st.value.parent;
+            return 1;
+        }
+        if (p == "." || p.empty()) return 1;
+        return 0;
+    };
+
+    auto walk_into_dir = [&](const std::string& p) -> bool {
+        auto kids = _backend->ListChildren(out.storage_id, out.parent);
+        if (!kids.ok) return false;
+        for (const auto& k : kids.value) {
+            if (k.is_dir && _backend->NamesEqual(out.storage_id, k.name, p)) {
+                out.parent = k.handle;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    auto create_or_walk = [&](const std::string& p) -> bool {
+        if (walk_into_dir(p)) return true;
+        if (!auto_create_dirs) return false;
+        auto md = _backend->MakeDirectory(p, out.storage_id, out.parent);
+        if (!md.ok) return false;
+        out.parent = md.value;
+        return true;
+    };
+
+    // Walk all parts except last; auto-create intermediates if allowed.
+    for (size_t i = 0; i + 1 < parts.size(); ++i) {
+        int r = consume_dot_dot_dot(parts[i]);
+        if (r == 1) continue;
+        if (r == -1) return out;
+        if (!create_or_walk(parts[i])) return out;
+    }
+
+    const std::string& last = parts.back();
+    int last_special = consume_dot_dot_dot(last);
+    if (last_special == -1) return out;
+
+    // ".." / "." / trailing-slash → folder-only target.
+    if (last_special == 1 || trailing_sep) {
+        // Trailing slash on a real name: walk/create into it.
+        if (trailing_sep && last != "." && last != ".." && !last.empty()) {
+            if (!create_or_walk(last)) return out;
+        }
+        if (src_name.empty()) return out;  // caller didn't tell us the source name
+        out.basename = src_name;
+        out.ok = true;
+        return out;
+    }
+
+    // Existing dir as last component → "into temp/" not "rename to temp".
+    {
+        auto kids = _backend->ListChildren(out.storage_id, out.parent);
+        if (kids.ok) {
+            for (const auto& k : kids.value) {
+                if (k.is_dir && _backend->NamesEqual(out.storage_id, k.name, last)) {
+                    if (src_name.empty()) return out;
+                    out.parent = k.handle;
+                    out.basename = src_name;
+                    out.ok = true;
+                    return out;
+                }
+            }
+        }
+    }
+
+    // Last component is a new basename (rename / new file name).
+    if (last == "." || last == "..") return out;  // shouldn't reach here, but be safe
+    out.basename = last;
+    out.ok = !out.basename.empty();
+    return out;
+}
+
+bool MTPPlugin::ShiftF5CopyInPlace() {
+    if (!_backend || !_backend->IsReady() || _view_mode != ViewMode::Objects) {
+        return false;
+    }
+
+    // Gather selected items, falling back to current.
+    auto getItemByCmd = [&](int cmd, int idx, PluginPanelItem& out, std::vector<uint8_t>& buf) -> bool {
+        intptr_t sz = g_Info.Control(PANEL_ACTIVE, cmd, idx, 0);
+        if (sz < static_cast<intptr_t>(sizeof(PluginPanelItem))) return false;
+        buf.assign(static_cast<size_t>(sz + 0x100), 0);
+        auto* item = reinterpret_cast<PluginPanelItem*>(buf.data());
+        intptr_t ok = g_Info.Control(PANEL_ACTIVE, cmd, idx, reinterpret_cast<LONG_PTR>(item));
+        if (!ok) return false;
+        out = *item;
+        return true;
+    };
+
+    PanelInfo pi = {};
+    g_Info.Control(PANEL_ACTIVE, FCTL_GETPANELINFO, 0, reinterpret_cast<LONG_PTR>(&pi));
+
+    std::vector<uint32_t> handles;
+    if (pi.SelectedItemsNumber > 0) {
+        for (int i = 0; i < pi.SelectedItemsNumber; ++i) {
+            PluginPanelItem item = {};
+            std::vector<uint8_t> buf;
+            if (!getItemByCmd(FCTL_GETSELECTEDPANELITEM, i, item, buf)) continue;
+            std::string token;
+            if (!ResolvePanelToken(item, token)) continue;
+            uint32_t h = 0;
+            if (!ParseObjectToken(token, h)) continue;
+            auto stat = _backend->Stat(h);
+            if (!stat.ok || stat.value.name == "." || stat.value.name == "..") continue;
+            handles.push_back(h);
+        }
+    } else {
+        PluginPanelItem item = {};
+        std::vector<uint8_t> buf;
+        if (getItemByCmd(FCTL_GETCURRENTPANELITEM, 0, item, buf)) {
+            std::string token;
+            if (ResolvePanelToken(item, token)) {
+                uint32_t h = 0;
+                if (ParseObjectToken(token, h)) {
+                    auto stat = _backend->Stat(h);
+                    if (stat.ok && stat.value.name != "." && stat.value.name != "..") {
+                        handles.push_back(h);
+                    }
+                }
+            }
+        }
+    }
+    if (handles.empty()) return false;
+
+    const bool multi = handles.size() > 1;
+
+    uint32_t dst_storage = _current_storage_id;
+    uint32_t dst_parent  = _current_parent;
+
+    // Single: prefill "<path>/<name>.copy"; multi: "<path>/" folder-only.
+    // Same-folder multi auto-suffixes ".copy" per item to avoid clashes.
+    std::string single_new_name;
+    {
+        std::string prefill;
+        std::string resolve_src_name;
+        if (multi) {
+            prefill = BuildPanelRelativePath();
+            resolve_src_name = "_";  // placeholder; per-item loop uses real names.
+        } else {
+            auto stat = _backend->Stat(handles[0]);
+            if (!stat.ok) return false;
+            prefill = BuildPanelRelativePath() + stat.value.name + ".copy";
+            resolve_src_name = stat.value.name;
+        }
+        std::string typed;
+        if (!MTPDialogs::AskInput(L"Copy", L"Copy to:", L"MTP_Copy",
+                                   typed, prefill)) {
+            return true;  // user cancelled
+        }
+        if (typed.empty()) return true;
+        auto resolved = ResolveNewNamePath(
+            typed, resolve_src_name, /*auto_create_dirs=*/true);
+        if (!resolved.ok) {
+            MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+                L"Copy failed",
+                L"Could not resolve destination path. Use ../ for parent or subdir/ for descent.");
+            return true;
+        }
+        dst_storage = resolved.storage_id;
+        dst_parent  = resolved.parent;
+        if (!multi) single_new_name = resolved.basename;
+    }
+    // Multi-select: ".copy" suffix when dst == src folder, else
+    // original names. Per-item loop below branches on this flag.
+    const bool same_dir_as_source = (dst_storage == _current_storage_id
+                                     && dst_parent  == _current_parent);
+
+    // Pre-list the destination folder for collision detection.
+    std::map<std::string, proto::ObjectEntry> dst_existing;
+    {
+        auto kids = _backend->ListChildren(dst_storage, dst_parent);
+        if (kids.ok) {
+            for (const auto& k : kids.value) dst_existing[k.name] = k;
+        }
+    }
+
+    struct Item {
+        uint32_t handle;
+        proto::ObjectEntry stat;
+        std::string new_name;
+        bool skip = false;
+        bool overwrite = false;
+    };
+    std::vector<Item> work;
+    work.reserve(handles.size());
+    {
+        bool overwrite_all = false, skip_all = false;
+        for (uint32_t h : handles) {
+            auto stat = _backend->Stat(h);
+            if (!stat.ok) continue;
+            // single: resolver-supplied basename; multi: source names
+            // (".copy" suffix when dst == source dir to avoid collision).
+            std::string new_name;
+            if (!multi) {
+                new_name = single_new_name.empty() ? stat.value.name : single_new_name;
+            } else if (same_dir_as_source) {
+                new_name = stat.value.name + ".copy";
+            } else {
+                new_name = stat.value.name;
+            }
+            Item it{h, stat.value, new_name};
+            const proto::ObjectEntry* existing = FindExistingByName(
+                dst_existing, new_name, dst_storage);
+            if (existing) {
+                if (skip_all)      { it.skip = true; }
+                else if (overwrite_all) { it.overwrite = true; }
+                else {
+                    uint64_t src_show = stat.value.is_dir
+                        ? ComputeRecursiveSize(stat.value.storage_id, stat.value.handle)
+                        : stat.value.size;
+                    uint64_t dst_show = existing->is_dir
+                        ? ComputeRecursiveSize(existing->storage_id, existing->handle)
+                        : existing->size;
+                    OverwriteDialog dlg(StrMB2Wide(new_name),
+                                        src_show,
+                                        static_cast<int64_t>(stat.value.mtime_epoch),
+                                        dst_show,
+                                        static_cast<int64_t>(existing->mtime_epoch));
+                    switch (dlg.Ask()) {
+                        case OverwriteDialog::OVERWRITE:     it.overwrite = true; break;
+                        case OverwriteDialog::SKIP:          it.skip = true; break;
+                        case OverwriteDialog::OVERWRITE_ALL: overwrite_all = true; it.overwrite = true; break;
+                        case OverwriteDialog::SKIP_ALL:      skip_all = true; it.skip = true; break;
+                        case OverwriteDialog::CANCEL:        return true;
+                    }
+                }
+            }
+            work.push_back(std::move(it));
+        }
+    }
+
+    // First pass: device CopyObject + aside-rename overwrite; Unsupported
+    // items queue for host fallback.
+    std::vector<HostFallbackItem> fallback;
+    proto::Status hard_err = proto::OkStatus();
+    auto fp_worker = [&](ProgressState& pst) {
+        pst.count_total = static_cast<uint64_t>(work.size());
+        uint64_t k = 0;
+        for (auto& it : work) {
+            if (pst.IsAborting()) break;
+            if (it.skip) { ++k; continue; }
+            {
+                std::lock_guard<std::mutex> lk(pst.mtx_strings);
+                pst.current_file = StrMB2Wide(it.new_name);
+            }
+            pst.is_directory = it.stat.is_dir;
+            pst.count_complete = k++;
+
+            auto cp = _backend->CopyObject(it.handle, dst_storage, dst_parent);
+            if (!cp.ok && cp.code == proto::ErrorCode::Unsupported) {
+                DBG("ShiftF5: CopyObject unsupported, queuing for host fallback name=%s\n",
+                    it.stat.name.c_str());
+                if (it.overwrite) {
+                    _backend->Delete(dst_existing[it.new_name].handle, /*recursive=*/true);
+                    dst_existing.erase(it.new_name);
+                }
+                fallback.push_back({it.handle, it.stat, dst_storage,
+                                    dst_parent, it.new_name});
+                continue;
+            }
+            if (!cp.ok) {
+                hard_err = proto::Status::Failure(cp.code, cp.message);
+                break;
+            }
+
+            if (it.overwrite) {
+                auto& existing = dst_existing[it.new_name];
+                const std::string aside = AsideName(it.new_name);
+                auto aside_rn = _backend->Rename(existing.handle, aside);
+                if (!aside_rn.ok) {
+                    _backend->Delete(cp.value, /*recursive=*/true);
+                    hard_err = aside_rn;
+                    break;
+                }
+                auto final_rn = _backend->Rename(cp.value, it.new_name);
+                if (!final_rn.ok) {
+                    _backend->Delete(cp.value, /*recursive=*/true);
+                    _backend->Rename(existing.handle, it.new_name);
+                    hard_err = final_rn;
+                    break;
+                }
+                _backend->Delete(existing.handle, /*recursive=*/true);
+                dst_existing.erase(it.new_name);
+            } else if (it.new_name != it.stat.name) {
+                auto rn = _backend->Rename(cp.value, it.new_name);
+                if (!rn.ok) {
+                    _backend->Delete(cp.value, /*recursive=*/true);
+                    hard_err = rn;
+                    break;
+                }
+            }
+        }
+        pst.count_complete = static_cast<uint64_t>(work.size());
+    };
+    {
+        bool fp_multi = work.size() > 1;
+        for (size_t i = 0; !fp_multi && i < work.size(); ++i)
+            if (work[i].stat.is_dir) fp_multi = true;
+        ProgressOperation fp_pop(/*is_move=*/false, /*is_multi=*/fp_multi, /*is_upload=*/false);
+        fp_pop.Run(fp_worker);
+    }
+    if (!hard_err.ok) {
+        SetErrorFromStatus(hard_err);
+        MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+            L"Copy failed", StrMB2Wide(hard_err.message));
+        return true;
+    }
+
+    if (!fallback.empty()) {
+        size_t fb_ok = 0;
+        auto fb = RunHostFallbackBatch(fallback, /*move=*/false, &fb_ok);
+        if (!fb.ok && fb.code != proto::ErrorCode::Cancelled && fb_ok == 0) {
+            SetErrorFromStatus(fb);
+            MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+                L"Copy failed", StrMB2Wide(fb.message));
+        }
+    }
+
+    g_Info.Control(PANEL_ACTIVE, FCTL_CLEARSELECTION, 0, 0);
+    RefreshPanel();
+    return true;
+}
+
 bool MTPPlugin::RenameSelectedItem() {
+    // Single-item rename only — Far convention. Multi-item moves go via
+    // F6 cross-panel; we don't implement rename-mask dialogs.
     if (_view_mode != ViewMode::Objects || !_backend || !_backend->IsReady()) {
         return false;
     }
 
     std::string token;
-    if (!GetSelectedPanelUserData(token)) {
-        return false;
-    }
-
+    if (!GetSelectedPanelUserData(token)) return false;
     uint32_t handle = 0;
-    if (!ParseObjectToken(token, handle)) {
-        return false;
-    }
-
+    if (!ParseObjectToken(token, handle)) return false;
     std::string old_name;
-    if (!GetSelectedPanelFileName(old_name)) {
-        old_name = "";
-    }
-    if (old_name == "." || old_name == "..") {
-        return false;
-    }
+    if (!GetSelectedPanelFileName(old_name)) old_name.clear();
+    if (old_name == "." || old_name == "..") return false;
 
-    std::string new_name;
+    // Prefill: storage-relative path + filename (native far2l UX).
+    const std::string prefill = BuildPanelRelativePath() + old_name;
+    std::string raw_input;
     if (!PromptInput(L"Rename",
-                     L"Enter new name:",
+                     L"Rename to:",
                      L"MTP_Rename",
-                     old_name,
-                     new_name)) {
-        return false;
+                     prefill,
+                     raw_input)) {
+        return true;
     }
-    if (new_name == old_name) {
+    if (raw_input.empty() || raw_input == prefill) return true;
+
+    // Always resolve through ResolveNewNamePath — no-op for plain
+    // "newname"; handles "..", "./sub/", existing-dir-as-target, etc.
+    auto resolved = ResolveNewNamePath(raw_input, old_name);
+    if (!resolved.ok) {
+        MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+            L"Rename failed",
+            L"Could not resolve destination path. Use ../ for parent or subdir/ for descent.");
+        return true;
+    }
+    uint32_t dst_storage = resolved.storage_id;
+    uint32_t dst_parent  = resolved.parent;
+    std::string new_name = resolved.basename;
+    if (new_name == old_name && dst_parent == _current_parent && dst_storage == _current_storage_id) {
         return true;
     }
 
-    auto st = _backend->Rename(handle, new_name);
-    if (!st.ok) {
-        SetErrorFromStatus(st);
-        return false;
+    // Cross-folder move: try MoveObject; on Unsupported, fall back to
+    // download → upload → delete-source via host.
+    if (dst_parent != _current_parent || dst_storage != _current_storage_id) {
+        auto src_stat = _backend->Stat(handle);
+        if (!src_stat.ok) {
+            SetErrorFromStatus(proto::Status::Failure(src_stat.code, src_stat.message));
+            return false;
+        }
+        // Quick collision check at destination.
+        auto dst_kids = _backend->ListChildren(dst_storage, dst_parent);
+        if (dst_kids.ok) {
+            for (const auto& k : dst_kids.value) {
+                if (_backend->NamesEqual(_current_storage_id, k.name, new_name) && k.handle != handle) {
+                    uint64_t src_show = src_stat.value.is_dir
+                        ? ComputeRecursiveSize(src_stat.value.storage_id, src_stat.value.handle)
+                        : src_stat.value.size;
+                    uint64_t dst_show = k.is_dir
+                        ? ComputeRecursiveSize(k.storage_id, k.handle)
+                        : k.size;
+                    OverwriteDialog dlg(StrMB2Wide(new_name),
+                                        src_show,
+                                        static_cast<int64_t>(src_stat.value.mtime_epoch),
+                                        dst_show,
+                                        static_cast<int64_t>(k.mtime_epoch));
+                    auto choice = dlg.Ask();
+                    if (choice == OverwriteDialog::SKIP || choice == OverwriteDialog::SKIP_ALL
+                        || choice == OverwriteDialog::CANCEL) {
+                        return true;
+                    }
+                    _backend->Delete(k.handle, /*recursive=*/true);
+                    break;
+                }
+            }
+        }
+
+        auto mv = _backend->MoveObject(handle, dst_storage, dst_parent);
+        if (mv.ok) {
+            // Rename to new basename if it differs from source.
+            if (new_name != old_name) {
+                auto rn = _backend->Rename(handle, new_name);
+                if (!rn.ok) {
+                    DBG("Rename: cross-folder move ok but rename failed: %s\n", rn.message.c_str());
+                }
+            }
+            RefreshPanel();
+            return true;
+        }
+        if (mv.code == proto::ErrorCode::Unsupported) {
+            DBG("Rename: MoveObject unsupported, falling back to host-mediated move\n");
+            std::vector<HostFallbackItem> fb_items;
+            fb_items.push_back({handle, src_stat.value, dst_storage, dst_parent, new_name});
+            size_t fb_ok = 0;
+            auto fb = RunHostFallbackBatch(fb_items, /*move=*/true, &fb_ok);
+            if (!fb.ok && fb_ok == 0) {
+                SetErrorFromStatus(fb);
+                MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+                    L"Rename failed", StrMB2Wide(fb.message));
+            }
+            RefreshPanel();
+            return true;
+        }
+        SetErrorFromStatus(mv);
+        MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+            L"Rename failed", StrMB2Wide(mv.message));
+        return true;
     }
 
-    RefreshPanel();
-    return true;
+    // In-folder rename — original logic, with atomic-ish overwrite.
+    auto kids = _backend->ListChildren(_current_storage_id, _current_parent);
+    if (kids.ok) {
+        for (const auto& k : kids.value) {
+            if (_backend->NamesEqual(_current_storage_id, k.name, new_name) && k.handle != handle) {
+                auto src_st = _backend->Stat(handle);
+                uint64_t src_show = 0;
+                int64_t  src_mt   = 0;
+                if (src_st.ok) {
+                    src_show = src_st.value.is_dir
+                        ? ComputeRecursiveSize(src_st.value.storage_id, src_st.value.handle)
+                        : src_st.value.size;
+                    src_mt = static_cast<int64_t>(src_st.value.mtime_epoch);
+                }
+                uint64_t dst_show = k.is_dir
+                    ? ComputeRecursiveSize(k.storage_id, k.handle)
+                    : k.size;
+                OverwriteDialog dlg(StrMB2Wide(new_name),
+                                    src_show, src_mt,
+                                    dst_show, static_cast<int64_t>(k.mtime_epoch));
+                auto choice = dlg.Ask();
+                if (choice == OverwriteDialog::SKIP || choice == OverwriteDialog::SKIP_ALL) {
+                    return true;
+                }
+                if (choice == OverwriteDialog::CANCEL) return true;
+                // Aside-rename overwrite: restore on failure, no data loss.
+                std::string aside = AsideName(k.name);
+                auto rn = _backend->Rename(k.handle, aside);
+                if (!rn.ok) {
+                    SetErrorFromStatus(rn);
+                    MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+                        L"Rename failed", StrMB2Wide(rn.message));
+                    return true;
+                }
+                auto final_rn = _backend->Rename(handle, new_name);
+                if (!final_rn.ok) {
+                    // Restore the aside copy so user doesn't lose data.
+                    _backend->Rename(k.handle, k.name);
+                    SetErrorFromStatus(final_rn);
+                    MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+                        L"Rename failed", StrMB2Wide(final_rn.message));
+                    return true;
+                }
+                // Final rename succeeded; clean up the aside copy.
+                _backend->Delete(k.handle, /*recursive=*/true);
+                RefreshPanel();
+                return true;
+            }
+        }
+    }
+
+    auto st = _backend->Rename(handle, new_name);
+    if (st.ok) {
+        RefreshPanel();
+        return true;
+    }
+    // Some firmwares refuse Set_Object_Filename on folders. Fall back
+    // to device CopyObject(new_name) + Delete original — both device-side.
+    bool tried_fallback = false;
+    if (st.code == proto::ErrorCode::Unsupported) {
+        auto stat_now = _backend->Stat(handle);
+        if (stat_now.ok && stat_now.value.is_dir
+                && _backend->SupportsCopyObject()) {
+            DBG("Rename: Set_File_Name unsupported on folder; trying CopyObject + Delete\n");
+            auto cp = _backend->CopyObject(handle, _current_storage_id, _current_parent);
+            if (cp.ok) {
+                auto rn = _backend->Rename(cp.value, new_name);
+                if (rn.ok) {
+                    _backend->Delete(handle, /*recursive=*/true);
+                    RefreshPanel();
+                    return true;
+                }
+                _backend->Delete(cp.value, /*recursive=*/true);
+            }
+            tried_fallback = true;
+        }
+    }
+    SetErrorFromStatus(st);
+    MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+        L"Rename failed",
+        tried_fallback
+            ? (StrMB2Wide(st.message) + L"\nCopyObject+Delete fallback also failed.")
+            : StrMB2Wide(st.message));
+    return false;
 }
 
 bool MTPPlugin::ExecuteSelected(int op_mode) {
@@ -1216,7 +2587,7 @@ bool MTPPlugin::CrossPanelCopyMoveSameDevice(bool move) {
         return false;
     }
     if (_current_device_key.empty() || _current_device_key != dst->_current_device_key) {
-        DBG("CrossPanelCopyMoveSameDevice skip: different devices src=%s dst=%s",
+        DBG("CrossPanelCopyMoveSameDevice skip: different devices src=%s dst=%s\n",
             _current_device_key.c_str(), dst->_current_device_key.c_str());
         return false;
     }
@@ -1287,36 +2658,206 @@ bool MTPPlugin::CrossPanelCopyMoveSameDevice(bool move) {
     }
 
     if (handles.empty()) {
-        DBG("CrossPanelCopyMoveSameDevice skip: no selected object handles");
+        DBG("CrossPanelCopyMoveSameDevice skip: no selected object handles\n");
         return false;
     }
-    DBG("CrossPanelCopyMoveSameDevice op=%s count=%zu dst_storage=%u dst_parent=%u",
+    DBG("CrossPanelCopyMoveSameDevice op=%s count=%zu dst_storage=%u dst_parent=%u\n",
         move ? "move" : "copy", handles.size(), dst->_current_storage_id, dst->_current_parent);
 
-    for (uint32_t h : handles) {
-        proto::Status st;
-        if (move) {
-            st = _backend->MoveObject(h, dst->_current_storage_id, dst->_current_parent);
+    // Confirmation+path-edit prompt; same UX as Shift+F5/F6. Prefill =
+    // passive panel's storage-relative path. Resolver runs against dst.
+    uint32_t dst_storage = dst->_current_storage_id;
+    uint32_t dst_parent  = dst->_current_parent;
+    std::string user_path;
+    {
+        const wchar_t* title = move ? L"Move" : L"Copy";
+        std::wstring prompt;
+        if (handles.size() == 1) {
+            prompt = (move ? std::wstring(L"Move ") : std::wstring(L"Copy "))
+                   + StrMB2Wide(firstName) + L" to:";
         } else {
-            auto cp = _backend->CopyObject(h, dst->_current_storage_id, dst->_current_parent);
-            if (!cp.ok) {
-                st = proto::Status::Failure(cp.code, cp.message, cp.retryable);
-            } else {
-                st = proto::OkStatus();
-            }
+            prompt = (move ? std::wstring(L"Move ") : std::wstring(L"Copy "))
+                   + std::to_wstring(handles.size()) + L" items to:";
         }
-        if (!st.ok) {
-            DBG("CrossPanelCopyMoveSameDevice failed handle=%u code=%d msg=%s",
-                h, static_cast<int>(st.code), st.message.c_str());
-            SetErrorFromStatus(st);
-            if (st.code == proto::ErrorCode::Unsupported) {
-                const wchar_t* msg[] = {
-                    move ? L"MTP MoveObject is not supported by this device."
-                         : L"MTP CopyObject is not supported by this device."
-                };
-                g_Info.Message(g_Info.ModuleNumber, FMSG_MB_OK | FMSG_WARNING, nullptr, msg, 1, 0);
-            }
+        const std::string prefill = dst->BuildPanelRelativePath();
+        if (!MTPDialogs::AskInput(title, prompt.c_str(), L"MTP_CopyMove",
+                                   user_path, prefill)) {
+            return true;  // user cancelled — claim keystroke
+        }
+        if (user_path.empty()) return true;
+        // Relative to dst panel; multi-select ignores resolver basename
+        // (per-item names supplied below).
+        const std::string src_name_for_resolve =
+            (handles.size() == 1) ? firstName : std::string();
+        auto resolved = ResolveNewNamePath(
+            user_path, src_name_for_resolve, /*auto_create_dirs=*/true,
+            dst->_current_storage_id, dst->_current_parent,
+            dst->_current_storage_name);
+        if (!resolved.ok) {
+            MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+                move ? L"Move failed" : L"Copy failed",
+                L"Could not resolve destination path. Check that all "
+                L"folder components exist (or create them first).");
             return true;
+        }
+        dst_storage = resolved.storage_id;
+        dst_parent  = resolved.parent;
+        // basename ignored here — batch loop uses item.stat.name; the
+        // common-case basename equals it anyway.
+    }
+
+    // We own collision UI: far2l's Copy/Move never sees this path.
+    std::map<std::string, proto::ObjectEntry> dst_existing;
+    {
+        auto kids = dst->_backend->ListChildren(dst_storage, dst_parent);
+        if (kids.ok) {
+            for (const auto& k : kids.value) dst_existing[k.name] = k;
+        }
+    }
+
+    struct Item {
+        uint32_t handle;
+        proto::ObjectEntry stat;
+        bool skip = false;
+        bool overwrite = false;  // if true, delete dst_existing[name] before copy/move
+    };
+    std::vector<Item> work;
+    work.reserve(handles.size());
+    {
+        bool overwrite_all = false, skip_all = false;
+        for (uint32_t h : handles) {
+            auto stat = _backend->Stat(h);
+            if (!stat.ok) continue;
+            Item it{h, stat.value, false, false};
+            const proto::ObjectEntry* existing = FindExistingByName(
+                dst_existing, stat.value.name, dst_storage);
+            if (existing) {
+                if (skip_all)      { it.skip = true; }
+                else if (overwrite_all) { it.overwrite = true; }
+                else {
+                    uint64_t src_show = stat.value.is_dir
+                        ? ComputeRecursiveSize(stat.value.storage_id, stat.value.handle)
+                        : stat.value.size;
+                    uint64_t dst_show = existing->is_dir
+                        ? dst->ComputeRecursiveSize(existing->storage_id, existing->handle)
+                        : existing->size;
+                    OverwriteDialog dlg(StrMB2Wide(stat.value.name),
+                                        src_show,
+                                        static_cast<int64_t>(stat.value.mtime_epoch),
+                                        dst_show,
+                                        static_cast<int64_t>(existing->mtime_epoch));
+                    switch (dlg.Ask()) {
+                        case OverwriteDialog::OVERWRITE:     it.overwrite = true; break;
+                        case OverwriteDialog::SKIP:          it.skip = true; break;
+                        case OverwriteDialog::OVERWRITE_ALL: overwrite_all = true; it.overwrite = true; break;
+                        case OverwriteDialog::SKIP_ALL:      skip_all = true; it.skip = true; break;
+                        case OverwriteDialog::CANCEL:        return true;
+                    }
+                }
+            }
+            work.push_back(std::move(it));
+        }
+    }
+
+    // First pass: device CopyObject/MoveObject with aside-rename
+    // overwrite + restore-on-failure.
+    std::vector<HostFallbackItem> fallback;
+    size_t first_pass_ok = 0;
+    proto::Status hard_err = proto::OkStatus();
+    auto fp_worker = [&](ProgressState& pst) {
+        pst.count_total = static_cast<uint64_t>(work.size());
+        uint64_t k = 0;
+        for (auto& it : work) {
+            if (pst.IsAborting()) break;
+            if (it.skip) { ++k; continue; }
+            {
+                std::lock_guard<std::mutex> lk(pst.mtx_strings);
+                pst.current_file = StrMB2Wide(it.stat.name);
+            }
+            pst.is_directory = it.stat.is_dir;
+            pst.count_complete = k++;
+
+            uint32_t aside_handle = 0;
+            if (it.overwrite) {
+                const std::string aside = AsideName(it.stat.name);
+                auto rn = dst->_backend->Rename(dst_existing[it.stat.name].handle, aside);
+                if (rn.ok) {
+                    aside_handle = dst_existing[it.stat.name].handle;
+                } else {
+                    DBG("CrossPanel: rename-aside failed name=%s, falling back to delete\n",
+                        it.stat.name.c_str());
+                    dst->_backend->Delete(dst_existing[it.stat.name].handle, /*recursive=*/true);
+                }
+                dst_existing.erase(it.stat.name);
+            }
+
+            proto::Status st;
+            if (move) {
+                st = _backend->MoveObject(it.handle, dst_storage, dst_parent);
+            } else {
+                auto cp = _backend->CopyObject(it.handle, dst_storage, dst_parent);
+                st = cp.ok ? proto::OkStatus()
+                           : proto::Status::Failure(cp.code, cp.message, cp.retryable);
+            }
+            if (st.ok) {
+                ++first_pass_ok;
+                if (aside_handle) dst->_backend->Delete(aside_handle, /*recursive=*/true);
+                continue;
+            }
+            if (aside_handle) dst->_backend->Rename(aside_handle, it.stat.name);
+
+            if (st.code == proto::ErrorCode::Unsupported) {
+                DBG("CrossPanel: %s unsupported, queuing for host-mediated fallback name=%s\n",
+                    move ? "MoveObject" : "CopyObject", it.stat.name.c_str());
+                if (it.overwrite) {
+                    auto kids = dst->_backend->ListChildren(dst_storage, dst_parent);
+                    if (kids.ok) {
+                        for (const auto& k2 : kids.value) {
+                            if (k2.name == it.stat.name) {
+                                dst->_backend->Delete(k2.handle, /*recursive=*/true);
+                                break;
+                            }
+                        }
+                    }
+                }
+                fallback.push_back({it.handle, it.stat, dst_storage,
+                                    dst_parent, it.stat.name});
+                continue;
+            }
+            DBG("CrossPanel failed handle=%u code=%d msg=%s\n",
+                it.handle, static_cast<int>(st.code), st.message.c_str());
+            hard_err = st;
+            break;
+        }
+        pst.count_complete = static_cast<uint64_t>(work.size());
+    };
+    {
+        bool fp_multi = work.size() > 1;
+        for (size_t i = 0; !fp_multi && i < work.size(); ++i)
+            if (work[i].stat.is_dir) fp_multi = true;
+        ProgressOperation fp_pop(/*is_move=*/move, /*is_multi=*/fp_multi, /*is_upload=*/false);
+        fp_pop.Run(fp_worker);
+        if (fp_pop.WasAborted() && first_pass_ok == 0 && fallback.empty()) {
+            return true;
+        }
+    }
+    if (!hard_err.ok) {
+        SetErrorFromStatus(hard_err);
+        MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+            move ? L"Move failed" : L"Copy failed",
+            StrMB2Wide(hard_err.message));
+        return true;
+    }
+
+    size_t fallback_ok = 0;
+    if (!fallback.empty()) {
+        DBG("CrossPanel: host-mediated fallback for %zu item(s)\n", fallback.size());
+        auto fb = RunHostFallbackBatch(fallback, move, &fallback_ok);
+        if (!fb.ok && fb.code != proto::ErrorCode::Cancelled && fallback_ok == 0) {
+            SetErrorFromStatus(fb);
+            MTPDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+                move ? L"Move failed" : L"Copy failed",
+                StrMB2Wide(fb.message));
         }
     }
 
@@ -1325,45 +2866,62 @@ bool MTPPlugin::CrossPanelCopyMoveSameDevice(bool move) {
     g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, 0);
     g_Info.Control(PANEL_PASSIVE, FCTL_UPDATEPANEL, 0, 0);
     g_Info.Control(PANEL_PASSIVE, FCTL_REDRAWPANEL, 0, 0);
-    DBG("CrossPanelCopyMoveSameDevice success op=%s", move ? "move" : "copy");
+    DBG("CrossPanelCopyMoveSameDevice done op=%s first_pass_ok=%zu fallback_ok=%zu\n",
+        move ? "move" : "copy", first_pass_ok, fallback_ok);
     return true;
 }
 
 bool MTPPlugin::EnterSelectedItem() {
     std::string token;
     if (!GetSelectedPanelUserData(token)) {
-        DBG("EnterSelectedItem no selected token");
+        DBG("EnterSelectedItem no selected token\n");
         return false;
     }
-    if (token.rfind("DEV|", 0) != 0 && token.rfind("STO|", 0) != 0 && token.rfind("OBJ|", 0) != 0) {
-        DBG("EnterSelectedItem invalid token=%s", token.c_str());
+    if (!StrStartsFrom(token, "DEV|") && !StrStartsFrom(token, "STO|") && !StrStartsFrom(token, "OBJ|")) {
+        DBG("EnterSelectedItem invalid token=%s\n", token.c_str());
         return false;
     }
-    DBG("EnterSelectedItem token=%s", token.c_str());
+    DBG("EnterSelectedItem token=%s\n", token.c_str());
     return EnterByToken(token);
 }
 
 bool MTPPlugin::EnterByToken(const std::string& token) {
-    DBG("EnterByToken token=%s mode=%d", token.c_str(), static_cast<int>(_view_mode));
+    DBG("EnterByToken token=%s mode=%d\n", token.c_str(), static_cast<int>(_view_mode));
 
-    if (token.rfind("DEV|", 0) == 0) {
+    if (StrStartsFrom(token, "DEV|")) {
         const std::string key = token.substr(4);
-        DBG("EnterByToken device key=%s", key.c_str());
+        DBG("EnterByToken device key=%s\n", key.c_str());
         if (!EnsureConnected(key)) {
-            DBG("EnterByToken device connect failed key=%s", key.c_str());
-            const wchar_t* msg[] = {L"Failed to connect to selected device."};
-            g_Info.Message(g_Info.ModuleNumber, FMSG_MB_OK | FMSG_WARNING, nullptr, msg, 1, 0);
+            DBG("EnterByToken device connect failed key=%s err=%s\n", key.c_str(), _last_error_message.c_str());
+            std::wstring title = L"MTP: cannot open device";
+            std::wstring detail = _last_error_message.empty()
+                ? std::wstring(L"unknown error")
+                : StrMB2Wide(_last_error_message);
+            std::vector<std::wstring> lines;
+            lines.push_back(title);
+            // Wrap long messages into chunks of <= 70 wide chars so the dialog
+            // doesn't blow past the screen width.
+            constexpr size_t kWrap = 70;
+            for (size_t i = 0; i < detail.size(); i += kWrap) {
+                lines.push_back(detail.substr(i, kWrap));
+            }
+            std::vector<const wchar_t*> ptrs;
+            ptrs.reserve(lines.size());
+            for (const auto& s : lines) ptrs.push_back(s.c_str());
+            g_Info.Message(g_Info.ModuleNumber, FMSG_MB_OK | FMSG_WARNING, nullptr,
+                           ptrs.data(), static_cast<int>(ptrs.size()), 0);
             return false;
         }
         auto it = _device_binds.find(key);
         _current_device_name.clear();
+        _current_device_serial.clear();
+        if (_backend) {
+            _current_device_name = _backend->FriendlyName();
+        }
         if (it != _device_binds.end()) {
-            _current_device_name = it->second.candidate.product;
-            if (!it->second.candidate.serial.empty()) {
-                if (!_current_device_name.empty()) {
-                    _current_device_name += " ";
-                }
-                _current_device_name += "[" + it->second.candidate.serial + "]";
+            _current_device_serial = it->second.candidate.serial;
+            if (_current_device_name.empty()) {
+                _current_device_name = it->second.candidate.product;
             }
         }
         if (_current_device_name.empty()) {
@@ -1373,21 +2931,42 @@ bool MTPPlugin::EnterByToken(const std::string& token) {
         _panel_title = StrMB2Wide(_current_device_name);
         _current_storage_name.clear();
         _dir_stack.clear();
+
+        // Single-storage devices skip the Storages list; ".." returns there.
+        if (_backend) {
+            auto sl = _backend->ListStorages();
+            if (sl.ok && sl.value.size() == 1) {
+                const auto& only = sl.value.front();
+                std::string label;
+                switch (only.kind) {
+                    case proto::StorageKind::Internal: label = "Internal"; break;
+                    case proto::StorageKind::External: label = "External"; break;
+                    default:                           label = "Storage";  break;
+                }
+                _current_storage_name = label;
+                _current_storage_id   = only.id;
+                _current_parent       = 0;
+                _view_mode            = ViewMode::Objects;
+                UpdateObjectsPanelTitle();
+                RefreshPanel();
+                return true;
+            }
+        }
         RefreshPanel();
         return true;
     }
 
     uint32_t storage = 0;
     if (ParseStorageToken(token, storage)) {
-        DBG("EnterByToken storage id=%u", storage);
+        DBG("EnterByToken storage id=%u\n", storage);
+        std::string storage_label;
         for (const auto& kv : _name_token_index) {
             if (kv.second == token) {
-                _last_storage_name = kv.first;
+                storage_label = kv.first;
                 break;
             }
         }
-        _last_storage_id = storage;
-        _current_storage_name = _last_storage_name.empty() ? ("Storage " + std::to_string(storage)) : _last_storage_name;
+        _current_storage_name = storage_label.empty() ? ("Storage " + std::to_string(storage)) : storage_label;
         _dir_stack.clear();
         _current_storage_id = storage;
         _current_parent = 0;
@@ -1399,9 +2978,9 @@ bool MTPPlugin::EnterByToken(const std::string& token) {
 
     uint32_t handle = 0;
     if (ParseObjectToken(token, handle)) {
-        DBG("EnterByToken object handle=%u", handle);
+        DBG("EnterByToken object handle=%u\n", handle);
         auto st = _backend ? _backend->Stat(handle) : proto::Result<proto::ObjectEntry>{};
-        DBG("EnterByToken object stat ok=%d code=%d is_dir=%d storage=%u parent=%u name=%s",
+        DBG("EnterByToken object stat ok=%d code=%d is_dir=%d storage=%u parent=%u name=%s\n",
             st.ok ? 1 : 0,
             st.ok ? 0 : static_cast<int>(st.code),
             (st.ok && st.value.is_dir) ? 1 : 0,
@@ -1419,7 +2998,7 @@ bool MTPPlugin::EnterByToken(const std::string& token) {
         }
     }
 
-    DBG("EnterByToken unhandled token=%s", token.c_str());
+    DBG("EnterByToken unhandled token=%s\n", token.c_str());
     return false;
 }
 
@@ -1428,7 +3007,8 @@ proto::Status MTPPlugin::DownloadRecursive(uint32_t storage_id,
                                            const std::string& local_root,
                                            proto::CancellationToken token,
                                            uint64_t& downloaded,
-                                           uint64_t& total) {
+                                           uint64_t& total,
+                                           ProgressState* prog) {
     if (mkdir(local_root.c_str(), 0755) != 0 && errno != EEXIST) {
         return proto::Status::Failure(proto::ErrorCode::Io, "mkdir failed");
     }
@@ -1445,19 +3025,42 @@ proto::Status MTPPlugin::DownloadRecursive(uint32_t storage_id,
 
         const std::string target = JoinPath(local_root, child.name);
         if (child.is_dir) {
-            auto st = DownloadRecursive(child.storage_id, child.handle, target, token, downloaded, total);
+            auto st = DownloadRecursive(child.storage_id, child.handle, target, token, downloaded, total, prog);
             if (!st.ok) {
                 return st;
             }
         } else {
             total += child.size;
-            auto st = _transfer->Download(child.handle,
+            if (prog) {
+                // Accumulate all_total during walk for sizeless pre-scans.
+                prog->all_total = prog->all_total.load() + child.size;
+                std::lock_guard<std::mutex> lk(prog->mtx_strings);
+                prog->current_file = StrMB2Wide(child.name);
+            }
+            if (prog) {
+                prog->is_directory = false;
+                prog->file_total = child.size;
+                prog->file_complete = 0;
+            }
+            uint64_t before = downloaded;
+            auto st = _backend->Download(child.handle,
                                           target,
-                                          [&downloaded](uint64_t done, uint64_t all) {
-                                              (void)all;
-                                              downloaded += done;
+                                          [prog, before](uint64_t sent, uint64_t fileTotal) {
+                                              if (prog) {
+                                                  prog->file_complete = sent;
+                                                  if (fileTotal > 0) prog->file_total = fileTotal;
+                                                  prog->all_complete = before + sent;
+                                              }
                                           },
                                           token);
+            if (st.ok) {
+                downloaded += child.size;
+                if (prog) {
+                    prog->file_complete = child.size;
+                    prog->all_complete = downloaded;
+                    prog->count_complete = prog->count_complete.load() + 1;
+                }
+            }
             if (!st.ok) {
                 return st;
             }
@@ -1465,4 +3068,238 @@ proto::Status MTPPlugin::DownloadRecursive(uint32_t storage_id,
     }
 
     return proto::OkStatus();
+}
+
+proto::Status MTPPlugin::UploadRecursive(const std::string& local_dir,
+                                         const std::string& remote_name,
+                                         uint32_t storage_id,
+                                         uint32_t parent,
+                                         proto::CancellationToken token,
+                                         proto::CancellationSource* cancel_src,
+                                         ProgressState* prog,
+                                         uint64_t* bytes_done_so_far) {
+    if (token.IsCancelled()) {
+        return proto::Status::Failure(proto::ErrorCode::Cancelled, "Cancelled by user");
+    }
+    auto mk = _backend->MakeDirectory(remote_name, storage_id, parent);
+    if (!mk.ok) {
+        return proto::Status::Failure(mk.code, mk.message);
+    }
+    uint32_t newParent = mk.value;
+
+    DIR* dir = opendir(local_dir.c_str());
+    if (!dir) {
+        return proto::Status::Failure(proto::ErrorCode::Io,
+            "opendir failed: " + local_dir);
+    }
+    proto::Status final_status = proto::OkStatus();
+    while (true) {
+        if (token.IsCancelled()) {
+            final_status = proto::Status::Failure(proto::ErrorCode::Cancelled, "Cancelled by user");
+            break;
+        }
+        dirent* ent = readdir(dir);
+        if (!ent) break;
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+
+        std::string child_path = local_dir + "/" + ent->d_name;
+        struct stat ss{};
+        if (lstat(child_path.c_str(), &ss) != 0) continue;
+
+        if (S_ISDIR(ss.st_mode)) {
+            auto st = UploadRecursive(child_path, ent->d_name, storage_id, newParent,
+                                      token, cancel_src, prog, bytes_done_so_far);
+            if (!st.ok) { final_status = st; break; }
+        } else if (S_ISREG(ss.st_mode)) {
+            uint64_t fsize = static_cast<uint64_t>(ss.st_size);
+            if (prog) {
+                {
+                    std::lock_guard<std::mutex> lk(prog->mtx_strings);
+                    prog->current_file = StrMB2Wide(ent->d_name);
+                }
+                prog->is_directory = false;
+                prog->file_total = fsize;
+                prog->file_complete = 0;
+            }
+            uint64_t before = bytes_done_so_far ? *bytes_done_so_far : 0;
+            auto st = _backend->Upload(child_path, ent->d_name, storage_id, newParent,
+                [prog, cancel_src, before](uint64_t sent, uint64_t total) {
+                    if (cancel_src && prog && prog->IsAborting()) cancel_src->Cancel();
+                    if (prog) {
+                        prog->file_complete = sent;
+                        if (total > 0) prog->file_total = total;
+                        prog->all_complete = before + sent;
+                    }
+                }, token);
+            if (st.ok) {
+                if (bytes_done_so_far) *bytes_done_so_far += fsize;
+                if (prog) {
+                    prog->file_complete = fsize;
+                    if (bytes_done_so_far) prog->all_complete = *bytes_done_so_far;
+                    prog->count_complete = prog->count_complete.load() + 1;
+                }
+            } else if (st.code != proto::ErrorCode::Cancelled) {
+                final_status = st;
+                break;
+            }
+        }
+        // Skip symlinks / sockets / etc. silently.
+    }
+    closedir(dir);
+    return final_status;
+}
+
+proto::Status MTPPlugin::ManualCopyViaHostInline(uint32_t src_handle,
+                                                  const proto::ObjectEntry& src_stat,
+                                                  uint32_t dst_storage_id,
+                                                  uint32_t dst_parent,
+                                                  const std::string& new_name,
+                                                  ProgressState& st,
+                                                  proto::CancellationToken token,
+                                                  proto::CancellationSource* cancel_src) {
+    if (token.IsCancelled()) {
+        return proto::Status::Failure(proto::ErrorCode::Cancelled, "Cancelled by user");
+    }
+    // Stage to a host tempdir under $TMPDIR (or /tmp). One tempdir per
+    // item — keeps cleanup local to this call.
+    const char* tmpenv = std::getenv("TMPDIR");
+    std::string tmp_template = (tmpenv && *tmpenv) ? tmpenv : "/tmp";
+    if (tmp_template.back() != '/') tmp_template += '/';
+    tmp_template += "far2l-mtp-copy.XXXXXX";
+    std::vector<char> tmpbuf(tmp_template.begin(), tmp_template.end());
+    tmpbuf.push_back(0);
+    if (!mkdtemp(tmpbuf.data())) {
+        return proto::Status::Failure(proto::ErrorCode::Io,
+            std::string("mkdtemp failed: ") + std::strerror(errno));
+    }
+    const std::string tmp_root(tmpbuf.data());
+    DBG("ManualCopyViaHost(inline): tmp_root=%s src=%s is_dir=%d new_name=%s\n",
+        tmp_root.c_str(), src_stat.name.c_str(),
+        src_stat.is_dir ? 1 : 0, new_name.c_str());
+
+    proto::Status status = proto::OkStatus();
+    {
+        std::lock_guard<std::mutex> lk(st.mtx_strings);
+        st.source_path = StrMB2Wide(src_stat.name);
+        st.dest_path = StrMB2Wide(new_name);
+    }
+
+    if (src_stat.is_dir) {
+        const std::string staging = tmp_root + "/" + src_stat.name;
+        uint64_t downloaded = 0, total = 0;
+        status = DownloadRecursive(src_stat.storage_id, src_handle,
+                                   staging, token,
+                                   downloaded, total, &st);
+        if (status.ok) {
+            uint64_t bytes_done = 0;
+            status = UploadRecursive(staging, new_name, dst_storage_id, dst_parent,
+                                     token, cancel_src, &st, &bytes_done);
+        }
+    } else {
+        const std::string staged = tmp_root + "/" + src_stat.name;
+        st.is_directory = false;
+        st.file_total = src_stat.size;
+        status = _backend->Download(src_handle, staged,
+            [&st, cancel_src](uint64_t sent, uint64_t fileTotal) {
+                if (st.IsAborting() && cancel_src) cancel_src->Cancel();
+                st.file_complete = sent;
+                if (fileTotal > 0) st.file_total = fileTotal;
+            }, token);
+        if (status.ok) {
+            st.file_complete = 0;
+            status = _backend->Upload(staged, new_name, dst_storage_id, dst_parent,
+                [&st, cancel_src](uint64_t sent, uint64_t fileTotal) {
+                    if (st.IsAborting() && cancel_src) cancel_src->Cancel();
+                    st.file_complete = sent;
+                    if (fileTotal > 0) st.file_total = fileTotal;
+                }, token);
+        }
+    }
+
+    RemoveLocalPathRecursively(tmp_root);
+    DBG("ManualCopyViaHost(inline): done ok=%d code=%d msg=%s\n",
+        status.ok ? 1 : 0,
+        static_cast<int>(status.code),
+        status.message.c_str());
+    return status;
+}
+
+proto::Status MTPPlugin::ManualCopyViaHost(uint32_t src_handle,
+                                            const proto::ObjectEntry& src_stat,
+                                            uint32_t dst_storage_id,
+                                            uint32_t dst_parent,
+                                            const std::string& new_name) {
+    proto::CancellationSource cancelSrc;
+    auto cancel_tok = cancelSrc.Token();
+    proto::Status final_status = proto::OkStatus();
+
+    auto worker = [&](ProgressState& st) {
+        st.count_total = 1;
+        final_status = ManualCopyViaHostInline(src_handle, src_stat,
+                                               dst_storage_id, dst_parent, new_name,
+                                               st, cancel_tok, &cancelSrc);
+        if (final_status.ok) st.count_complete = 1;
+    };
+
+    ProgressOperation pop(/*is_move=*/false, /*is_multi=*/src_stat.is_dir,
+                          /*is_upload=*/false);
+    pop.GetState().on_abort = [&cancelSrc]() { cancelSrc.Cancel(); };
+    pop.Run(worker);
+    if (pop.WasAborted() && final_status.ok) {
+        final_status = proto::Status::Failure(proto::ErrorCode::Cancelled,
+            "Cancelled by user");
+    }
+    return final_status;
+}
+
+proto::Status MTPPlugin::RunHostFallbackBatch(const std::vector<HostFallbackItem>& items,
+                                              bool move,
+                                              size_t* out_ok_count) {
+    if (out_ok_count) *out_ok_count = 0;
+    if (items.empty()) return proto::OkStatus();
+
+    proto::CancellationSource cancelSrc;
+    auto cancel_tok = cancelSrc.Token();
+    proto::Status final_status = proto::OkStatus();
+    size_t ok_count = 0;
+
+    auto worker = [&](ProgressState& st) {
+        st.count_total = items.size();
+        for (size_t i = 0; i < items.size(); ++i) {
+            if (st.IsAborting()) { cancelSrc.Cancel(); break; }
+            const auto& it = items[i];
+            st.is_directory = it.src_stat.is_dir;
+            auto step = ManualCopyViaHostInline(it.src_handle, it.src_stat,
+                                                it.dst_storage_id, it.dst_parent,
+                                                it.dst_name, st, cancel_tok, &cancelSrc);
+            if (step.ok) {
+                ++ok_count;
+                if (move) {
+                    auto del = _backend->Delete(it.src_handle, /*recursive=*/true);
+                    if (!del.ok) {
+                        DBG("RunHostFallbackBatch: delete-after-copy failed handle=%u msg=%s\n",
+                            it.src_handle, del.message.c_str());
+                    }
+                }
+            } else {
+                // Capture last error and bail. Partial success is
+                // surfaced to the caller via out_ok_count.
+                final_status = step;
+                break;
+            }
+            st.count_complete = static_cast<uint64_t>(i + 1);
+        }
+    };
+
+    bool is_multi = items.size() > 1;
+    if (!is_multi) is_multi = items.front().src_stat.is_dir;
+    ProgressOperation pop(/*is_move=*/move, /*is_multi=*/is_multi, /*is_upload=*/false);
+    pop.GetState().on_abort = [&cancelSrc]() { cancelSrc.Cancel(); };
+    pop.Run(worker);
+    if (pop.WasAborted() && final_status.ok) {
+        final_status = proto::Status::Failure(proto::ErrorCode::Cancelled,
+            "Cancelled by user");
+    }
+    if (out_ok_count) *out_ok_count = ok_count;
+    return final_status;
 }
