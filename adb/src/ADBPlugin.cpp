@@ -79,6 +79,89 @@ static bool NoControls(unsigned int control_state) {
 	return (control_state & (PKF_CONTROL | PKF_ALT | PKF_SHIFT)) == 0;
 }
 
+// Lexical POSIX path normalize: collapse "..", drop ".", merge "//".
+static std::string NormalizePosixPath(const std::string& p) {
+	if (p.empty()) return p;
+	std::vector<std::string> parts;
+	const bool absolute = (p[0] == '/');
+	std::string seg;
+	auto flush = [&](std::string& s) {
+		if (s.empty()) return;
+		if (s == "..") {
+			if (!parts.empty() && parts.back() != "..") parts.pop_back();
+			else if (!absolute) parts.push_back("..");
+		} else if (s != ".") {
+			parts.push_back(s);
+		}
+		s.clear();
+	};
+	for (char c : p) {
+		if (c == '/') flush(seg);
+		else seg += c;
+	}
+	flush(seg);
+	std::string out = absolute ? "/" : "";
+	for (size_t i = 0; i < parts.size(); ++i) {
+		if (i > 0) out += "/";
+		out += parts[i];
+	}
+	return out.empty() ? (absolute ? std::string("/") : std::string(".")) : out;
+}
+
+// Aside-rename suffix for atomic-overwrite. PID-scoped to avoid clashes.
+static std::string AsideName(const std::string& base) {
+	return base + ".far2l-tmp." + std::to_string(getpid());
+}
+
+// "foo" → currentDir/foo, "../foo" → parent/foo, "/abs/foo" → /abs/foo.
+static std::string ResolveAdbDestination(const std::string& currentDir,
+                                         const std::string& userInput) {
+	if (userInput.empty()) return userInput;
+	std::string joined;
+	if (userInput.front() == '/') {
+		joined = userInput;
+	} else {
+		joined = currentDir;
+		if (joined.empty() || joined.back() != '/') joined += '/';
+		joined += userInput;
+	}
+	return NormalizePosixPath(joined);
+}
+
+// Resolver supporting folder-only inputs (".."/"./sub/"/trailing slash/
+// existing-dir match); folder-only joins src_name as basename.
+static std::string ResolveAdbDestinationFor(const std::string& currentDir,
+                                            const std::string& userInput,
+                                            const std::string& src_name,
+                                            std::shared_ptr<ADBDevice> dev) {
+	if (userInput.empty()) return userInput;
+	const bool trailing_slash = (userInput.back() == '/');
+	std::string raw = trailing_slash ? userInput.substr(0, userInput.size() - 1) : userInput;
+	std::string resolved = ResolveAdbDestination(currentDir, raw);
+	// Folder-only: trailing slash, or "..", or "." with no other content.
+	if (trailing_slash || raw == ".." || raw == ".") {
+		if (!src_name.empty()) {
+			if (resolved.empty() || resolved.back() != '/') resolved += '/';
+			resolved += src_name;
+		}
+		return resolved;
+	}
+	// If the user's input resolves to an EXISTING directory, treat as
+	// "into that dir" with basename from src_name (mirrors mtp behavior).
+	if (!src_name.empty() && dev && dev->IsDirectory(resolved)) {
+		if (resolved.back() != '/') resolved += '/';
+		resolved += src_name;
+	}
+	return resolved;
+}
+
+// Storage-relative path prefix for prompt prefills: "<absolute-dir>/".
+static std::string BuildPanelPathPrefix(const std::string& currentDir) {
+	std::string out = currentDir.empty() ? std::string("/") : currentDir;
+	if (out.back() != '/') out += '/';
+	return out;
+}
+
 
 PluginStartupInfo g_Info = {};
 FarStandardFunctions g_FSF = {};
@@ -245,6 +328,12 @@ int ADBPlugin::ProcessKey(int Key, unsigned int ControlState)
 	if ((Key == VK_F5 || Key == VK_F6) && NoControls(ControlState)) {
 		return CrossPanelCopyMoveSameDevice(Key == VK_F6) ? TRUE : FALSE;
 	}
+	if (Key == VK_F5 && ControlState == PKF_SHIFT) {
+		return ShiftF5CopyInPlace() ? TRUE : FALSE;
+	}
+	if (Key == VK_F6 && ControlState == PKF_SHIFT) {
+		return ShiftF6Rename() ? TRUE : FALSE;
+	}
 	return FALSE;
 }
 
@@ -310,53 +399,113 @@ bool ADBPlugin::CrossPanelCopyMoveSameDevice(bool move)
 	struct SelectedItem {
 		std::string name;
 		bool is_dir = false;
+		uint64_t size = 0;
 	};
 	std::vector<SelectedItem> items;
+	auto pushItem = [&](const PluginPanelItem& it) {
+		if (!it.FindData.lpwszFileName) return;
+		std::string name = StrWide2MB(it.FindData.lpwszFileName);
+		if (name.empty() || name == "." || name == "..") return;
+		const bool is_dir = (it.FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+		items.push_back(SelectedItem{name, is_dir, is_dir ? 0 : it.FindData.nFileSize});
+	};
 	if (pi.SelectedItemsNumber > 0) {
 		for (int i = 0; i < pi.SelectedItemsNumber; ++i) {
 			PluginPanelItem it = {};
 			std::vector<char> buf;
-			if (!getItem(FCTL_GETSELECTEDPANELITEM, i, it, buf)) {
-				continue;
-			}
-			if (!it.FindData.lpwszFileName) {
-				continue;
-			}
-			std::string name = StrWide2MB(it.FindData.lpwszFileName);
-			if (name.empty() || name == "." || name == "..") {
-				continue;
-			}
-			items.push_back(SelectedItem{name, (it.FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0});
+			if (!getItem(FCTL_GETSELECTEDPANELITEM, i, it, buf)) continue;
+			pushItem(it);
 		}
 	} else {
 		PluginPanelItem it = {};
 		std::vector<char> buf;
-		if (getItem(FCTL_GETCURRENTPANELITEM, 0, it, buf) && it.FindData.lpwszFileName) {
-			std::string name = StrWide2MB(it.FindData.lpwszFileName);
-			if (!name.empty() && name != "." && name != "..") {
-				items.push_back(SelectedItem{name, (it.FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0});
-			}
-		}
+		if (getItem(FCTL_GETCURRENTPANELITEM, 0, it, buf)) pushItem(it);
 	}
 
 	if (items.empty()) {
 		return false;
 	}
 
+	// Confirmation prompt; user can edit dst path ("..", "./sub/", abs).
+	{
+		const wchar_t* title = move ? L"Move" : L"Copy";
+		std::wstring prompt;
+		if (items.size() == 1) {
+			prompt = (move ? std::wstring(L"Move ") : std::wstring(L"Copy "))
+			       + StrMB2Wide(items[0].name) + L" to:";
+		} else {
+			prompt = (move ? std::wstring(L"Move ") : std::wstring(L"Copy "))
+			       + std::to_wstring(items.size()) + L" items to:";
+		}
+		const std::string prefill = BuildPanelPathPrefix(dstDir);
+		std::string user_path;
+		if (!ADBDialogs::AskInput(title, prompt.c_str(), L"ADB_CopyMove",
+		                           user_path, prefill)) {
+			return true;  // user cancelled — claim keystroke
+		}
+		if (user_path.empty()) return true;
+		// Resolve relative to the DESTINATION panel.
+		std::string resolved = ResolveAdbDestinationFor(dstDir, user_path, "", dst->_adbDevice);
+		if (!resolved.empty() && resolved.back() != '/') resolved += '/';
+		dstDir = resolved;
+	}
+
 	DBG("CrossPanelCopyMoveSameDevice op=%s count=%zu src=%s dst=%s serial=%s\n",
 		move ? "move" : "copy", items.size(), srcDir.c_str(), dstDir.c_str(), _deviceSerial.c_str());
+
+	// Per-item collision check + Skip/Overwrite/All/Cancel.
+	bool overwrite_all = false, skip_all = false;
+	std::vector<bool> skip(items.size(), false);
+	std::vector<bool> overwrite(items.size(), false);
+	for (size_t i = 0; i < items.size(); ++i) {
+		const auto& it = items[i];
+		const std::string dstPath = ADBUtils::JoinPath(dstDir, it.name);
+		if (!dst->_adbDevice->FileExists(dstPath)) continue;
+		if (skip_all)      { skip[i] = true; continue; }
+		if (overwrite_all) { overwrite[i] = true; continue; }
+		OverwriteDialog dlg(StrMB2Wide(dstPath), items.size() > 1, it.is_dir);
+		switch (dlg.Ask()) {
+			case OverwriteDialog::OVERWRITE:     overwrite[i] = true; break;
+			case OverwriteDialog::SKIP:          skip[i] = true; break;
+			case OverwriteDialog::OVERWRITE_ALL: overwrite_all = true; overwrite[i] = true; break;
+			case OverwriteDialog::SKIP_ALL:      skip_all = true; skip[i] = true; break;
+			case OverwriteDialog::CANCEL:
+			default:
+				return true;
+		}
+	}
 
 	int okCount = 0;
 	int lastErr = 0;
 	size_t failedIndex = items.size();
 	for (size_t i = 0; i < items.size(); ++i) {
+		if (skip[i]) continue;
 		const auto& it = items[i];
 		const std::string srcPath = ADBUtils::JoinPath(srcDir, it.name);
+		const std::string dstPath = ADBUtils::JoinPath(dstDir, it.name);
+		// Aside-rename atomic-ish overwrite: rename existing dest aside,
+		// run op, drop aside on success / restore on failure.
+		std::string aside;
+		bool have_aside = false;
+		if (overwrite[i]) {
+			aside = AsideName(dstPath);
+			if (dst->_adbDevice->MoveRemoteAs(dstPath, aside) == 0) {
+				have_aside = true;
+			} else {
+				if (it.is_dir) dst->_adbDevice->DeleteDirectory(dstPath);
+				else           dst->_adbDevice->DeleteFile(dstPath);
+			}
+		}
 		const int rc = move ? _adbDevice->MoveRemote(srcPath, dstDir)
 		                    : _adbDevice->CopyRemote(srcPath, dstDir);
 		if (rc == 0) {
 			++okCount;
+			if (have_aside) {
+				if (it.is_dir) dst->_adbDevice->DeleteDirectory(aside);
+				else           dst->_adbDevice->DeleteFile(aside);
+			}
 		} else {
+			if (have_aside) dst->_adbDevice->MoveRemoteAs(aside, dstPath);
 			lastErr = rc;
 			DBG("CrossPanelCopyMoveSameDevice failed op=%s item=%s err=%d\n",
 				move ? "move" : "copy", it.name.c_str(), rc);
@@ -379,37 +528,110 @@ bool ADBPlugin::CrossPanelCopyMoveSameDevice(bool move)
 		DBG("CrossPanelCopyMoveSameDevice fallback via host tmp=%s from_index=%zu\n",
 			tmpRoot.c_str(), failedIndex);
 
+		// Pre-scan total bytes for the progress bar. File sizes come
+		// from the panel's FindData; dir sizes are scanned via shell.
+		uint64_t total_bytes = 0;
 		for (size_t i = failedIndex; i < items.size(); ++i) {
+			if (skip[i]) continue;
 			const auto& it = items[i];
-			const std::string srcPath = ADBUtils::JoinPath(srcDir, it.name);
-			const std::string tmpPath = ADBUtils::JoinPath(tmpRoot, it.name);
-			const std::string dstPath = ADBUtils::JoinPath(dstDir, it.name);
+			if (it.is_dir) {
+				total_bytes += _adbDevice->GetDirectoryInfo(ADBUtils::JoinPath(srcDir, it.name)).total_size;
+			} else {
+				total_bytes += it.size;
+			}
+		}
 
-			const int pullRc = it.is_dir ? _adbDevice->PullDirectory(srcPath, tmpPath)
-			                             : _adbDevice->PullFile(srcPath, tmpPath);
-			if (pullRc != 0) {
-				lastErr = pullRc;
-				DBG("CrossPanelCopyMoveSameDevice fallback pull failed item=%s err=%d\n", it.name.c_str(), pullRc);
-				break;
-			}
-			const int pushRc = it.is_dir ? dst->_adbDevice->PushDirectory(tmpPath, dstPath)
-			                             : dst->_adbDevice->PushFile(tmpPath, dstPath);
-			if (pushRc != 0) {
-				lastErr = pushRc;
-				DBG("CrossPanelCopyMoveSameDevice fallback push failed item=%s err=%d\n", it.name.c_str(), pushRc);
-				break;
-			}
-			if (move) {
-				const int delRc = it.is_dir ? _adbDevice->DeleteDirectory(srcPath) : _adbDevice->DeleteFile(srcPath);
-				if (delRc != 0) {
-					lastErr = delRc;
-					DBG("CrossPanelCopyMoveSameDevice fallback delete failed item=%s err=%d\n", it.name.c_str(), delRc);
+		std::wstring popTitle = move ? L"Move on device" : L"Copy on device";
+		size_t fb_count = 0;
+		bool fb_any_dir = false;
+		for (size_t i = failedIndex; i < items.size(); ++i) {
+			if (skip[i]) continue;
+			++fb_count;
+			if (items[i].is_dir) fb_any_dir = true;
+		}
+		const bool is_multi = fb_count > 1 || fb_any_dir;
+		ProgressOperation pop(popTitle, is_multi);
+		pop.GetState().count_total = fb_count;
+		pop.GetState().all_total = total_bytes;
+		pop.Run([&](ProgressState& state) {
+			uint64_t bytes_done = 0;
+			int last_percent = -1;
+			for (size_t i = failedIndex; i < items.size(); ++i) {
+				if (state.ShouldAbort()) break;
+				if (skip[i]) continue;
+				const auto& it = items[i];
+				const std::string srcPath = ADBUtils::JoinPath(srcDir, it.name);
+				const std::string tmpPath = ADBUtils::JoinPath(tmpRoot, it.name);
+				const std::string dstPath = ADBUtils::JoinPath(dstDir, it.name);
+
+				{
+					std::lock_guard<std::mutex> lk(state.mtx_strings);
+					state.current_file = StrMB2Wide(it.name);
+				}
+				state.is_directory = it.is_dir;
+				state.count_complete = i - failedIndex;
+				state.file_complete = 0;
+
+				const uint64_t this_size = it.is_dir
+					? _adbDevice->GetDirectoryInfo(srcPath).total_size
+					: it.size;
+				state.file_total = this_size;
+
+				if (overwrite[i]) {
+					if (it.is_dir) dst->_adbDevice->DeleteDirectory(dstPath);
+					else           dst->_adbDevice->DeleteFile(dstPath);
+				}
+
+				const uint64_t bytes_before = bytes_done;
+				last_percent = -1;
+				auto onProgress = [&](int percent) {
+					if (percent == last_percent) return;
+					last_percent = percent;
+					state.file_complete = percent;
+					if (this_size > 0) {
+						state.all_complete = bytes_before + (this_size * percent) / 100;
+					}
+					INPUT_RECORD ir = {};
+					ir.EventType = NOOP_EVENT;
+					DWORD dw = 0;
+					WINPORT(WriteConsoleInput)(0, &ir, 1, &dw);
+				};
+				auto onAbort = [&]() { return state.ShouldAbort(); };
+
+				const int pullRc = it.is_dir
+					? _adbDevice->PullDirectory(srcPath, tmpPath, onProgress, onAbort)
+					: _adbDevice->PullFile(srcPath, tmpPath, onProgress, onAbort);
+				if (pullRc != 0) {
+					lastErr = pullRc;
+					DBG("CrossPanel fallback pull failed item=%s err=%d\n", it.name.c_str(), pullRc);
 					break;
 				}
+
+				last_percent = -1;
+				const int pushRc = it.is_dir
+					? dst->_adbDevice->PushDirectory(tmpPath, dstPath, onProgress, onAbort)
+					: dst->_adbDevice->PushFile(tmpPath, dstPath, onProgress, onAbort);
+				if (pushRc != 0) {
+					lastErr = pushRc;
+					DBG("CrossPanel fallback push failed item=%s err=%d\n", it.name.c_str(), pushRc);
+					break;
+				}
+				if (move) {
+					const int delRc = it.is_dir ? _adbDevice->DeleteDirectory(srcPath)
+					                            : _adbDevice->DeleteFile(srcPath);
+					if (delRc != 0) {
+						lastErr = delRc;
+						DBG("CrossPanel fallback delete failed item=%s err=%d\n", it.name.c_str(), delRc);
+						break;
+					}
+				}
+				(void)RemoveLocalPathRecursively(tmpPath);
+				bytes_done += this_size;
+				state.all_complete = bytes_done;
+				state.count_complete = i - failedIndex + 1;
+				++okCount;
 			}
-			(void)RemoveLocalPathRecursively(tmpPath);
-			++okCount;
-		}
+		});
 		(void)RemoveLocalPathRecursively(tmpRoot);
 	}
 
@@ -428,6 +650,367 @@ bool ADBPlugin::CrossPanelCopyMoveSameDevice(bool move)
 	return TRUE;
 }
 
+namespace {
+struct ADBSelected {
+	std::string name;
+	bool is_dir = false;
+	uint64_t size = 0;
+};
+
+bool GatherSelectedItems(std::vector<ADBSelected>& out) {
+	auto getItem = [](int cmd, int index, PluginPanelItem& target, std::vector<char>& buf) -> bool {
+		intptr_t size = g_Info.Control(PANEL_ACTIVE, cmd, index, 0);
+		if (size < (intptr_t)sizeof(PluginPanelItem)) return false;
+		buf.assign((size_t)size + 0x100, 0);
+		auto* item = (PluginPanelItem*)buf.data();
+		if (!g_Info.Control(PANEL_ACTIVE, cmd, index, (LONG_PTR)(void*)item)) return false;
+		target = *item;
+		return true;
+	};
+
+	PanelInfo pi = {};
+	if (g_Info.Control(PANEL_ACTIVE, FCTL_GETPANELINFO, 0, (LONG_PTR)(void*)&pi) == 0) {
+		return false;
+	}
+
+	auto pushItem = [&](const PluginPanelItem& it) {
+		if (!it.FindData.lpwszFileName) return;
+		std::string name = StrWide2MB(it.FindData.lpwszFileName);
+		if (name.empty() || name == "." || name == "..") return;
+		const bool is_dir = (it.FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+		out.push_back(ADBSelected{name, is_dir, is_dir ? 0 : it.FindData.nFileSize});
+	};
+
+	if (pi.SelectedItemsNumber > 0) {
+		for (int i = 0; i < pi.SelectedItemsNumber; ++i) {
+			PluginPanelItem it = {};
+			std::vector<char> buf;
+			if (!getItem(FCTL_GETSELECTEDPANELITEM, i, it, buf)) continue;
+			pushItem(it);
+		}
+	} else {
+		PluginPanelItem it = {};
+		std::vector<char> buf;
+		if (getItem(FCTL_GETCURRENTPANELITEM, 0, it, buf)) pushItem(it);
+	}
+	return !out.empty();
+}
+} // namespace
+
+bool ADBPlugin::ShiftF5CopyInPlace() {
+	if (!_isConnected || !_adbDevice || _deviceSerial.empty()) return false;
+
+	std::vector<ADBSelected> items;
+	if (!GatherSelectedItems(items)) return false;
+
+	const std::string dir = GetCurrentDevicePath();
+	if (dir.empty()) return false;
+	const bool multi = items.size() > 1;
+
+	// Single prefill "<dir>/<name>.copy"; multi prefill "<dir>/" folder-only.
+	std::string typed;
+	{
+		std::string prefill = BuildPanelPathPrefix(dir);
+		if (!multi) prefill += items[0].name + ".copy";
+		if (!ADBDialogs::AskInput(L"Copy", L"Copy to:", L"ADB_Copy", typed, prefill)) {
+			return true;  // user cancelled — claim keystroke
+		}
+		if (typed.empty()) return true;
+	}
+
+	// Folder-only: trailing slash, "..", ".", existing-dir match, or multi.
+	std::string folder_target = ResolveAdbDestinationFor(dir, typed, "", _adbDevice);
+	const bool folder_only = multi
+		|| (typed.back() == '/')
+		|| typed == ".."
+		|| typed == "."
+		|| _adbDevice->IsDirectory(folder_target);
+
+	const bool same_dir_as_source = (folder_only && (folder_target == dir
+		|| folder_target == BuildPanelPathPrefix(dir)
+		|| folder_target + "/" == BuildPanelPathPrefix(dir)));
+
+	std::string single_new_name;
+	if (!multi && !folder_only) {
+		// User typed a basename (possibly with relative path); resolver
+		// places it under the right parent. Extract the basename.
+		auto slash = typed.find_last_of('/');
+		single_new_name = (slash == std::string::npos) ? typed : typed.substr(slash + 1);
+		if (single_new_name.empty()) single_new_name = items[0].name;
+	}
+
+	struct Plan {
+		std::string src_path;
+		std::string dst_path;
+		std::string new_name;
+		bool is_dir;
+		uint64_t size = 0;
+		bool skip = false;
+		bool overwrite = false;
+	};
+
+	std::vector<Plan> plan;
+	plan.reserve(items.size());
+	bool overwrite_all = false, skip_all = false;
+	for (const auto& it : items) {
+		Plan p;
+		// single → typed name; multi/same-dir → ".copy"; multi/elsewhere → src.
+		if (!multi && !folder_only) {
+			p.new_name = single_new_name;
+		} else if (same_dir_as_source) {
+			p.new_name = it.name + ".copy";
+		} else {
+			p.new_name = it.name;
+		}
+		p.src_path = ADBUtils::JoinPath(dir, it.name);
+		// dst_path: place new_name under the resolved folder target.
+		std::string folder_with_slash = folder_target;
+		if (folder_with_slash.empty() || folder_with_slash.back() != '/') folder_with_slash += '/';
+		p.dst_path = folder_only
+			? NormalizePosixPath(folder_with_slash + p.new_name)
+			: ResolveAdbDestinationFor(dir, typed, "", _adbDevice);
+		p.is_dir = it.is_dir;
+		p.size = it.size;
+
+		if (_adbDevice->FileExists(p.dst_path)) {
+			if (skip_all)      { p.skip = true; }
+			else if (overwrite_all) { p.overwrite = true; }
+			else {
+				OverwriteDialog dlg(StrMB2Wide(p.dst_path), multi, p.is_dir);
+				switch (dlg.Ask()) {
+					case OverwriteDialog::OVERWRITE:     p.overwrite = true; break;
+					case OverwriteDialog::SKIP:          p.skip = true; break;
+					case OverwriteDialog::OVERWRITE_ALL: overwrite_all = true; p.overwrite = true; break;
+					case OverwriteDialog::SKIP_ALL:      skip_all = true; p.skip = true; break;
+					case OverwriteDialog::CANCEL:
+					default:
+						return true;
+				}
+			}
+		}
+		plan.push_back(std::move(p));
+	}
+
+	int okCount = 0;
+	int lastErr = 0;
+	std::vector<size_t> needFallback;
+	for (size_t i = 0; i < plan.size(); ++i) {
+		if (plan[i].skip) continue;
+		// Aside-rename atomic-ish overwrite: rename existing dest aside
+		// first; on success delete the aside, on failure restore.
+		std::string aside;
+		bool have_aside = false;
+		if (plan[i].overwrite) {
+			aside = AsideName(plan[i].dst_path);
+			if (_adbDevice->MoveRemoteAs(plan[i].dst_path, aside) == 0) {
+				have_aside = true;
+			} else {
+				// Fall back to delete-then-copy when rename-aside fails.
+				if (plan[i].is_dir) _adbDevice->DeleteDirectory(plan[i].dst_path);
+				else                _adbDevice->DeleteFile(plan[i].dst_path);
+			}
+		}
+		const int rc = _adbDevice->CopyRemoteAs(plan[i].src_path, plan[i].dst_path);
+		if (rc == 0) {
+			++okCount;
+			if (have_aside) {
+				if (plan[i].is_dir) _adbDevice->DeleteDirectory(aside);
+				else                _adbDevice->DeleteFile(aside);
+			}
+		} else {
+			if (have_aside) _adbDevice->MoveRemoteAs(aside, plan[i].dst_path);
+			lastErr = rc;
+			DBG("ShiftF5: device-side copy failed item=%s err=%d, queuing fallback\n",
+				plan[i].new_name.c_str(), rc);
+			needFallback.push_back(i);
+		}
+	}
+
+	if (!needFallback.empty()) {
+		// Host-mediated fallback: pull → push. Pre-scan for total bar.
+		uint64_t total_bytes = 0;
+		for (size_t idx : needFallback) {
+			auto& p = plan[idx];
+			if (p.is_dir) {
+				total_bytes += _adbDevice->GetDirectoryInfo(p.src_path).total_size;
+			} else {
+				total_bytes += p.size;
+			}
+		}
+
+		const char* tmpDir = getenv("TMPDIR");
+		if (!tmpDir) tmpDir = "/tmp";
+		char tmpTpl[PATH_MAX];
+		snprintf(tmpTpl, sizeof(tmpTpl), "%s/adb_shiftf5_XXXXXX", tmpDir);
+		char* tmpBase = mkdtemp(tmpTpl);
+		if (tmpBase) {
+			const std::string tmpRoot = tmpBase;
+			DBG("ShiftF5: host-mediated fallback for %zu item(s) tmp=%s\n",
+				needFallback.size(), tmpRoot.c_str());
+
+			bool fb_any_dir = false;
+			for (size_t idx : needFallback) if (plan[idx].is_dir) { fb_any_dir = true; break; }
+			const bool is_multi = needFallback.size() > 1 || fb_any_dir;
+			ProgressOperation pop(L"Copy on device", is_multi);
+			pop.GetState().count_total = needFallback.size();
+			pop.GetState().all_total = total_bytes;
+			pop.Run([&](ProgressState& state) {
+				uint64_t bytes_done = 0;
+				int last_percent = -1;
+				for (size_t i = 0; i < needFallback.size(); ++i) {
+					if (state.ShouldAbort()) break;
+					auto& p = plan[needFallback[i]];
+					{
+						std::lock_guard<std::mutex> lk(state.mtx_strings);
+						state.current_file = StrMB2Wide(p.new_name);
+					}
+					state.is_directory = p.is_dir;
+					state.count_complete = i;
+					state.file_complete = 0;
+
+					const std::string staged = ADBUtils::JoinPath(tmpRoot, p.new_name);
+
+					// Files use FindData.nFileSize; dirs walked via shell.
+					uint64_t this_size = p.is_dir
+						? _adbDevice->GetDirectoryInfo(p.src_path).total_size
+						: p.size;
+					state.file_total = this_size;
+
+					const uint64_t bytes_before = bytes_done;
+					last_percent = -1;
+					auto onPullProgress = [&](int percent) {
+						// Debounce: redraw only on integer-percent change.
+						if (percent == last_percent) return;
+						last_percent = percent;
+						state.file_complete = percent;
+						if (this_size > 0) {
+							state.all_complete = bytes_before + (this_size * percent) / 100;
+						}
+						INPUT_RECORD ir = {};
+						ir.EventType = NOOP_EVENT;
+						DWORD dw = 0;
+						WINPORT(WriteConsoleInput)(0, &ir, 1, &dw);
+					};
+					auto onAbort = [&]() { return state.ShouldAbort(); };
+
+					const int pullRc = p.is_dir
+						? _adbDevice->PullDirectory(p.src_path, staged, onPullProgress, onAbort)
+						: _adbDevice->PullFile(p.src_path, staged, onPullProgress, onAbort);
+					if (pullRc != 0) { lastErr = pullRc; continue; }
+
+					last_percent = -1;
+					auto onPushProgress = [&](int percent) {
+						if (percent == last_percent) return;
+						last_percent = percent;
+						state.file_complete = percent;
+						if (this_size > 0) {
+							state.all_complete = bytes_before + (this_size * percent) / 100;
+						}
+						INPUT_RECORD ir = {};
+						ir.EventType = NOOP_EVENT;
+						DWORD dw = 0;
+						WINPORT(WriteConsoleInput)(0, &ir, 1, &dw);
+					};
+
+					const int pushRc = p.is_dir
+						? _adbDevice->PushDirectory(staged, p.dst_path, onPushProgress, onAbort)
+						: _adbDevice->PushFile(staged, p.dst_path, onPushProgress, onAbort);
+					(void)RemoveLocalPathRecursively(staged);
+					if (pushRc != 0) { lastErr = pushRc; continue; }
+
+					bytes_done += this_size;
+					state.all_complete = bytes_done;
+					state.count_complete = i + 1;
+					++okCount;
+				}
+			});
+			(void)RemoveLocalPathRecursively(tmpRoot);
+		}
+	}
+
+	if (okCount == 0 && lastErr != 0) {
+		WINPORT(SetLastError)(lastErr);
+		ADBDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+		                           L"Copy failed",
+		                           L"Device-side cp and host-mediated pull/push both failed.");
+	}
+	g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
+	g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, 0);
+	return true;
+}
+
+bool ADBPlugin::ShiftF6Rename() {
+	// Single-item rename only — matches Far convention.
+	if (!_isConnected || !_adbDevice || _deviceSerial.empty()) return false;
+
+	std::vector<ADBSelected> items;
+	if (!GatherSelectedItems(items)) return false;
+	if (items.empty()) return false;
+
+	const auto& it = items[0];
+	const std::string dir = GetCurrentDevicePath();
+	if (dir.empty()) return false;
+
+	// Prefill: full path + name. User can rename, move, or move-with-rename.
+	const std::string prefill = BuildPanelPathPrefix(dir) + it.name;
+	std::string raw_input;
+	if (!ADBDialogs::AskInput(L"Rename", L"Rename to:", L"ADB_Rename",
+	                          raw_input, prefill)) {
+		return true;
+	}
+	if (raw_input.empty() || raw_input == prefill) return true;
+
+	const std::string srcPath = ADBUtils::JoinPath(dir, it.name);
+	// Resolve input; folder-only forms keep src filename via src_name.
+	const std::string dstPath = ResolveAdbDestinationFor(dir, raw_input, it.name, _adbDevice);
+	if (dstPath == srcPath) return true;
+
+	if (_adbDevice->FileExists(dstPath)) {
+		OverwriteDialog dlg(StrMB2Wide(dstPath), false, it.is_dir);
+		auto choice = dlg.Ask();
+		if (choice == OverwriteDialog::SKIP || choice == OverwriteDialog::SKIP_ALL) {
+			return true;
+		}
+		if (choice == OverwriteDialog::CANCEL) return true;
+		// Atomic-ish overwrite: rename existing target aside, do the
+		// rename, on success rm the aside copy. On failure restore.
+		const std::string aside = AsideName(dstPath);
+		const int aside_rc = _adbDevice->MoveRemoteAs(dstPath, aside);
+		if (aside_rc != 0) {
+			ADBDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+			                           L"Rename failed",
+			                           L"Could not move existing destination aside.");
+			return true;
+		}
+		const int rc = _adbDevice->MoveRemoteAs(srcPath, dstPath);
+		if (rc != 0) {
+			// Restore so user doesn't lose data.
+			_adbDevice->MoveRemoteAs(aside, dstPath);
+			ADBDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+			                           L"Rename failed",
+			                           StrMB2Wide(strerror(rc)));
+			WINPORT(SetLastError)(rc);
+			return true;
+		}
+		if (it.is_dir) _adbDevice->DeleteDirectory(aside);
+		else           _adbDevice->DeleteFile(aside);
+		g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
+		g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, 0);
+		return true;
+	}
+
+	const int rc = _adbDevice->MoveRemoteAs(srcPath, dstPath);
+	if (rc != 0) {
+		ADBDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
+		                           L"Rename failed",
+		                           StrMB2Wide(strerror(rc)));
+		WINPORT(SetLastError)(rc);
+		return true;
+	}
+	g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
+	g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, 0);
+	return true;
+}
 
 int ADBPlugin::GetFileData(PluginPanelItem **pPanelItem, int *pItemsNumber)
 {
@@ -955,7 +1538,59 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 			return -1;
 		}
 	}
-	
+
+	// Reroute device-path inputs ("..", "./*", existing-name, mid-".."
+	// patterns) to in-device cp/mv; absolute host paths fall through.
+	if (!(OpMode & OPM_VIEW)) {
+		const std::string srcDir = GetCurrentDevicePath();
+		const std::string& s = destPath;
+		bool looks_in_device =
+			s == "." || s == "./" || s == ".\\" ||
+			s == ".." || s == "../" || s == "..\\" ||
+			s.compare(0, 2, "./") == 0 || s.compare(0, 2, ".\\") == 0 ||
+			s.compare(0, 3, "../") == 0 || s.compare(0, 3, "..\\") == 0 ||
+			s.find("/..") != std::string::npos;
+		// Single-component "mydir" matching an existing folder. Skip
+		// names with '.' to avoid an ADB shell round-trip on "foo.txt".
+		if (!looks_in_device && !s.empty()
+		    && s.find_first_of("/\\") == std::string::npos
+		    && s.find('.') == std::string::npos) {
+			std::string probe = srcDir;
+			if (probe.empty() || probe.back() != '/') probe += '/';
+			probe += s;
+			if (_adbDevice->IsDirectory(probe)) {
+				looks_in_device = true;
+			}
+		}
+		if (looks_in_device) {
+			const std::string dstDir = NormalizePosixPath(
+				(!destPath.empty() && destPath.front() == '/')
+					? destPath
+					: (srcDir + "/" + destPath));
+			DBG("GetFiles: in-device target detected, srcDir=%s dstDir=%s move=%d\n",
+				srcDir.c_str(), dstDir.c_str(), Move);
+			int okCount = 0;
+			int lastErr = 0;
+			for (int i = 0; i < ItemsNumber; ++i) {
+				if (!PanelItem[i].FindData.lpwszFileName) continue;
+				std::string nm = StrWide2MB(PanelItem[i].FindData.lpwszFileName);
+				if (nm.empty() || nm == "." || nm == "..") continue;
+				const std::string srcPath = ADBUtils::JoinPath(srcDir, nm);
+				const int rc = Move ? _adbDevice->MoveRemote(srcPath, dstDir)
+				                    : _adbDevice->CopyRemote(srcPath, dstDir);
+				if (rc == 0) ++okCount;
+				else lastErr = rc;
+			}
+			if (okCount == 0 && lastErr != 0) WINPORT(SetLastError)(lastErr);
+			g_Info.Control(PANEL_ACTIVE, FCTL_CLEARSELECTION, 0, 0);
+			g_Info.Control(PANEL_ACTIVE, FCTL_UPDATEPANEL, 0, 0);
+			g_Info.Control(PANEL_ACTIVE, FCTL_REDRAWPANEL, 0, 0);
+			g_Info.Control(PANEL_PASSIVE, FCTL_UPDATEPANEL, 0, 0);
+			g_Info.Control(PANEL_PASSIVE, FCTL_REDRAWPANEL, 0, 0);
+			return okCount > 0 ? TRUE : FALSE;
+		}
+	}
+
 	if (OpMode & OPM_VIEW) {
 		DBG("ItemsNumber=%d\n", ItemsNumber);
 		if (ItemsNumber > 0) {
@@ -985,9 +1620,7 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 	uint64_t totalFiles = 0;
 	std::map<std::string, uint64_t> dirSizes;
 
-	// Pre-scan to get total size/count (including directory contents).
-	// Wrap: _adbDevice->GetDirectoryInfo may throw on device disconnect; letting an
-	// exception escape into far2l core is a hard crash.
+	// Pre-scan total size/count; wrap to swallow GetDirectoryInfo throws.
 	try {
 		for (int i = 0; i < ItemsNumber; i++) {
 			if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
@@ -1022,23 +1655,8 @@ int ADBPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 
 	std::string srcPath = StrWide2MB(SrcPath);
 
-	if (!(OpMode & OPM_SILENT)) {
-		std::string destPath = GetCurrentDevicePath();
-		if (!destPath.empty() && destPath.back() != '/') {
-			destPath += "/";
-		}
-
-		std::string firstName = (ItemsNumber > 0) ? StrWide2MB(PanelItem[0].FindData.lpwszFileName) : "";
-		if (!ADBDialogs::AskCopyMove(Move != 0, true, destPath, firstName, ItemsNumber)) {
-			return -1;
-		}
-
-		if (destPath != GetCurrentDevicePath()) {
-			if (_adbDevice) {
-				_adbDevice->SetDirectory(destPath);
-			}
-		}
-	}
+	// PutFiles: far2l's ShellCopy already prompts + checks collisions;
+	// don't double-prompt.
 
 	uint64_t totalBytes = 0;
 	uint64_t totalFiles = 0;
@@ -1116,7 +1734,16 @@ int ADBPlugin::RunTransfer(PluginPanelItem *items, int itemsCount, bool is_uploa
 		std::wstring title = move
 			? (is_upload ? L"Move to device" : L"Move from device")
 			: (is_upload ? L"Copy to device" : L"Copy from device");
-		ProgressOperation op(title);
+		// Single file → one bar. Multi-item or any directory → second
+		// aggregate bar showing overall % across all selected items.
+		bool any_dir = false;
+		for (int k = 0; k < itemsCount; ++k) {
+			if (items[k].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+				any_dir = true; break;
+			}
+		}
+		const bool is_multi = itemsCount > 1 || any_dir;
+		ProgressOperation op(title, is_multi);
 		op.GetState().file_total = totalBytes;
 		op.GetState().all_total = totalBytes;
 		op.GetState().count_total = totalFiles;
@@ -1133,9 +1760,7 @@ int ADBPlugin::RunTransfer(PluginPanelItem *items, int itemsCount, bool is_uploa
 			uint64_t completedCount = 0;
 			if (!adb || !adb->IsConnected()) return;
 
-			// Worker-thread exception guard: transfer methods may throw on disconnect;
-			// the lambda runs in a separate std::thread and an unhandled exception
-			// there would call std::terminate and take the whole plugin/far2l down.
+			// Worker-thread exception guard (escape → std::terminate).
 			try {
 			for (int i = 0; i < itemsCount && !state.ShouldAbort(); i++) {
 				std::string fileName = StrWide2MB(items[i].FindData.lpwszFileName);
@@ -1144,11 +1769,16 @@ int ADBPlugin::RunTransfer(PluginPanelItem *items, int itemsCount, bool is_uploa
 				bool isDir = (items[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 				const uint64_t itemSize = isDir ? 0 : items[i].FindData.nFileSize;
 
-				// Check if destination exists and handle overwrite
+				// We own collision UI both ways; far2l skips per-file
+				// checks when dst is a plugin (flplugin.cpp:727).
 				if (is_upload) {
 					if (adb->FileExists(devicePath)) {
 						int action = CheckOverwrite(StrMB2Wide(devicePath), isMultiple, isDir, overwriteMode, state);
 						if (action == 1 || action == 2) continue;
+						// Pre-delete on OVERWRITE so push doesn't merge
+						// (for dirs) or fail on read-only (for files).
+						if (isDir) adb->DeleteDirectory(devicePath);
+						else       adb->DeleteFile(devicePath);
 					}
 				} else {
 					struct stat st;
@@ -1326,11 +1956,11 @@ int ADBPlugin::DeleteFiles(PluginPanelItem *PanelItem, int ItemsNumber, int OpMo
 			lastErrorCode = EIO;
 		}
 	} else {
-		// Show progress dialog with worker thread
-		ProgressOperation op(L"Delete from device");
+		// DeleteProgressDialog shows current file during deletion.
+		DeleteOperation op;
 		op.GetState().count_total = itemsCount;
 
-	op.Run([&](ProgressState& state) {
+		op.Run([&](ProgressState& state) {
 			// Worker-thread exception guard (std::terminate on escape).
 			try {
 			for (int i = 0; i < itemsCount && !state.ShouldAbort(); i++) {

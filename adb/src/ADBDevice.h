@@ -83,9 +83,14 @@ public:
     int CreateDirectory(const std::string &devicePath);
     int CopyRemote(const std::string &srcDevicePath, const std::string &dstDeviceDir);
     int MoveRemote(const std::string &srcDevicePath, const std::string &dstDeviceDir);
+    // *As variants take a full destination PATH (caller renames in
+    // flight) instead of a destination directory; used by Shift+F5/F6.
+    int CopyRemoteAs(const std::string &srcDevicePath, const std::string &dstDevicePath);
+    int MoveRemoteAs(const std::string &srcDevicePath, const std::string &dstDevicePath);
 
     // File existence check
     bool FileExists(const std::string &devicePath);
+    bool IsDirectory(const std::string &devicePath);
 
     // Directory info (file count, total size in bytes)
     struct DirectoryInfo {

@@ -17,10 +17,7 @@
 extern PluginStartupInfo g_Info;
 extern FarStandardFunctions g_FSF;
 
-// ============================================================================
-// FarDialogItems - Dialog item container
-// ============================================================================
-
+// --- FarDialogItems: dialog item container ---
 struct FarDialogItems : std::vector<struct FarDialogItem>
 {
     FarDialogItems();
@@ -43,10 +40,7 @@ private:
     std::wstring _str_pool_tmp;
 };
 
-// ============================================================================
-// FarDialogItemsLineGrouped - Auto line increment
-// ============================================================================
-
+// --- FarDialogItemsLineGrouped: auto line increment ---
 struct FarDialogItemsLineGrouped : FarDialogItems
 {
     void SetLine(int y);
@@ -59,10 +53,7 @@ private:
     int _y = 1;
 };
 
-// ============================================================================
-// BaseDialog - Base class for dialogs
-// ============================================================================
-
+// --- BaseDialog ---
 class BaseDialog
 {
     HANDLE _dlg = INVALID_HANDLE_VALUE;
@@ -93,10 +84,7 @@ public:
     virtual ~BaseDialog();
 };
 
-// ============================================================================
-// ProgressState - Shared state for progress tracking (thread-safe)
-// ============================================================================
-
+// --- ProgressState: thread-safe shared state ---
 struct ProgressState
 {
     // Use atomics for flags and numeric values (fork-safe, no mutex needed)
@@ -146,10 +134,7 @@ struct ProgressState
     bool ShouldAbort() const { return aborting.load(); }
 };
 
-// ============================================================================
-// AbortConfirmDialog - Confirmation dialog for aborting
-// ============================================================================
-
+// --- AbortConfirmDialog ---
 class AbortConfirmDialog : protected BaseDialog
 {
 public:
@@ -163,10 +148,7 @@ private:
     int _i_confirm, _i_cancel;
 };
 
-// ============================================================================
-// OverwriteDialog - Confirmation dialog for file overwrite
-// ============================================================================
-
+// --- OverwriteDialog ---
 class OverwriteDialog : protected BaseDialog
 {
 public:
@@ -183,14 +165,11 @@ private:
     bool _is_multiple;
 };
 
-// ============================================================================
-// ProgressDialog - Progress dialog for operations
-// ============================================================================
-
+// --- ProgressDialog ---
 class ProgressDialog : protected BaseDialog
 {
 public:
-    ProgressDialog(ProgressState &state, const std::wstring &title);
+    ProgressDialog(ProgressState &state, const std::wstring &title, bool is_multi = false);
     void Show();
 
 protected:
@@ -199,6 +178,7 @@ protected:
 private:
     ProgressState &_state;
     std::wstring _title;
+    bool _is_multi;
     bool _finished = false;
     bool _first_update = true;
 
@@ -206,10 +186,13 @@ private:
     int _i_title, _i_operation_label, _i_from_path, _i_to_path;
     int _i_total_bytes, _i_progress_bar, _i_percent, _i_files_processed;
     int _i_time, _i_cancel;
+    // Multi-mode only: aggregate-bytes bar + percent. -1 in single mode.
+    int _i_total_bar = -1, _i_total_pct = -1;
 
     // Cached values for change detection
     uint64_t _last_complete = 0, _last_total = 0, _last_count = 0;
     int _last_file_percent = -1;  // Track file percentage changes
+    int _last_total_percent = -1; // Track aggregate percentage changes
     std::wstring _last_from, _last_to;
 
     // Speed calculation
@@ -221,10 +204,35 @@ private:
     bool ShowAbortConfirmation();
 };
 
-// ============================================================================
-// ADBDialogs - Dialog utility class
-// ============================================================================
+// Mirrors far2l's native shell-delete UI: small centered modal with
+// "Deleting the file or folder" + the current item name, debounced.
+class DeleteProgressDialog : protected BaseDialog {
+public:
+    DeleteProgressDialog(ProgressState& state);
+    void Show();
+protected:
+    LONG_PTR DlgProc(int msg, int param1, LONG_PTR param2) override;
+private:
+    ProgressState& _state;
+    bool _finished = false;
+    int _i_filename = -1;
+    std::wstring _last_filename;
+    void UpdateDialog();
+    bool ShowAbortConfirmation();
+};
 
+class DeleteOperation {
+public:
+    using WorkFunc = std::function<void(ProgressState&)>;
+    DeleteOperation();
+    void Run(WorkFunc work_func);
+    bool WasAborted() const { return _state->IsAborting(); }
+    ProgressState& GetState() { return *_state; }
+private:
+    std::shared_ptr<ProgressState> _state;
+};
+
+// --- ADBDialogs: top-level dialog helpers ---
 class ADBDialogs
 {
 public:
@@ -246,18 +254,23 @@ public:
             ptrs.push_back(s.c_str());
         return g_Info.Message(g_Info.ModuleNumber, flags, nullptr, ptrs.data(), (int)ptrs.size(), 0);
     }
+
+    // Title + body where body is wrapped to fit. Long shell-error
+    // messages can exceed the screen width otherwise.
+    static int MessageWrapped(unsigned int flags,
+                              const std::wstring& title,
+                              const std::wstring& body,
+                              size_t wrap = 70);
 };
 
-// ============================================================================
-// ProgressOperation - Helper for running operations with progress
-// ============================================================================
-
+// --- ProgressOperation: worker + progress dialog ---
 class ProgressOperation
 {
 public:
     using WorkFunc = std::function<void(ProgressState&)>;
 
-    ProgressOperation(const std::wstring& title);
+    // is_multi=true adds the aggregate-bytes bar; single-item omits it.
+    ProgressOperation(const std::wstring& title, bool is_multi = false);
     ~ProgressOperation();
 
     void Run(WorkFunc work_func);
@@ -267,6 +280,7 @@ public:
 private:
     std::shared_ptr<ProgressState> _state;
     std::wstring _title;
+    bool _is_multi;
     std::thread _worker_thread;
     static constexpr int JOIN_TIMEOUT_MS = 5000; // 5 second timeout for thread join
 };

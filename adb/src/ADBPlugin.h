@@ -62,6 +62,14 @@ private:
 	std::vector<DeviceInfo> EnumerateDevices();
 	bool CrossPanelCopyMoveSameDevice(bool move);
 
+	// Shift+F5 in-place copy with prompt; multi auto-suffixes ".copy"
+	// for same-folder dst. Host-mediated pull/push fallback on cp fail.
+	bool ShiftF5CopyInPlace();
+
+	// Shift+F6 rename with prompt; full-path prefill so user can rename,
+	// move, or both. Per-collision OverwriteDialog with aside-rename.
+	bool ShiftF6Rename();
+
 	// Shared transfer engine for GetFiles/PutFiles (DRY)
 	int RunTransfer(PluginPanelItem *items, int itemsCount, bool is_upload, bool move,
 	                const std::string& localDir, const std::string& deviceDir,
