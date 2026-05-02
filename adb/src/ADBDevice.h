@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <unordered_map>
 #include <time.h>
 #include <functional>
 
@@ -16,6 +17,11 @@
 // Forward declarations
 class ADBShell;
 struct PluginPanelItem;
+
+// Per-file progress callback. percent: 0-100; path: adb's reported
+// path for the current file (device-side on push, host-side on pull;
+// empty on synthetic 0%/100% boundaries from start()/complete()).
+using AdbProgressFn = std::function<void(int, const std::string&)>;
 
 // ADB Device implementation
 class ADBDevice {
@@ -34,16 +40,12 @@ private:
     // Helper to build args with device serial prefix
     std::vector<std::string> BuildArgs(const std::vector<std::string>& args) const;
 
-    // Helper to create progress callback for parsing percentage
-    std::function<void(const std::string&)> CreateProgressCallback(
-        std::function<void(int)>& on_progress, int& last_percent, std::string& pending) const;
-
     // Helper to check if result indicates success
     bool IsSuccessResult(const std::string& result, bool is_push = false) const;
 
     // Unified transfer helper (DRY)
     int TransferItem(const std::string& src, const std::string& dst, bool is_push, bool recursive,
-                    const std::function<void(int)>& on_progress = {},
+                    const AdbProgressFn& on_progress = {},
                     const std::function<bool()>& abort_check = {});
 
 public:
@@ -67,13 +69,13 @@ public:
 
     // File transfer operations
     int PullFile(const std::string &devicePath, const std::string &localPath);
-    int PullFile(const std::string &devicePath, const std::string &localPath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check = {});
+    int PullFile(const std::string &devicePath, const std::string &localPath, const AdbProgressFn &on_progress, const std::function<bool()> &abort_check = {});
     int PushFile(const std::string &localPath, const std::string &devicePath);
-    int PushFile(const std::string &localPath, const std::string &devicePath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check = {});
+    int PushFile(const std::string &localPath, const std::string &devicePath, const AdbProgressFn &on_progress, const std::function<bool()> &abort_check = {});
     int PullDirectory(const std::string &devicePath, const std::string &localPath);
-    int PullDirectory(const std::string &devicePath, const std::string &localPath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check = {});
+    int PullDirectory(const std::string &devicePath, const std::string &localPath, const AdbProgressFn &on_progress, const std::function<bool()> &abort_check = {});
     int PushDirectory(const std::string &localPath, const std::string &devicePath);
-    int PushDirectory(const std::string &localPath, const std::string &devicePath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check = {});
+    int PushDirectory(const std::string &localPath, const std::string &devicePath, const AdbProgressFn &on_progress, const std::function<bool()> &abort_check = {});
 
     // File deletion operations
     int DeleteFile(const std::string &devicePath);
@@ -98,6 +100,12 @@ public:
         uint64_t total_size;
     };
     DirectoryInfo GetDirectoryInfo(const std::string &devicePath);
+
+    // Per-file basename → size, walked under devicePath. Single shell
+    // call. Used by the progress dialog so adb pull's per-file bar can
+    // resize as adb advances from one file to the next.
+    void GetDirectoryFileSizes(const std::string &devicePath,
+                                std::unordered_map<std::string, uint64_t>& out);
 
     // Connection management
     bool Connect();
@@ -132,28 +140,25 @@ namespace ADBUtils {
     int CheckConnection(bool connected);
 }
 
-// Helper class for progress parsing (reduces code duplication)
+// Parses adb push/pull -p output streams. Each line is "[ NN%] /path".
+// Per-line callback fires with both percent and the file path adb is
+// currently transferring; start()/complete() fire with empty path.
 class ProgressParser {
 public:
-    ProgressParser(std::function<void(int)> on_progress, bool debug_log = false);
+    ProgressParser(AdbProgressFn on_progress, bool debug_log = false);
 
-    // Process a chunk of output, calling on_progress for each percentage found
     void operator()(const std::string &chunk);
-
-    // Drain any remaining pending data (call after command completes)
     void drain();
-
-    // Report completion (100%)
     void complete();
-
-    // Report initial state (0%)
     void start();
 
 private:
-    std::function<void(int)> _on_progress;
+    AdbProgressFn _on_progress;
     bool _debug_log;
     int _last_percent;
+    std::string _last_path;
     std::string _pending;
 
-    static int ExtractPercent(const std::string &s);
+    // Returns true if the line had a "[ NN%] ..." form; out params filled.
+    static bool ExtractProgress(const std::string &s, int &percent, std::string &path);
 };

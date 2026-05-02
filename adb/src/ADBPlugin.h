@@ -70,10 +70,15 @@ private:
 	// move, or both. Per-collision OverwriteDialog with aside-rename.
 	bool ShiftF6Rename();
 
-	// Shared transfer engine for GetFiles/PutFiles (DRY)
+	// Shared transfer engine for GetFiles/PutFiles (DRY).
+	// fileSizesByBasename: pre-built basename→size map; populated only on
+	// host→device (push) where host-fs is cheaply walkable. Empty for
+	// pull (device→host) — current_file still updates per file from adb's
+	// progress lines but per-file bar uses an estimated size.
 	int RunTransfer(PluginPanelItem *items, int itemsCount, bool is_upload, bool move,
 	                const std::string& localDir, const std::string& deviceDir,
 	                const std::map<std::string, uint64_t>& dirSizes,
+	                const std::unordered_map<std::string, uint64_t>& fileSizesByBasename,
 	                uint64_t totalBytes, uint64_t totalFiles, int OpMode);
 
 public:

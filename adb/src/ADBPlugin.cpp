@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <unordered_map>
 #include <cstring>
 #include <cstdarg>
 #include <unistd.h>
@@ -78,6 +79,10 @@ static bool RemoveLocalPathRecursively(const std::string& path) {
 static bool NoControls(unsigned int control_state) {
 	return (control_state & (PKF_CONTROL | PKF_ALT | PKF_SHIFT)) == 0;
 }
+
+// Forward decl: PathBasename is defined later (with the host-fs helpers)
+// but referenced from progress callbacks above it.
+static std::string PathBasename(const std::string& p);
 
 // Lexical POSIX path normalize: collapse "..", drop ".", merge "//".
 static std::string NormalizePosixPath(const std::string& p) {
@@ -584,7 +589,14 @@ bool ADBPlugin::CrossPanelCopyMoveSameDevice(bool move)
 
 				const uint64_t bytes_before = bytes_done;
 				last_percent = -1;
-				auto onProgress = [&](int percent) {
+				std::string last_basename;
+				auto onProgress = [&](int percent, const std::string& path) {
+					std::string bn = PathBasename(path);
+					if (!bn.empty() && bn != last_basename) {
+						last_basename = bn;
+						std::lock_guard<std::mutex> lock(state.mtx_strings);
+						state.current_file = StrMB2Wide(bn);
+					}
 					if (percent == last_percent) return;
 					last_percent = percent;
 					state.file_complete = percent;
@@ -878,8 +890,17 @@ bool ADBPlugin::ShiftF5CopyInPlace() {
 
 					const uint64_t bytes_before = bytes_done;
 					last_percent = -1;
-					auto onPullProgress = [&](int percent) {
-						// Debounce: redraw only on integer-percent change.
+					std::string last_basename;
+					auto fileBoundary = [&](const std::string& path) {
+						std::string bn = PathBasename(path);
+						if (!bn.empty() && bn != last_basename) {
+							last_basename = bn;
+							std::lock_guard<std::mutex> lock(state.mtx_strings);
+							state.current_file = StrMB2Wide(bn);
+						}
+					};
+					auto onPullProgress = [&](int percent, const std::string& path) {
+						fileBoundary(path);
 						if (percent == last_percent) return;
 						last_percent = percent;
 						state.file_complete = percent;
@@ -899,7 +920,9 @@ bool ADBPlugin::ShiftF5CopyInPlace() {
 					if (pullRc != 0) { lastErr = pullRc; continue; }
 
 					last_percent = -1;
-					auto onPushProgress = [&](int percent) {
+					last_basename.clear();
+					auto onPushProgress = [&](int percent, const std::string& path) {
+						fileBoundary(path);
 						if (percent == last_percent) return;
 						last_percent = percent;
 						state.file_complete = percent;
@@ -1370,27 +1393,44 @@ PluginStartupInfo *ADBPlugin::GetInfo()
 	return &g_Info;
 }
 
-// Helper for recursive local directory scanning (DRY)
-static void ScanLocalDirectory(const std::string& path, uint64_t& totalSize, uint64_t& totalFiles) {
+// Walk path recursively. Optionally fill a basename→size map used by
+// the progress dialog to show per-file totals during adb push/pull.
+// Basename collisions across subdirs lose granularity for the
+// briefly-shown per-file bar but never affect the cumulative bar.
+static void ScanLocalDirectory(const std::string& path, uint64_t& totalSize, uint64_t& totalFiles,
+                                std::unordered_map<std::string, uint64_t>* perFileByBasename = nullptr) {
     DIR* dir = opendir(path.c_str());
     if (!dir) return;
 
     struct dirent* ent;
     while ((ent = readdir(dir)) != nullptr) {
         if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
-        
         std::string subPath = ADBUtils::JoinPath(path, ent->d_name);
         struct stat st;
         if (stat(subPath.c_str(), &st) == 0) {
             if (S_ISDIR(st.st_mode)) {
-                ScanLocalDirectory(subPath, totalSize, totalFiles);
+                ScanLocalDirectory(subPath, totalSize, totalFiles, perFileByBasename);
             } else {
                 totalSize += st.st_size;
                 totalFiles++;
+                if (perFileByBasename) {
+                    (*perFileByBasename)[ent->d_name] = st.st_size;
+                }
             }
         }
     }
     closedir(dir);
+}
+
+// basename(3) without modifying input. Returns "" for empty/all-slashes.
+static std::string PathBasename(const std::string& p) {
+    if (p.empty()) return std::string();
+    size_t end = p.size();
+    while (end > 0 && p[end - 1] == '/') --end;
+    if (end == 0) return std::string();
+    size_t start = end;
+    while (start > 0 && p[start - 1] != '/') --start;
+    return p.substr(start, end - start);
 }
 
 int ADBPlugin::ProcessEventCommand(const wchar_t *cmd, HANDLE hPlugin)
@@ -1619,8 +1659,11 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 	uint64_t totalBytes = 0;
 	uint64_t totalFiles = 0;
 	std::map<std::string, uint64_t> dirSizes;
+	std::unordered_map<std::string, uint64_t> fileSizesByBasename;
 
-	// Pre-scan total size/count; wrap to swallow GetDirectoryInfo throws.
+	// Pre-scan total size/count + per-file sizes (basename → size); a
+	// single shell call per top-level dir, used by progress dialog so
+	// the per-file bar resizes as adb pull advances file by file.
 	try {
 		for (int i = 0; i < ItemsNumber; i++) {
 			if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
@@ -1630,9 +1673,12 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 				totalBytes += dirInfo.total_size;
 				totalFiles += dirInfo.file_count;
 				dirSizes[devicePath] = dirInfo.total_size;
+				_adbDevice->GetDirectoryFileSizes(devicePath, fileSizesByBasename);
 			} else {
+				std::string fileName = StrWide2MB(PanelItem[i].FindData.lpwszFileName);
 				totalBytes += PanelItem[i].FindData.nFileSize;
 				totalFiles++;
+				fileSizesByBasename[fileName] = PanelItem[i].FindData.nFileSize;
 			}
 		}
 	} catch (const std::exception& ex) {
@@ -1642,7 +1688,7 @@ int ADBPlugin::GetFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 	}
 
 	return RunTransfer(PanelItem, ItemsNumber, false, Move != 0,
-	                   destPath, GetCurrentDevicePath(), dirSizes,
+	                   destPath, GetCurrentDevicePath(), dirSizes, fileSizesByBasename,
 	                   totalBytes, totalFiles, OpMode);
 }
 
@@ -1661,6 +1707,7 @@ int ADBPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 	uint64_t totalBytes = 0;
 	uint64_t totalFiles = 0;
 	std::map<std::string, uint64_t> dirSizes;
+	std::unordered_map<std::string, uint64_t> fileSizesByBasename;
 
 	// Pre-scan local filesystem: ScanLocalDirectory doesn't throw, but SetDirectory above may.
 	try {
@@ -1671,13 +1718,14 @@ int ADBPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 			if (PanelItem[i].FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
 				uint64_t dirSize = 0;
 				uint64_t dirFiles = 0;
-				ScanLocalDirectory(localPath, dirSize, dirFiles);
+				ScanLocalDirectory(localPath, dirSize, dirFiles, &fileSizesByBasename);
 				totalBytes += dirSize;
 				totalFiles += dirFiles;
 				dirSizes[localPath] = dirSize;
 			} else {
 				totalBytes += PanelItem[i].FindData.nFileSize;
 				totalFiles++;
+				fileSizesByBasename[fileName] = PanelItem[i].FindData.nFileSize;
 			}
 		}
 	} catch (const std::exception& ex) {
@@ -1687,13 +1735,14 @@ int ADBPlugin::PutFiles(PluginPanelItem *PanelItem, int ItemsNumber, int Move, c
 	}
 
 	return RunTransfer(PanelItem, ItemsNumber, true, Move != 0,
-	                   srcPath, GetCurrentDevicePath(), dirSizes,
+	                   srcPath, GetCurrentDevicePath(), dirSizes, fileSizesByBasename,
 	                   totalBytes, totalFiles, OpMode);
 }
 
 int ADBPlugin::RunTransfer(PluginPanelItem *items, int itemsCount, bool is_upload, bool move,
                            const std::string& localDir, const std::string& deviceDir,
                            const std::map<std::string, uint64_t>& dirSizes,
+                           const std::unordered_map<std::string, uint64_t>& fileSizesByBasename,
                            uint64_t totalBytes, uint64_t totalFiles, int OpMode)
 {
 	int successCount = 0;
@@ -1806,10 +1855,47 @@ int ADBPlugin::RunTransfer(PluginPanelItem *items, int itemsCount, bool is_uploa
 
 				const uint64_t bytesBefore = processedBytes;
 				int lastReportedPercent = -1;
-				auto progressCallback = [&](int percent) {
-					state.file_complete = percent;
+				// Per-file progress: when adb's reported path's basename
+				// changes, we treat the previous file as 100%-complete and
+				// reset the file bar to the new file's size. Cumulative
+				// (all_complete) sums completed files + current's progress.
+				std::string current_basename;
+				uint64_t current_file_size = isDir ? 0 : itemSize;
+				uint64_t bytes_done_in_dir = 0;
+				int last_pct_for_current = 0;
+				auto progressCallback = [&](int percent, const std::string& path) {
+					std::string bn = PathBasename(path);
+					if (!bn.empty() && bn != current_basename) {
+						// Previous file finished — credit its full size.
+						bytes_done_in_dir += (current_file_size * last_pct_for_current) / 100;
+						// We've passed the boundary; treat the just-ended
+						// file as fully transferred (last_pct_for_current
+						// was likely 100, but if adb dropped a line we
+						// still account for the bytes via map lookup).
+						auto it_prev = fileSizesByBasename.find(current_basename);
+						if (!current_basename.empty() && it_prev != fileSizesByBasename.end()
+								&& last_pct_for_current < 100) {
+							bytes_done_in_dir += it_prev->second
+								- (it_prev->second * last_pct_for_current) / 100;
+						}
+						current_basename = bn;
+						auto it = fileSizesByBasename.find(bn);
+						current_file_size = (it != fileSizesByBasename.end()) ? it->second
+								: (dirTotalSize > 0 ? dirTotalSize : itemSize);
+						last_pct_for_current = 0;
+						state.file_total = current_file_size;
+						state.file_complete = 0;
+						state.is_directory = false;
+						{
+							std::lock_guard<std::mutex> lock(state.mtx_strings);
+							state.current_file = StrMB2Wide(bn);
+						}
+					}
+					last_pct_for_current = percent;
+					state.file_complete = (current_file_size * percent) / 100;
 					if (dirTotalSize > 0) {
-						state.all_complete = bytesBefore + (dirTotalSize * percent) / 100;
+						const uint64_t this_done = (current_file_size * percent) / 100;
+						state.all_complete = bytesBefore + bytes_done_in_dir + this_done;
 					}
 					if (percent != lastReportedPercent) {
 						lastReportedPercent = percent;

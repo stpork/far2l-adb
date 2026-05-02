@@ -64,18 +64,15 @@ int CheckConnection(bool connected)
 
 
 // --- ProgressParser ---
-ProgressParser::ProgressParser(std::function<void(int)> on_progress, bool debug_log)
+ProgressParser::ProgressParser(AdbProgressFn on_progress, bool debug_log)
     : _on_progress(std::move(on_progress)), _debug_log(debug_log), _last_percent(-1) {}
 
 void ProgressParser::operator()(const std::string &chunk) {
     if (_debug_log) {
         DBG(" PTY chunk received (%zu bytes): [", chunk.size());
         for (unsigned char c : chunk) {
-            if (c >= 32 && c < 127) {
-                DBG("%c", c);
-            } else {
-                DBG("\\x%02X", c);
-            }
+            if (c >= 32 && c < 127) DBG("%c", c);
+            else                    DBG("\\x%02X", c);
         }
         DBG("]\n");
     }
@@ -85,49 +82,37 @@ void ProgressParser::operator()(const std::string &chunk) {
     while ((split = _pending.find_first_of("\r\n")) != std::string::npos) {
         std::string line = _pending.substr(0, split);
         _pending.erase(0, split + 1);
-        if (_debug_log) {
-            DBG("Parsing line: [%s]\n", line.c_str());
-        }
-        const int percent = ExtractPercent(line);
-        if (_debug_log) {
-            DBG("Extracted percent: %d\n", percent);
-        }
-        if (percent >= 0 && percent != _last_percent) {
+        int percent = -1;
+        std::string path;
+        if (!ExtractProgress(line, percent, path)) continue;
+        // Fire on percent change OR file change so the caller sees the
+        // "next file" boundary even if percent happened to match.
+        if (percent != _last_percent || path != _last_path) {
             _last_percent = percent;
-            if (_debug_log) {
-                DBG("Calling on_progress(%d)\n", percent);
-            }
-            _on_progress(percent);
+            _last_path = path;
+            _on_progress(percent, path);
         }
     }
 }
 
 void ProgressParser::drain() {
     if (!_pending.empty()) {
-        if (_debug_log) {
-            DBG("Pending tail: [%s]\n", _pending.c_str());
-        }
-        const int tail_percent = ExtractPercent(_pending);
-        if (tail_percent >= 0 && tail_percent != _last_percent) {
-            _on_progress(tail_percent);
+        int percent = -1;
+        std::string path;
+        if (ExtractProgress(_pending, percent, path)
+                && (percent != _last_percent || path != _last_path)) {
+            _on_progress(percent, path);
         }
         _pending.clear();
     }
 }
 
-void ProgressParser::complete() {
-    _on_progress(100);
-}
+void ProgressParser::complete() { _on_progress(100, std::string()); }
+void ProgressParser::start()    { _on_progress(0,   std::string()); }
 
-void ProgressParser::start() {
-    _on_progress(0);
-}
-
-int ProgressParser::ExtractPercent(const std::string &s) {
+bool ProgressParser::ExtractProgress(const std::string &s, int &percent, std::string &path) {
     size_t p = s.find('%');
-    if (p == std::string::npos || p == 0) {
-        return -1;
-    }
+    if (p == std::string::npos || p == 0) return false;
     size_t start = p;
     while (start > 0 && std::isdigit(static_cast<unsigned char>(s[start - 1]))) {
         --start;
@@ -135,11 +120,19 @@ int ProgressParser::ExtractPercent(const std::string &s) {
     if (start == p) {
         return -1;
     }
-    int percent = std::atoi(s.substr(start, p - start).c_str());
-    if (percent < 0 || percent > 100) {
-        return -1;
+    percent = std::atoi(s.substr(start, p - start).c_str());
+    if (percent < 0 || percent > 100) return false;
+    // Path follows the closing ']'; absent on the trailing summary line.
+    size_t close = s.find(']', p);
+    if (close == std::string::npos) {
+        path.clear();
+        return true;
     }
-    return percent;
+    size_t ps = close + 1;
+    while (ps < s.size() && std::isspace(static_cast<unsigned char>(s[ps]))) ++ps;
+    path.assign(s, ps, std::string::npos);
+    while (!path.empty() && std::isspace(static_cast<unsigned char>(path.back()))) path.pop_back();
+    return true;
 }
 
 ADBDevice::ADBDevice(const std::string &device_serial)
@@ -557,7 +550,7 @@ bool ADBDevice::SetDirectory(const std::string &path) {
 }
 
 int ADBDevice::TransferItem(const std::string& src, const std::string& dst, bool is_push, bool recursive,
-                           const std::function<void(int)>& on_progress,
+                           const AdbProgressFn& on_progress,
                            const std::function<bool()>& abort_check)
 {
     EnsureConnection();
@@ -590,7 +583,7 @@ int ADBDevice::PullFile(const std::string &devicePath, const std::string &localP
     return TransferItem(devicePath, localPath, false, false);
 }
 
-int ADBDevice::PullFile(const std::string &devicePath, const std::string &localPath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check) {
+int ADBDevice::PullFile(const std::string &devicePath, const std::string &localPath, const AdbProgressFn &on_progress, const std::function<bool()> &abort_check) {
     return TransferItem(devicePath, localPath, false, false, on_progress, abort_check);
 }
 
@@ -598,7 +591,7 @@ int ADBDevice::PushFile(const std::string &localPath, const std::string &deviceP
     return TransferItem(localPath, devicePath, true, false);
 }
 
-int ADBDevice::PushFile(const std::string &localPath, const std::string &devicePath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check) {
+int ADBDevice::PushFile(const std::string &localPath, const std::string &devicePath, const AdbProgressFn &on_progress, const std::function<bool()> &abort_check) {
     return TransferItem(localPath, devicePath, true, false, on_progress, abort_check);
 }
 
@@ -606,7 +599,7 @@ int ADBDevice::PullDirectory(const std::string &devicePath, const std::string &l
     return TransferItem(devicePath, localPath, false, true);
 }
 
-int ADBDevice::PullDirectory(const std::string &devicePath, const std::string &localPath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check) {
+int ADBDevice::PullDirectory(const std::string &devicePath, const std::string &localPath, const AdbProgressFn &on_progress, const std::function<bool()> &abort_check) {
     return TransferItem(devicePath, localPath, false, true, on_progress, abort_check);
 }
 
@@ -614,7 +607,7 @@ int ADBDevice::PushDirectory(const std::string &localPath, const std::string &de
     return TransferItem(localPath, devicePath, true, true);
 }
 
-int ADBDevice::PushDirectory(const std::string &localPath, const std::string &devicePath, const std::function<void(int)> &on_progress, const std::function<bool()> &abort_check) {
+int ADBDevice::PushDirectory(const std::string &localPath, const std::string &devicePath, const AdbProgressFn &on_progress, const std::function<bool()> &abort_check) {
     return TransferItem(localPath, devicePath, true, true, on_progress, abort_check);
 }
 
@@ -757,6 +750,32 @@ ADBDevice::DirectoryInfo ADBDevice::GetDirectoryInfo(const std::string &devicePa
     }
 
     return info;
+}
+
+void ADBDevice::GetDirectoryFileSizes(const std::string &devicePath,
+                                       std::unordered_map<std::string, uint64_t>& out) {
+    EnsureConnection();
+    if (!_connected) return;
+    // Same find+ls -l batching trick as GetDirectoryInfo (portable across
+    // BusyBox/toybox/coreutils). awk emits "<size>\t<basename>".
+    std::string command = "find " + ADBUtils::ShellQuote(devicePath) +
+        " -type f -exec ls -l {} + 2>/dev/null | awk '{n=$NF; sub(/.*\\//,\"\",n); printf(\"%s\\t%s\\n\",$5,n)}'";
+    std::string result = RunShellCommand(command);
+    size_t pos = 0;
+    while (pos < result.size()) {
+        size_t eol = result.find('\n', pos);
+        std::string line = result.substr(pos, eol == std::string::npos ? std::string::npos : eol - pos);
+        pos = (eol == std::string::npos) ? result.size() : eol + 1;
+        if (line.empty()) continue;
+        size_t tab = line.find('\t');
+        if (tab == std::string::npos) continue;
+        std::string size_str = line.substr(0, tab);
+        std::string name = line.substr(tab + 1);
+        while (!name.empty() && (name.back() == '\r' || name.back() == ' ')) name.pop_back();
+        if (name.empty() || size_str.empty()) continue;
+        uint64_t sz = strtoull(size_str.c_str(), nullptr, 10);
+        out[name] = sz;
+    }
 }
 
 int ADBDevice::Str2Errno(const std::string &adbError) {
