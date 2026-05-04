@@ -2147,7 +2147,7 @@ static std::list<std::wstring> flags2texts(UInt32 flags)
 			flags &= ~kpv_ErrorFlags_UnsupportedMethod;
 		}
 		if ((flags & kpv_ErrorFlags_UnsupportedFeature) == kpv_ErrorFlags_UnsupportedFeature) {	   // 256
-			texts.emplace_back(L"UnsupportedFeature");	  // TODO: localize
+			texts.emplace_back(Far::get_msg(MSG_ERROR_EXTRACT_UNSUPPORTED_FEATURE));
 			flags &= ~kpv_ErrorFlags_UnsupportedFeature;
 		}
 		if ((flags & kpv_ErrorFlags_DataError) == kpv_ErrorFlags_DataError) {	 // 512

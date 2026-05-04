@@ -290,6 +290,7 @@
 
 // Error messages
 "Metodo Di Compressione Non Supportato"
+"Caratteristica Non Supportata"
 "Errore Nei Dati"
 "Password Errata O Errore Nei Dati"
 "Controllo CRC Fallito"

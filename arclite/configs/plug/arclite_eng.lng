@@ -290,6 +290,7 @@
 
 // Error messages
 "Unsupported compression method"
+"Unsupported feature"
 "Data error"
 "Wrong password or data error"
 "CRC check failed"

@@ -290,6 +290,7 @@
 
 // Error messages
 "Método de compresión no soportado"
+"Característica no soportada"
 "Error de datos"
 "Contraseña incorrecta o error de datos"
 "Comprobación de CRC ha fallado"

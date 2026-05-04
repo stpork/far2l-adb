@@ -290,6 +290,7 @@
 
 // Error messages
 "Nieobsługiwany sposób kompresji"
+"Nieobsługiwana funkcja"
 "Błąd danych"
 "Nieprawidłowe hasło lub błąd danych"
 "Błąd sprawdzania CRC"
