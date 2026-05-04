@@ -2126,7 +2126,6 @@ static std::list<std::wstring> flags2texts(UInt32 flags)
 			flags &= ~kpv_ErrorFlags_EncryptedHeadersError;
 		}
 		if ((flags & kpv_ErrorFlags_UnavailableStart) == kpv_ErrorFlags_UnavailableStart) {	   // 8
-			// errors.emplace_back(L"UnavailableStart"); // TODO: localize
 			texts.emplace_back(Far::get_msg(MSG_ERROR_EXTRACT_UNAVAILABLE_DATA));
 			flags &= ~kpv_ErrorFlags_UnavailableStart;
 		}
