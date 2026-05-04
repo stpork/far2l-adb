@@ -1572,7 +1572,6 @@ SHAREDSYMBOL void WINAPI SetStartupInfoW(const PluginStartupInfo *info)
 {
 	// CriticalSectionLock lock(GetExportSync());
 
-	enable_lfh();
 	Far::init(info);
 
 	if (!g_options.load())

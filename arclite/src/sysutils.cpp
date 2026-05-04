@@ -946,13 +946,6 @@ std::wstring create_guid()
 	return guid_str;
 }
 
-void enable_lfh()
-{
-	//  ULONG heap_info = 2;
-	//  HeapSetInformation(reinterpret_cast<HANDLE>(_get_heap_handle()), HeapCompatibilityInformation,
-	//  &heap_info, sizeof(heap_info));
-}
-
 std::wstring search_path(const std::wstring &file_name)
 {
 	fprintf(stderr, "(!!!!!!!!!!!!) search_path() do nothing\n");
