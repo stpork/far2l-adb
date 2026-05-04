@@ -593,6 +593,4 @@ void BaseDialog::SetDialogListPosition(int ctl, int pos)
 		}
 		return;
 	}
-
-//TODO:	SendDlgMessage(DM_LISTGETCURPOS, ctl, 0);
 }
