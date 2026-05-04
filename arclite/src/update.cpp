@@ -1399,17 +1399,12 @@ public:
 			break;
 
 			case kpidComment:
-//				if (options.use_export_settings && options.export_options.export_file_descriptions) {
-//					prop = L"TODO:";
-//				}
 			break;
 
 			case kpidDevMajor:
-//					prop = (UInt32)999;
 			break;
 
 			case kpidDevMinor:
-//					prop = (UInt32)999;
 			break;
 
 			case kpidDeviceMajor: {
