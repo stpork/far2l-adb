@@ -953,27 +953,6 @@ void enable_lfh()
 	//  &heap_info, sizeof(heap_info));
 }
 
-std::wstring search_path(const std::wstring &file_name)
-{
-	fprintf(stderr, "(!!!!!!!!!!!!) search_path() do nothing\n");
-	// TODO: From far2l
-#if 0
-  Buffer<wchar_t> path(MAX_PATH);
-  wchar_t* name_ptr;
-  DWORD size = SearchPathW(nullptr, file_name.c_str(), nullptr, static_cast<DWORD>(path.size()), path.data(), &name_ptr);
-  if (size > path.size()) {
-	path.resize(size);
-	size = SearchPathW(nullptr, file_name.c_str(), nullptr, static_cast<DWORD>(path.size()), path.data(), &name_ptr);
-  }
-  CHECK_SYS(size);
-  CHECK(size < path.size());
-  return std::wstring(path.data(), size);
-#else
-	return std::wstring(L"Not today");
-#endif
-	// WINPORT_
-}
-
 std::pair<DWORD, DWORD> get_posix_and_nt_attributes(DWORD const RawAttributes)
 {
 	// some programs store posix attributes in high 16 bits.

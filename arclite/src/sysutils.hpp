@@ -258,7 +258,6 @@ std::wstring format_file_time(const FILETIME &file_time);
 std::wstring upcase(const std::wstring &str);
 std::wstring create_guid();
 void enable_lfh();
-std::wstring search_path(const std::wstring &file_name);
 
 class DisableSleepMode
 {
