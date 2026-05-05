@@ -611,6 +611,26 @@ else()
         " COMPONENT system)
 endif()
 
+if (NOT DEFINED MTP OR MTP)
+    message(STATUS "MTP plugin enabled")
+    add_subdirectory (mtp)
+else()
+    message(STATUS "${ColorRed}MTP plugin disabled due to MTP=${MTP}${ColorNormal}")
+    install(CODE "
+        execute_process(COMMAND rm -f ${CMAKE_INSTALL_PREFIX}/lib/far2l/Plugins/mtp/plug/mtp.far-plug-wide)
+        " COMPONENT system)
+endif()
+
+if (NOT DEFINED PREVIEW OR PREVIEW)
+    message(STATUS "PREVIEW plugin enabled")
+    add_subdirectory (preview)
+else()
+    message(STATUS "${ColorRed}PREVIEW plugin disabled due to PREVIEW=${PREVIEW}${ColorNormal}")
+    install(CODE "
+        execute_process(COMMAND rm -f ${CMAKE_INSTALL_PREFIX}/lib/far2l/Plugins/preview/plug/preview.far-plug-wide)
+        " COMPONENT system)
+endif()
+
 ##############################
 # common install directives
 
