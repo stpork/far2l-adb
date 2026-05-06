@@ -216,7 +216,8 @@ const ConfigOpt g_cfg_opts[] {
 		L"InputSettings", L"Captures the left Win or Super key exclusively when the backend supports it" },
 	{OST_COMMON, NSecInterface, "ExclusiveWinRight", &Opt.ExclusiveWinRight, 0,
 		L"InputSettings", L"Captures the right Win or Super key exclusively when the backend supports it" },
-	{OST_COMMON, NSecInterface, "UseRightAltAsAltGr", &Opt.UseRightAltAsAltGr, 0},
+	{OST_COMMON, NSecInterface, "UseRightAltAsAltGr", &Opt.UseRightAltAsAltGr, 0,
+		L"InputSettings", L"Uses the right Alt key as AltGr for keyboard layout composition" },
 
 	{OST_COMMON, NSecInterface, "DateFormat", &Opt.DateFormat, GetDateFormatDefault(),
 		L"InterfSettings", L"Selects the date display format used by panels and dialogs: 0=MM-DD-YYYY, 1=DD-MM-YYYY, 2=YYYY-MM-DD" },

@@ -313,10 +313,12 @@ void KeyTracker::OnKeyDown(wxKeyEvent& event, DWORD ticks)
 		_right_control = true;
 	}
 	// Linux AltGr: ISO_Level3_Shift (RAW_CONTEXT) or XF86 alternate (RAW_ALTGR).
-	if (event.GetKeyCode() == WXK_ALT
-	    && (event.GetRawKeyCode() == RAW_ALTGR || event.GetRawKeyCode() == RAW_CONTEXT)
-	    && WinPortGetUseRightAltAsAltGr()) {
-		_composing = true;
+	if ((event.GetKeyCode() == WXK_ALT || event.GetKeyCode() == 0) &&
+		(event.GetRawKeyCode() == RAW_ALTGR || event.GetRawKeyCode() == RAW_CONTEXT)) {
+		_right_alt = true;
+		if (WinPortGetUseRightAltAsAltGr()) {
+			_composing = true;
+		}
 	}
 #endif
 }
@@ -341,7 +343,8 @@ bool KeyTracker::OnKeyUp(wxKeyEvent& event)
 	if (event.GetKeyCode() == WXK_CONTROL) {
 		_right_control = false;
 	}
-	if (event.GetKeyCode() == WXK_ALT) {
+	if (event.GetKeyCode() == WXK_ALT || event.GetKeyCode() == 0) {
+		_right_alt = false;
 		_composing = false;
 	}
 #endif
