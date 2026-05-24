@@ -45,10 +45,11 @@ public:
 		int width, height, channels;
 		orientation = ExifHelpers::ReadExifOrientation(path);
 
-		// Load image info first to check dimensions
+		// Load image info first to check dimensions and enforce pixel cap
 		if (!stbi_info(path.c_str(), &width, &height, &channels)) {
 			return false;
 		}
+		if ((uint64_t)width * height > kMaxImagePixels) return false;
 
 		// Calculate scaled dimensions if maxPixelSize is specified
 		int targetWidth = width;

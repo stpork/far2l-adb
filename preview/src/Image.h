@@ -47,13 +47,19 @@ public:
 	inline unsigned char *Ptr(int x, int y, unsigned char channel = 0)
 	{
 		size_t off = Offset(x, y, channel);
-		assert(off < _data.size() && "Image::Ptr out of bounds");
+		if (off >= _data.size()) {
+			assert(false && "Image::Ptr out of bounds");
+			return _data.data(); // safe fallback: first pixel, avoids UB in Release
+		}
 		return _data.data() + off;
 	}
 	inline const unsigned char *Ptr(int x, int y, unsigned char channel = 0) const
 	{
 		size_t off = Offset(x, y, channel);
-		assert(off < _data.size() && "Image::Ptr out of bounds");
+		if (off >= _data.size()) {
+			assert(false && "Image::Ptr out of bounds");
+			return _data.data(); // safe fallback: first pixel, avoids UB in Release
+		}
 		return _data.data() + off;
 	}
 };

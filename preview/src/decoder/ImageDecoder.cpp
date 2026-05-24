@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <mutex>
 
 // Platform-specific function declarations
 #ifdef __APPLE__
@@ -36,12 +37,16 @@ std::vector<std::unique_ptr<ImageDecoder>> DecoderFactory::CreateDecoders()
 	return decoders;
 }
 
-// Decoder list is rebuilt only when settings change (generation counter)
+// Decoder list is rebuilt only when settings change (generation counter).
+// Mutex protects concurrent calls from main thread and ImageAtQV background thread.
 static std::vector<std::unique_ptr<ImageDecoder>> s_decoders;
 static uint32_t s_last_generation = UINT32_MAX; // force build on first use
+static std::mutex s_decoders_mutex;
 
 ImageDecoder* DecoderFactory::FindDecoder(const std::string& path)
 {
+	std::lock_guard<std::mutex> lock(s_decoders_mutex);
+
 	uint32_t gen = g_settings.SettingsGeneration();
 	if (s_last_generation != gen) {
 		s_decoders = CreateDecoders();

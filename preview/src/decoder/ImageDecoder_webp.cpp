@@ -26,10 +26,12 @@ public:
 		DBG("Decoding via libwebp: %s", path.c_str());
 		orientation = 1;
 
+		static constexpr std::streamsize kMaxFileBytes = 256LL * 1024 * 1024; // 256 MB
+
 		std::ifstream file(path, std::ios::binary | std::ios::ate);
 		if (!file.is_open()) return false;
 		std::streamsize size = file.tellg();
-		if (size < 0) return false;
+		if (size < 0 || size > kMaxFileBytes) return false;
 		file.seekg(0, std::ios::beg);
 
 		std::vector<uint8_t> buffer(size);
