@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <cassert>
 
 class Image
 {
@@ -19,7 +20,7 @@ public:
 
 	void Swap(Image &another);
 
-	char BytesPerPixel() const { return _bytes_per_pixel; }
+	unsigned char BytesPerPixel() const { return _bytes_per_pixel; }
 	const int Width() const { return _width; }
 	const int Height() const { return _height; }
 
@@ -28,7 +29,7 @@ public:
 	size_t Size() const { return _data.size(); }
 
 	void Resize(int width = 0, int height = 0, unsigned char bytes_per_pixel = 3);
-	void Assign(const void *data);
+	void Assign(const void *data, size_t size);
 
 	void MirrorH();
 	void MirrorV();
@@ -46,19 +47,13 @@ public:
 	inline unsigned char *Ptr(int x, int y, unsigned char channel = 0)
 	{
 		size_t off = Offset(x, y, channel);
-		if (off >= _data.size()) {
-			static unsigned char dummy = 0;
-			return &dummy;
-		}
+		assert(off < _data.size() && "Image::Ptr out of bounds");
 		return _data.data() + off;
 	}
 	inline const unsigned char *Ptr(int x, int y, unsigned char channel = 0) const
 	{
 		size_t off = Offset(x, y, channel);
-		if (off >= _data.size()) {
-			static const unsigned char dummy = 0;
-			return &dummy;
-		}
+		assert(off < _data.size() && "Image::Ptr out of bounds");
 		return _data.data() + off;
 	}
 };
