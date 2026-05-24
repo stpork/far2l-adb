@@ -1496,8 +1496,12 @@ int MTPPlugin::ListDevices(PluginPanelItem** panel_items, int* items_number) {
         }
     }
 
-    if (out.empty()) {
-        out.push_back(MakePanelItem("No MTP/PTP USB devices found", false, 0, 0, 0, 0, 0));
+    // No-devices placeholder row (mirrors ADB); out always has "..", so test devices.value.
+    if (devices.value.empty()) {
+        _panel_title = Lng(MNoDevicesPanelTitle);
+        out.push_back(MakePanelItem("<Not found>", false, 0, 0, 0, 0, 0, "<Connect device>"));
+    } else {
+        _panel_title = Lng(MDevicesTitle);
     }
 
     *items_number = static_cast<int>(out.size());
