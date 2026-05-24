@@ -8,16 +8,17 @@ class Settings
 {
 public:
 	enum DefaultScale {
-		EQUAL_SCREEN = 0,
-		LESSOREQUAL_SCREEN,
-		EQUAL_IMAGE,
+		FIT_AUTO = 0,
+		FIT_WIDTH,
+		FIT_HEIGHT,
+		FIT_ORIGINAL,
 
 		INVALID_SCALE_EDGE_VALUE
 	};
 
 private:
 	std::string _ini_path;
-	DefaultScale _default_scale{EQUAL_SCREEN};
+	DefaultScale _default_scale{FIT_AUTO};
 	bool _use_orientation = true;
 	bool _open_by_enter = true;
 	bool _open_by_cpgdn = true;

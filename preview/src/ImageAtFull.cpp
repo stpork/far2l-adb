@@ -172,16 +172,15 @@ static LONG_PTR WINAPI ImageDlgProc(HANDLE hDlg, int Msg, int Param1, LONG_PTR P
 			PurgeAccumulatedInputEvents();
 			switch (key) {
 				case 'a': case 'A': case KEY_MULTIPLY: case '*':
-					g_settings.SetDefaultScale(Settings::LESSOREQUAL_SCREEN);
-					iv->Reset(true);
-					break;
-				case 'q': case 'Q': case KEY_DEL: case KEY_NUMDEL:
-					g_settings.SetDefaultScale(Settings::EQUAL_SCREEN);
+					g_settings.SetDefaultScale(Settings::FIT_AUTO);
 					iv->Reset(true);
 					break;
 				case 'z': case 'Z': case KEY_DIVIDE: case '/':
-					g_settings.SetDefaultScale(Settings::EQUAL_IMAGE);
+					g_settings.SetDefaultScale(Settings::FIT_ORIGINAL);
 					iv->Reset(true);
+					break;
+				case 'm': case 'M':
+					iv->CycleFitMode();
 					break;
 				case KEY_CLEAR: case '=': iv->Reset(false); break;
 				case KEY_ADD: case '+': iv->Scale(delta); break;

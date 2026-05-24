@@ -154,13 +154,25 @@ void ImageView::SetupInitialScale(const int canvas_w, const int canvas_h)
 	_scale_max = std::max(_scale_fit * 4.0, 2.0);
 	_scale_min = std::min(_scale_fit / 8.0, 0.5);
 
-	const auto set_defscale = g_settings.GetDefaultScale();
-	if (set_defscale == Settings::EQUAL_IMAGE) {
-		_scale = 1.0;
-	} else if (set_defscale == Settings::EQUAL_SCREEN || canvas_w < rotated_orig_w || canvas_h < rotated_orig_h) {
-		_scale = _scale_fit;
-	} else {
-		_scale = 1.0;
+	switch (g_settings.GetDefaultScale()) {
+		case Settings::FIT_AUTO:
+			_scale = _scale_fit;
+			break;
+		case Settings::FIT_WIDTH:
+			_scale = double(canvas_w) / double(rotated_orig_w);
+			break;
+		case Settings::FIT_HEIGHT:
+			_scale = double(canvas_h) / double(rotated_orig_h);
+			break;
+		case Settings::FIT_ORIGINAL:
+			// 1:1 if image fits the canvas; otherwise fall back to AUTO
+			// so we never silently crop both axes at the default zoom.
+			_scale = (rotated_orig_w <= canvas_w && rotated_orig_h <= canvas_h)
+			         ? 1.0 : _scale_fit;
+			break;
+		default:
+			_scale = _scale_fit;
+			break;
 	}
 }
 
@@ -753,6 +765,15 @@ void ImageView::MirrorV()
 void ImageView::Reset(bool keep_rotmir)
 {
 	JustReset(keep_rotmir);
+	RenderImage();
+	DenoteState();
+}
+
+void ImageView::CycleFitMode()
+{
+	int next = ((int)g_settings.GetDefaultScale() + 1) % (int)Settings::INVALID_SCALE_EDGE_VALUE;
+	g_settings.SetDefaultScale((Settings::DefaultScale)next);
+	JustReset(true);
 	RenderImage();
 	DenoteState();
 }
