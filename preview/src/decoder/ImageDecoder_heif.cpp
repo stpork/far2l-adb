@@ -1,9 +1,11 @@
 #include "ImageDecoder.h"
 #include "../PreviewLog.h"
-#include <libheif/heif.h>
 #include <algorithm>
 #include <cstring>
 #include "external/stb_image_resize2.h"
+
+#ifdef HAVE_HEIF
+#include <libheif/heif.h>
 
 class HeifImageDecoder : public ImageDecoder {
 public:
@@ -15,8 +17,10 @@ public:
 		return strcasecmp(ext, "heic") == 0 || strcasecmp(ext, "heif") == 0;
 	}
 
-	bool Decode(const std::string& path, Image& out, int& orientation, int maxPixelSize) override
+	bool Decode(const std::string& path, Image& out, int& orientation,
+	            int maxPixelSize, std::atomic<bool>* cancel) override
 	{
+		if (cancel && *cancel) return false;
 		DBG("Decoding via libheif: %s", path.c_str());
 		orientation = ExifHelpers::ReadExifOrientation(path);
 
@@ -38,6 +42,12 @@ public:
 
 		int width = heif_image_handle_get_width(handle);
 		int height = heif_image_handle_get_height(handle);
+
+		if ((uint64_t)width * height > kMaxImagePixels) {
+			heif_image_handle_release(handle);
+			heif_context_free(ctx);
+			return false;
+		}
 
 		int targetWidth = width;
 		int targetHeight = height;
@@ -77,12 +87,14 @@ public:
 		heif_image_release(img);
 		heif_image_handle_release(handle);
 		heif_context_free(ctx);
-
 		return true;
 	}
 };
+#endif // HAVE_HEIF
 
 void CreateHeifDecoder(std::vector<std::unique_ptr<ImageDecoder>>& decoders)
 {
+#ifdef HAVE_HEIF
 	decoders.push_back(std::make_unique<HeifImageDecoder>());
+#endif
 }

@@ -14,6 +14,7 @@
 	#define STBIR_SSE2
 #endif
 
+#define STBI_MAX_DIMENSIONS 16384
 #define STB_IMAGE_IMPLEMENTATION
 #include "external/stb_image.h"
 
@@ -37,7 +38,8 @@ public:
 		return false;
 	}
 
-	bool Decode(const std::string& path, Image& out, int& orientation, int maxPixelSize) override
+	bool Decode(const std::string& path, Image& out, int& orientation,
+	            int maxPixelSize, std::atomic<bool>* cancel) override
 	{
 		DBG("Decoding via STB (Crossplatform): %s", path.c_str());
 		int width, height, channels;
