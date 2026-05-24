@@ -17,7 +17,7 @@
 class MacOSImageDecoder : public ImageDecoder {
 public:
 	bool Decode(const std::string& path, Image& out, int& orientation,
-	            int maxPixelSize, std::atomic<bool>* cancel = nullptr) override;
+	            int maxPixelSize, volatile bool* cancel = nullptr) override;
 	bool CanHandle(const char* ext) const override;
 	const char* Name() const override { return "ImageIO"; }
 
@@ -146,7 +146,7 @@ bool MacOSImageDecoder::ExtractRGB(CGImageRef image, Image& out)
 }
 
 bool MacOSImageDecoder::Decode(const std::string& path, Image& out, int& orientation,
-                               int maxPixelSize, std::atomic<bool>* /*cancel*/)
+                               int maxPixelSize, volatile bool* /*cancel*/)
 {
 	DBG("Decoding via Native ImageIO: %s", path.c_str());
 	// Load image with optional scaling

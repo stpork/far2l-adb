@@ -39,8 +39,9 @@ public:
 	}
 
 	bool Decode(const std::string& path, Image& out, int& orientation,
-	            int maxPixelSize, std::atomic<bool>* cancel) override
+	            int maxPixelSize, volatile bool* cancel) override
 	{
+		if (cancel && *cancel) return false;
 		DBG("Decoding via STB (Crossplatform): %s", path.c_str());
 		int width, height, channels;
 		orientation = ExifHelpers::ReadExifOrientation(path);

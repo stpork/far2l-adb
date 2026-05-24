@@ -23,6 +23,7 @@ bool ImageView::IterateFile(bool forward)
 
 bool ImageView::PrepareImage()
 {
+	CancelAndJoinFullRes();
 	_render_file = CurFile();
 	_orig_image.Resize();
 
@@ -63,7 +64,7 @@ bool ImageView::ReadImageInternal(int maxPixelSize)
 	}
 
 	int orientation = 1;
-	if (!decoder->Decode(_render_file, _orig_image, orientation, maxPixelSize)) {
+	if (!decoder->Decode(_render_file, _orig_image, orientation, maxPixelSize, _cancel)) {
 		_err_str = Wide2MB(g_settings.Msg(M_ERR_DECODE));
 		return false;
 	}
@@ -90,20 +91,70 @@ bool ImageView::ReadImageInternal(int maxPixelSize)
 	return true;
 }
 
-bool ImageView::EnsureFullResolution()
+void ImageView::CancelAndJoinFullRes()
 {
-	// Already have full resolution?
-	if (_has_full_resolution) {
-		return true;
-	}
+	if (!_fullres_thread.joinable()) return;
+	_fullres_cancel = true;
+	_fullres_thread.join();
+	_fullres_cancel = false;
+	_fullres_ready = false;
+}
 
-	// Need to re-decode at full resolution (0 = no limit)
-	DBG("Re-decoding at full resolution for zoom");
-	if (!ReadImageInternal(0)) {
-		return false;
+void ImageView::RequestFullResolution(double target_scale)
+{
+	_fullres_target_scale = target_scale;
+	if (_fullres_thread.joinable()) {
+		if (_fullres_ready) {
+			_fullres_thread.join();  // Already done, quick join before restarting
+		} else {
+			return;  // Decode in progress, updated target_scale will be used when it finishes
+		}
 	}
+	_fullres_ready = false;
+	_fullres_cancel = false;
+	std::string file = _render_file;
+	_fullres_thread = std::thread([this, file]() {
+		ImageDecoder* decoder = DecoderFactory::FindDecoder(file);
+		if (!decoder || _fullres_cancel) return;
+		Image tmp;
+		int orient = 1;
+		if (decoder->Decode(file, tmp, orient, 0, &_fullres_cancel) && !_fullres_cancel) {
+			_fullres_img = std::move(tmp);
+			_fullres_orientation = orient;
+			_fullres_file = file;
+			_fullres_ready.store(true, std::memory_order_release);
+		}
+	});
+}
 
+bool ImageView::ApplyPendingFullRes()
+{
+	if (!_fullres_ready.load(std::memory_order_acquire)) return false;
+	if (_fullres_thread.joinable()) _fullres_thread.join();
+	_fullres_ready = false;
+
+	if (_fullres_file != _render_file || _fullres_img.Width() == 0) return false;
+
+	_orig_image = std::move(_fullres_img);
 	_has_full_resolution = true;
+	_original_width = _orig_image.Width();
+	_original_height = _orig_image.Height();
+
+	// Reset transform state and re-apply EXIF (matches ReadImageInternal behaviour)
+	_rotate = _rotated = 0;
+	_mirror_h = _mirrored_h = _mirror_v = _mirrored_v = false;
+	if (g_settings.UseOrientation() && _fullres_orientation > 1 && _fullres_orientation <= 8) {
+		ApplyEXIFOrientation(_fullres_orientation);
+	}
+
+	if (_fullres_target_scale > 0) {
+		_scale = _fullres_target_scale;
+	}
+	_scaled_image_scale = -1;
+	_base_dirty = true;
+
+	RenderImage();
+	DenoteState();
 	return true;
 }
 
@@ -504,6 +555,7 @@ ImageView::ImageView(size_t initial_file, const std::vector<std::pair<std::strin
 
 ImageView::~ImageView()
 {
+	CancelAndJoinFullRes();
 	WINPORT(DeleteConsoleImage)(NULL, WINPORT_IMAGE_ID);
 	if (!_tmp_file.empty()) {
 		unlink(_tmp_file.c_str());
@@ -664,16 +716,14 @@ void ImageView::Scale(int change)
 	}
 
 	if (_scale != new_scale) {
-		// Check if we need full resolution for zooming in beyond 100%
+		// Start async full-res decode when zooming beyond what was decoded
 		if (new_scale > 1.0 && !_has_full_resolution) {
-			// Calculate required size at this zoom level
 			int required_size = (int)(std::max(_original_width, _original_height) * new_scale);
 			if (required_size > _decoded_max_size) {
-				DBG("Zoom requires full resolution: scale=%.2f required=%d decoded=%d",
+				DBG("Requesting async full resolution: scale=%.2f required=%d decoded=%d",
 					new_scale, required_size, _decoded_max_size);
-				if (!EnsureFullResolution()) {
-					return;  // Failed to re-decode
-				}
+				RequestFullResolution(new_scale);
+				// Continue rendering at current (lower) resolution immediately
 			}
 		}
 		_scale = new_scale;

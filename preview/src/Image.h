@@ -12,9 +12,6 @@ class Image
 	mutable std::vector<uint8_t> _scratch_argb_src;
 	mutable std::vector<uint8_t> _scratch_argb_dst;
 
-	void ScaleEnlarge(Image &dst, double scale, int y_begin, int y_end) const;
-	void ScaleReduce(Image &dst, double scale, int y_begin, int y_end) const;
-
 public:
 	Image(int width = 0, int height = 0, unsigned char bytes_per_pixel = 3);
 

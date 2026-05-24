@@ -6,6 +6,8 @@
 #include <memory>
 #include <cstdio>
 #include <unordered_set>
+#include <thread>
+#include <atomic>
 #include <signal.h>
 #include <dirent.h>
 #include <utils.h>
@@ -42,12 +44,22 @@ class ImageView
 	int _original_height{0};       // Original image height (before any scaling)
 	bool _has_full_resolution{false};  // Do we have full resolution decoded?
 
+	// Async full-resolution decode (avoids freezing UI when zooming to > 100%)
+	Image _fullres_img;
+	int _fullres_orientation{1};
+	std::string _fullres_file;
+	double _fullres_target_scale{-1};
+	std::thread _fullres_thread;
+	volatile bool _fullres_cancel{false};
+	std::atomic<bool> _fullres_ready{false};
+
 	bool IterateFile(bool forward);
 	bool PrepareImage();
 	bool ReadImage();
 	bool ReadImageInternal(int maxPixelSize);  // Internal: decode at specific size
 	void ApplyEXIFOrientation(int orientation);
-	bool EnsureFullResolution();  // Re-decode at full resolution if needed
+	void RequestFullResolution(double target_scale);  // Kick off async full-res decode
+	void CancelAndJoinFullRes();                      // Cancel + join (blocks briefly)
 
 	bool RefreshWGI();
 	void SetupInitialScale(const int canvas_w, const int canvas_h);
@@ -76,6 +88,10 @@ public:
 	std::unordered_set<std::string> GetSelection() const;
 
 	bool Setup(SMALL_RECT &rc, volatile bool *cancel = nullptr);
+
+	// Call from idle loop (e.g. DN_ENTERIDLE) to apply a completed async full-res decode.
+	// Returns true if the image was upgraded and re-rendered.
+	bool ApplyPendingFullRes();
 
 	// Preload image for compact frame mode (returns false on error)
 	bool Preload();

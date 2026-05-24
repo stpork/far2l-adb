@@ -1,7 +1,6 @@
 #include <cmath>
 #include <vector>
-#include <thread>
-#include <functional>
+#include <algorithm>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -11,6 +10,7 @@
 
 #include "Image.h"
 #include "PreviewLog.h"
+#include "decoder/external/stb_image_resize2.h"
 
 #ifdef __APPLE__
 #include <Accelerate/Accelerate.h>
@@ -139,171 +139,63 @@ void Image::Scale(Image &dst, double scale) const
 		return;
 	}
 
-	const int width = int(scale * Width());
-	const int height = int(scale * Height());
-	dst.Resize(width, height, _bytes_per_pixel);
+	const int out_w = std::max(1, int(scale * _width));
+	const int out_h = std::max(1, int(scale * _height));
+	dst.Resize(out_w, out_h, _bytes_per_pixel);
 	if (_data.empty() || dst._data.empty()) {
 		std::fill(dst._data.begin(), dst._data.end(), 0);
 		return;
 	}
 
-	auto scale_y_range = [&](int y_begin, int y_end) {
-		try {
-			if (scale > 1.0) {
-				ScaleEnlarge(dst, scale, y_begin, y_end);
-			} else {
-				ScaleReduce(dst, scale, y_begin, y_end);
-			}
-		} catch (...) {
-			DBG("exception at %d .. %d", y_begin, y_end);
-		}
-	};
+#ifdef __APPLE__
+	// Convert RGB→ARGB, scale with vImage (Accelerate framework, SIMD), convert ARGB→RGB
+	if (_bytes_per_pixel == 3) {
+		const size_t src_argb_bytes = (size_t)_width * _height * 4;
+		const size_t dst_argb_bytes = (size_t)out_w * out_h * 4;
+		if (_scratch_argb_src.size() < src_argb_bytes) _scratch_argb_src.resize(src_argb_bytes);
+		if (_scratch_argb_dst.size() < dst_argb_bytes) _scratch_argb_dst.resize(dst_argb_bytes);
 
-	struct Threads : std::vector<std::thread>
-	{
-		~Threads()
-		{
-			for (auto &t : *this) {
-				t.join();
-			}
+		const uint8_t *s = _data.data();
+		uint8_t *a = _scratch_argb_src.data();
+		for (int i = 0, n = _width * _height; i < n; ++i) {
+			a[i*4+0] = 255;
+			a[i*4+1] = s[i*3+0];
+			a[i*4+2] = s[i*3+1];
+			a[i*4+3] = s[i*3+2];
 		}
-	} threads;
 
-	const size_t min_size_per_cpu = 32768;
-	const size_t max_img_size = std::max(Size(), dst.Size());
-	int y_begin = 0;
-	if (max_img_size >= 2 * min_size_per_cpu && dst._height > 16) {
-		const int hw_cpu_count = int(std::thread::hardware_concurrency());
-		const int use_cpu_count = std::min(int(max_img_size / min_size_per_cpu), std::min(16, hw_cpu_count));
-		if (use_cpu_count > 1) {
-			const int base_portion = dst._height / use_cpu_count;
-			const int extra_portion = dst._height - (base_portion * use_cpu_count);
-			while (y_begin + base_portion < dst._height) {
-				int portion = base_portion;
-				if (y_begin == 0 && y_begin + portion + extra_portion < dst._height) {
-					portion+= extra_portion; // 1st portion has more time than others
-				}
-				threads.emplace_back(std::bind(scale_y_range, y_begin, y_begin + portion));
-				y_begin+= portion;
+		vImage_Buffer src_buf = { _scratch_argb_src.data(), (vImagePixelCount)_height, (vImagePixelCount)_width, (size_t)_width * 4 };
+		vImage_Buffer dst_buf = { _scratch_argb_dst.data(), (vImagePixelCount)out_h, (vImagePixelCount)out_w, (size_t)out_w * 4 };
+
+		if (vImageScale_ARGB8888(&src_buf, &dst_buf, nullptr, kvImageHighQualityResampling) == kvImageNoError) {
+			const uint8_t *d = _scratch_argb_dst.data();
+			uint8_t *out = dst._data.data();
+			for (int i = 0, n = out_w * out_h; i < n; ++i) {
+				out[i*3+0] = d[i*4+1];
+				out[i*3+1] = d[i*4+2];
+				out[i*3+2] = d[i*4+3];
 			}
-		} else if (hw_cpu_count <= 0) {
-			DBG("CPU count unknown");
+			return;
+		}
+		// Fall through to stbir on error
+	} else {
+		// 4-channel: vImage works directly (channel labels don't matter for pure scaling)
+		vImage_Buffer src_buf = { const_cast<void*>(static_cast<const void*>(_data.data())), (vImagePixelCount)_height, (vImagePixelCount)_width, (size_t)_width * 4 };
+		vImage_Buffer dst_buf = { dst._data.data(), (vImagePixelCount)out_h, (vImagePixelCount)out_w, (size_t)out_w * 4 };
+		if (vImageScale_ARGB8888(&src_buf, &dst_buf, nullptr, kvImageHighQualityResampling) == kvImageNoError) {
+			return;
 		}
 	}
-	if (y_begin < dst._height) {
-		scale_y_range(y_begin, dst._height);
-	}
+#endif
+
+	// Cross-platform: stb_image_resize2 (SSE2/NEON SIMD, compiled in ImageDecoder_stb.cpp)
+	const stbir_pixel_layout layout = (_bytes_per_pixel == 4) ? STBIR_RGBA : STBIR_RGB;
+	stbir_resize_uint8_linear(
+		_data.data(), _width, _height, 0,
+		dst._data.data(), out_w, out_h, 0,
+		layout);
 }
 
-void Image::ScaleEnlarge(Image &dst, double scale, int y_begin, int y_end) const
-{
-	const auto src_row_stride = _width * _bytes_per_pixel;
-	const auto dst_row_stride = dst._width * _bytes_per_pixel;
-
-	// Calculate the scaling factors
-	// We sample from the center of the pixel, so use (dimension - 1) for the ratio if dimension > 1
-	const auto scale_x = (dst._width > 1)
-		? static_cast<double>(_width - 1) / (dst._width - 1) : 0.0;
-	const auto scale_y = (dst._height > 1)
-		? static_cast<double>(_height - 1) / (dst._height - 1) : 0.0;
-
-	const auto *src_data = (const unsigned char *)_data.data();
-	auto *dst_data = (unsigned char *)dst._data.data();
-
-	for (int dst_y = y_begin; dst_y < y_end; ++dst_y) {
-		auto src_y = scale_y * dst_y;
-		int y1 = static_cast<int>(std::floor(src_y));
-		int y2 = std::min(y1 + 1, _height - 1);
-		const double weight_y = (src_y - y1);
-		const double one_minus_weight_y = 1.0 - weight_y;
-
-		for (int dst_x = 0; dst_x < dst._width; ++dst_x) {
-			// Map destination coordinates to source coordinates
-			auto src_x = scale_x * dst_x;
-
-			// Get the integer and fractional parts for interpolation weights
-			// Ensure indices are within bounds, especially for the high end
-			int x1 = static_cast<int>(std::floor(src_x));
-			int x2 = std::min(x1 + 1, _width - 1);
-
-			const double weight_x = (src_x - x1);
-			const double one_minus_weight_x = 1.0 - weight_x;
-
-			// Get the four surrounding pixels (A, B, C, D) values
-			// A: Top-Left, B: Top-Right, C: Bottom-Left, D: Bottom-Right
-			const auto *pA = src_data + (y1 * src_row_stride) + (x1 * _bytes_per_pixel);
-			const auto *pB = src_data + (y1 * src_row_stride) + (x2 * _bytes_per_pixel);
-			const auto *pC = src_data + (y2 * src_row_stride) + (x1 * _bytes_per_pixel);
-			const auto *pD = src_data + (y2 * src_row_stride) + (x2 * _bytes_per_pixel);
-
-			// Pointer to the destination pixel location
-			auto *dst_pixel = dst_data + (dst_y * dst_row_stride) + (dst_x * _bytes_per_pixel);
-
-			// Perform interpolation for each color channel (R, G, B)
-			for (unsigned char k = 0; k < _bytes_per_pixel; ++k) {
-				// Horizontal interpolation (R1, R2)
-				double r1 = pA[k] * one_minus_weight_x + pB[k] * weight_x;
-				double r2 = pC[k] * one_minus_weight_x + pD[k] * weight_x;
-
-				// Vertical interpolation (final value)
-				int p = int(r1 * one_minus_weight_y + r2 * weight_y);
-
-				// Assign the result, clamping to the valid 8-bit range [0, 255]
-				if (p >= 255) {
-					dst_pixel[k] = 255;
-				} else if (p <= 0) {
-					dst_pixel[k] = 0;
-				} else {
-					dst_pixel[k] = (unsigned char)(unsigned int)(p);
-				}
-			}
-		}
-	}
-}
-
-void Image::ScaleReduce(Image &dst, double scale, int y_begin, int y_end) const
-{
-	const int around = (int)round(0.618 / scale);
-
-	for (int dst_y = y_begin; dst_y < y_end; ++dst_y) {
-		const auto src_y = (int)round(double(dst_y) / scale);
-		for (int dst_x = 0; dst_x < dst._width; ++dst_x) {
-			const auto src_x = (int)round(double(dst_x) / scale);
-			for (unsigned char ch = 0; ch < _bytes_per_pixel; ++ch) {
-				unsigned int v = 0, cnt = 0;
-				for (int dy = around; dy-->0 ;) {
-					for (int dx = around; dx-->0 ;) {
-						if (src_y + dy < _height) {
-							if (src_x + dx < _width) {
-								v+= *Ptr(src_x + dx, src_y + dy, ch);
-								++cnt;
-							}
-							if (src_x - dx >= 0 && dx) {
-								v+= *Ptr(src_x - dx, src_y + dy, ch);
-								++cnt;
-							}
-						}
-						if (src_y - dy >= 0 && dy) {
-							if (src_x + dx < _width) {
-								v+= *Ptr(src_x + dx, src_y - dy, ch);
-								++cnt;
-							}
-							if (src_x - dx >= 0 && dx) {
-								v+= *Ptr(src_x - dx, src_y - dy, ch);
-								++cnt;
-							}
-						}
-					}
-					if (cnt) {
-						v/= cnt;
-						cnt = 1;
-					}
-				}
-				*dst.Ptr(dst_x, dst_y, ch) = (unsigned char)v;
-			}
-		}
-	}
-}
 
 void Image::RotateArbitrary(Image &dst, double angle_degrees, bool high_quality) const
 {
