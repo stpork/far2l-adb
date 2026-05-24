@@ -179,7 +179,7 @@ static LONG_PTR WINAPI ImageDlgProc(HANDLE hDlg, int Msg, int Param1, LONG_PTR P
 					g_settings.SetDefaultScale(Settings::FIT_ORIGINAL);
 					iv->Reset(true);
 					break;
-				case 'm': case 'M':
+				case 's': case 'S':
 					iv->CycleFitMode();
 					break;
 				case KEY_CLEAR: case '=': iv->Reset(false); break;
@@ -359,10 +359,10 @@ static EXITED_DUE ShowImageAtFullInternal(size_t initial_file, std::vector<std::
 				std::wstring ws_cur_file = L"\"" + StrMB2Wide(all_files[initial_file].first) + L"\"";
 				std::wstring werr_str = StrMB2Wide(iv.ErrorString());
 				const wchar_t *MsgItems[] = {g_settings.Msg(M_TITLE),
-					L"Failed to load image file:",
+					g_settings.Msg(M_FAILED_LOAD),
 					ws_cur_file.c_str(),
 					werr_str.c_str(),
-					L"Ok"
+					g_settings.Msg(M_OK)
 				};
 				g_far.Message(g_far.ModuleNumber, FMSG_WARNING, nullptr, MsgItems, ARRAYSIZE(MsgItems), 1);
 			}

@@ -53,7 +53,7 @@ bool ImageView::ReadImageInternal(int maxPixelSize)
 
 	ImageDecoder* decoder = DecoderFactory::FindDecoder(_render_file);
 	if (!decoder) {
-		_err_str = "Unsupported image format";
+		_err_str = Wide2MB(g_settings.Msg(M_ERR_UNSUPPORTED));
 		return false;
 	}
 
@@ -66,7 +66,7 @@ bool ImageView::ReadImageInternal(int maxPixelSize)
 
 	int orientation = 1;
 	if (!decoder->Decode(_render_file, _orig_image, orientation, maxPixelSize)) {
-		_err_str = "Failed to decode image";
+		_err_str = Wide2MB(g_settings.Msg(M_ERR_DECODE));
 		return false;
 	}
 
@@ -128,15 +128,16 @@ void ImageView::ApplyEXIFOrientation(int orientation)
 bool ImageView::RefreshWGI()
 {
 	if (!WINPORT(GetConsoleImageCaps)(NULL, sizeof(_wgi), &_wgi)) {
-		_err_str = "GetConsoleImageCaps failed";
+		_err_str = Wide2MB(g_settings.Msg(M_ERR_CONSOLE_CAPS));
 		return false;
 	}
 	if ((_wgi.Caps & WP_IMGCAP_RGBA) == 0) {
-		_err_str = "backend doesn't support graphics";
+		_err_str = Wide2MB(g_settings.Msg(M_ERR_NO_GFX));
 		return false;
 	}
 	if (_wgi.PixPerCell.X <= 0 || _wgi.PixPerCell.Y <= 0) {
-		_err_str = StrPrintf("bad cell size ( %d x %d )", _wgi.PixPerCell.X, _wgi.PixPerCell.Y);
+		_err_str = Wide2MB(g_settings.Msg(M_ERR_BAD_CELL))
+		         + StrPrintf(" (%d × %d)", _wgi.PixPerCell.X, _wgi.PixPerCell.Y);
 		return false;
 	}
 	return true;
@@ -262,7 +263,7 @@ bool ImageView::SendWholeImage(const SMALL_RECT *area, const Image &img)
 
 	for (int sent_h = 0; sent_h < img.Height(); ) {
 		if ((_cancel && *_cancel) || (!_cancel && CheckForEscAndPurgeAccumulatedInputEvents())) {
-			_err_str = "manually cancelled";
+			_err_str = Wide2MB(g_settings.Msg(M_ERR_CANCELLED));
 			return false;
 		}
 		auto set_h = img.Height() - sent_h;
@@ -272,7 +273,7 @@ bool ImageView::SendWholeImage(const SMALL_RECT *area, const Image &img)
 		if (!WINPORT(SetConsoleImage)(NULL, WINPORT_IMAGE_ID,
 				WP_IMG_RGB | WP_IMG_PIXEL_OFFSET | (sent_h ? WP_IMG_ATTACH_BOTTOM : 0),
 				area, img.Width(), set_h, img.Ptr(0, sent_h))) {
-			_err_str = "failed to send image to terminal";
+			_err_str = Wide2MB(g_settings.Msg(M_ERR_TERM_SEND));
 			return false;
 		}
 		sent_h+= set_h;
@@ -351,12 +352,12 @@ static int ShiftPercentsToPixels(int &percents, int width, int limit)
 bool ImageView::RenderImage()
 {
 	if (_render_file.empty()) {
-		_err_str = "bad file";
+		_err_str = Wide2MB(g_settings.Msg(M_ERR_BAD_FILE));
 		return false;
 	}
 
 	if (_pos.X < 0 || _pos.Y < 0 || _size.X <= 0 || _size.Y <= 0) {
-		_err_str = "bad grid";
+		_err_str = Wide2MB(g_settings.Msg(M_ERR_BAD_GRID));
 		return false;
 	}
 
@@ -368,7 +369,7 @@ bool ImageView::RenderImage()
 	int canvas_h = int(_size.Y) * _wgi.PixPerCell.Y;
 
 	if (_scale <= 0) {
-		DenoteState("Rendering...");
+		DenoteState(Wide2MB(g_settings.Msg(M_STAGE_RENDERING)).c_str());
 		SetupInitialScale(canvas_w, canvas_h);
 	}
 

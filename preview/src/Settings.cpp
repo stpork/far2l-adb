@@ -69,37 +69,40 @@ const wchar_t *Settings::Msg(int msgId)
 		return msg;
 	}
 	static const wchar_t *default_msgs[] = {
-		L"Preview",            // M_TITLE
-		L"&OK",                 // M_OK
-		L"&Cancel",             // M_CANCEL
-		L"Extra commands",     // M_EXTRA_COMMANDS
-		L"Extra commands",     // M_EXTRA_COMMANDS_TITLE
-		L"Command name",       // M_INPUT_CMDNAME_TITLE
-		L"Enter command name", // M_INPUT_CMDNAME_PROMPT
-		L"Command line",       // M_INPUT_CMDLINE_TITLE
-		L"Enter command line", // M_INPUT_CMDLINE_PROMPT
-		L"PgUp/PgDn",          // M_HINT_NAVIGATE
-		L"+/-/arrows",         // M_HINT_PAN
-		L"Ins/Space/BS",       // M_HINT_SELECTION
-		L"Enter/Esc/F1",       // M_HINT_OTHER
-		L"Use EXIF &orientation",
-		L"&Open by Enter",
-		L"Open by &Ctrl+PgDn",
-		L"Open in &QuickView",
-		L"Override &F3 viewer",
-		L"&Auto-fit after rotation",
-		L"&Fast transforms",
-		L"Compact &frame",
-		L"Image masks",
-		L"&Enable Preview",
-		L"Use &OS engine",
-		L"",
-		L"",
-		L"Default fit mode",         // M_FIT_MODE_GROUP
-		L"&Auto",                     // M_FIT_AUTO
-		L"&Width",                    // M_FIT_WIDTH
-		L"&Height",                   // M_FIT_HEIGHT
-		L"&Original (100%)",          // M_FIT_ORIGINAL
+		L"Preview",                          // M_TITLE
+		L"&OK",                              // M_OK
+		L"&Cancel",                          // M_CANCEL
+		L"PgUp/PgDn",                        // M_HINT_NAVIGATE
+		L"+/-/arrows",                       // M_HINT_PAN
+		L"Ins/Space/BS",                     // M_HINT_SELECTION
+		L"Enter/Esc/F1",                     // M_HINT_OTHER
+		L"&Enable plugin",                   // M_TEXT_ENABLEPLUGIN
+		L"Apply EXIF &orientation",          // M_TEXT_USEORIENTATION
+		L"&Open with Enter",                 // M_TEXT_OPENBYENTER
+		L"Open with &Ctrl+PgDn",             // M_TEXT_OPENBYCTRLPGDN
+		L"Show in &QuickView",               // M_TEXT_OPENINQVIEW
+		L"Override built-in &F3 viewer",     // M_TEXT_OPENINFVIEW
+		L"&Auto-fit after rotate",           // M_TEXT_AUTOFITONROTATE
+		L"&Fast transforms",                 // M_TEXT_FASTTRANSFORMS
+		L"Compact &frame",                   // M_TEXT_COMPACTFRAME
+		L"Use OS image &codec",              // M_TEXT_IMPLEMENTATION
+		L"Image &masks",                     // M_TEXT_IMAGEMASKS
+		L"Default fit mode",                 // M_FIT_MODE_GROUP
+		L"&Auto",                            // M_FIT_AUTO
+		L"&Width",                           // M_FIT_WIDTH
+		L"&Height",                          // M_FIT_HEIGHT
+		L"&Original (100%)",                 // M_FIT_ORIGINAL
+		L"Failed to load image:",            // M_FAILED_LOAD
+		L"Rendering...",                     // M_STAGE_RENDERING
+		L"Unsupported format",               // M_ERR_UNSUPPORTED
+		L"Decode failed",                    // M_ERR_DECODE
+		L"Terminal lacks graphics support",  // M_ERR_NO_GFX
+		L"Cannot query terminal caps",       // M_ERR_CONSOLE_CAPS
+		L"Bad cell size",                    // M_ERR_BAD_CELL
+		L"Cancelled",                        // M_ERR_CANCELLED
+		L"Display failed",                   // M_ERR_TERM_SEND
+		L"Invalid file",                     // M_ERR_BAD_FILE
+		L"Bad screen layout",                // M_ERR_BAD_GRID
 	};
 	if (msgId >= 0 && msgId < (int)(sizeof(default_msgs)/sizeof(default_msgs[0]))) {
 		return default_msgs[msgId];

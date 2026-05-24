@@ -23,7 +23,7 @@ $ #Zoom#
   + / -         Zoom in/out
   * / A         Auto-fit
   / / Z         100% (original size)
-  M             Cycle fit mode (Auto → Width → Height → 100%)
+  S             Cycle fit mode (Auto → Width → Height → 100%)
   = / Num5      Reset
   Wheel         Zoom
 
