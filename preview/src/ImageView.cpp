@@ -10,15 +10,13 @@
 
 bool ImageView::IterateFile(bool forward)
 {
+	if (_all_files.empty()) return false;
 	if (forward) {
-		++_cur_file;
-		if (_cur_file >= _all_files.size()) {
+		if (++_cur_file >= _all_files.size()) {
 			_cur_file = 0;
 		}
-	} else if (_cur_file > 0) {
-		--_cur_file;
 	} else {
-		_cur_file = _all_files.size() - 1;
+		_cur_file = (_cur_file > 0) ? _cur_file - 1 : _all_files.size() - 1;
 	}
 	return true;
 }

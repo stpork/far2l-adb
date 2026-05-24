@@ -2,6 +2,7 @@
 #include "ImageView.h"
 #include "Settings.h"
 #include "PreviewLog.h"
+#include <algorithm>
 
 PluginStartupInfo g_far;
 FarStandardFunctions g_fsf;
@@ -215,6 +216,9 @@ static void OpenAtCurrentPanelItem()
 	}
 }
 
+// far2l plugin protocol: return this from OpenFilePluginW to signal "handled, close temp handle"
+static const HANDLE FAR_PLUGIN_HANDLED = (HANDLE)(intptr_t)(-2);
+
 SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int OpenFrom, INT_PTR Item)
 {
 	if (!g_settings.Enabled()) {
@@ -234,15 +238,11 @@ SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int OpenFrom, INT_PTR Item)
 
 	} else if (Item > 0xfff) {
 		std::string path = Wide2MB((const wchar_t *)Item);
-		while (!path.empty() && path.front() == ' ') {
-			path.erase(0, 1);
-		}
-		for (size_t i = 0; i + 1 < path.size(); ++i) {
-			if (path[i] == '\\') {
-				path.erase(i, 1);
-			}
-		}
-		while (strncmp(path.c_str(), "./", 2) == 0) {
+		// Strip leading spaces, backslashes, and leading "./" components
+		auto first_non_space = path.find_first_not_of(' ');
+		path.erase(0, first_non_space == std::string::npos ? path.size() : first_non_space);
+		path.erase(std::remove(path.begin(), path.end(), '\\'), path.end());
+		while (path.size() >= 2 && path[0] == '.' && path[1] == '/') {
 			path.erase(0, 2);
 		}
 		if (path.empty()) {
@@ -334,6 +334,7 @@ SHAREDSYMBOL int WINAPI ProcessViewerEventW(int Event,void *Param)
 				} else {
 					DBG("F3 viewer: already intercepted this file, closing internal viewer");
 					g_far.ViewerControl(VCTL_QUIT, nullptr);
+					g_last_intercepted_file.clear(); // allow future opens after VCTL_QUIT
 					return TRUE;
 				}
 			}
@@ -397,7 +398,7 @@ SHAREDSYMBOL HANDLE WINAPI _export OpenFilePluginW(const wchar_t *Name, const un
 				EXITED_DUE result = show_image();
 				DBG("show_image returned %d", (int)result);
 				if (result != EXITED_DUE_ERROR) {
-					return (HANDLE)-2;
+					return FAR_PLUGIN_HANDLED;
 				}
 			}
 			// Handle Ctrl+PgDn
@@ -406,7 +407,7 @@ SHAREDSYMBOL HANDLE WINAPI _export OpenFilePluginW(const wchar_t *Name, const un
 				EXITED_DUE result = show_image();
 				DBG("show_image returned %d", (int)result);
 				if (result != EXITED_DUE_ERROR) {
-					return (HANDLE)-2;
+					return FAR_PLUGIN_HANDLED;
 				}
 			}
 			// Handle F3 (view) - Override F3 viewer setting
@@ -415,7 +416,7 @@ SHAREDSYMBOL HANDLE WINAPI _export OpenFilePluginW(const wchar_t *Name, const un
 				EXITED_DUE result = show_image();
 				DBG("show_image returned %d", (int)result);
 				if (result != EXITED_DUE_ERROR) {
-					return (HANDLE)-2;
+					return FAR_PLUGIN_HANDLED;
 				}
 			}
 		}

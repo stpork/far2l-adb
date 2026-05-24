@@ -2,6 +2,7 @@
 #define FAR_SETTINGS_H
 #include <string>
 #include <stdint.h>
+#include <cstdint>
 #include "lng.h"
 
 class Settings
@@ -18,6 +19,7 @@ public:
 
 private:
 	std::string _ini_path;
+	uint32_t _generation{0};
 	DefaultScale _default_scale{FIT_AUTO};
 	bool _use_orientation = true;
 	bool _open_by_enter = true;
@@ -51,6 +53,8 @@ public:
 	void SetDefaultScale(DefaultScale default_scale);
 
 	bool MatchFile(const char *name) const;
+
+	uint32_t SettingsGeneration() const { return _generation; }
 };
 
 extern Settings g_settings;
