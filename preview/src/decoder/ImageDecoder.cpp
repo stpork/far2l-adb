@@ -1,4 +1,5 @@
 #include "ImageDecoder.h"
+#include "ImageDecoder_tiff.h"
 #include "../Settings.h"
 #include <algorithm>
 #include <cctype>
@@ -13,7 +14,6 @@ void CreateCrossPlatformDecoders(std::vector<std::unique_ptr<ImageDecoder>>& dec
 void CreateHeifDecoder(std::vector<std::unique_ptr<ImageDecoder>>& decoders);
 void CreateWebPDecoder(std::vector<std::unique_ptr<ImageDecoder>>& decoders);
 
-// Platform-specific decoder creation
 std::vector<std::unique_ptr<ImageDecoder>> DecoderFactory::CreateDecoders()
 {
 	std::vector<std::unique_ptr<ImageDecoder>> decoders;
@@ -25,30 +25,32 @@ std::vector<std::unique_ptr<ImageDecoder>> DecoderFactory::CreateDecoders()
 		CreateCrossPlatformDecoders(decoders);
 		CreateHeifDecoder(decoders);
 		CreateWebPDecoder(decoders);
+		CreateTiffDecoder(decoders);
 #endif
 	} else {
 		CreateCrossPlatformDecoders(decoders);
 		CreateHeifDecoder(decoders);
 		CreateWebPDecoder(decoders);
+		CreateTiffDecoder(decoders);
 	}
 
 	return decoders;
 }
 
-// Thread-safe global decoder cache for FindDecoder
+// Decoder list is rebuilt only when settings change (generation counter).
+// Mutex protects concurrent calls from main thread and ImageAtQV background thread.
 static std::vector<std::unique_ptr<ImageDecoder>> s_decoders;
+static uint32_t s_last_generation = UINT32_MAX; // force build on first use
 static std::mutex s_decoders_mutex;
-static bool s_last_native_impl = true;
-static bool s_initialized = false;
 
 ImageDecoder* DecoderFactory::FindDecoder(const std::string& path)
 {
 	std::lock_guard<std::mutex> lock(s_decoders_mutex);
-	
-	if (!s_initialized || s_last_native_impl != g_settings.NativeImplementation()) {
+
+	uint32_t gen = g_settings.SettingsGeneration();
+	if (s_last_generation != gen) {
 		s_decoders = CreateDecoders();
-		s_last_native_impl = g_settings.NativeImplementation();
-		s_initialized = true;
+		s_last_generation = gen;
 	}
 
 	std::string ext = ExifHelpers::GetExtension(path);

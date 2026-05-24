@@ -3,7 +3,12 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <atomic>
+#include <cstdint>
 #include "../Image.h"
+
+// Hard cap: refuse to decode images larger than 64 megapixels
+static constexpr uint64_t kMaxImagePixels = 64ULL * 1024 * 1024;
 
 // EXIF orientation values (1-8)
 // See: http://sylvana.net/jpegcrop/exif_orientation.html
@@ -26,7 +31,8 @@ public:
 	// maxPixelSize: if > 0, decode at max this size (for fast thumbnail decode+scale)
 	// Returns true on success, false on failure
 	// orientation is set to EXIF orientation value if available (1-8), or 1 if not
-	virtual bool Decode(const std::string& path, Image& out, int& orientation, int maxPixelSize = 0) = 0;
+	virtual bool Decode(const std::string& path, Image& out, int& orientation,
+	                    int maxPixelSize = 0, std::atomic<bool>* cancel = nullptr) = 0;
 
 	// Check if this decoder can handle the given file extension
 	virtual bool CanHandle(const char* ext) const = 0;

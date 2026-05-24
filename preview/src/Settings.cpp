@@ -4,10 +4,12 @@
 #include <utils.h>
 #include <wchar.h>
 
-#define DEFAULT_IMAGE_MASKS "*.jpg *.jpeg *.png *.gif *.webp *.heic *.heif *.tiff *.tif *.bmp"
+#define DEFAULT_IMAGE_MASKS "*.jpg *.jpeg *.png *.gif *.bmp *.tga *.psd *.hdr *.webp *.heic *.heif *.tiff *.tif"
 #define INI_PATH "plugins/preview/config.ini"
 #define INI_SETTINGS "Settings"
-#define INI_DEFAULTSCALE "DefaultScale"
+// Renamed from "DefaultScale" — old enum (EQUAL_SCREEN/LESSOREQUAL_SCREEN/EQUAL_IMAGE)
+// can't be safely remapped numerically to the new one, so old key is ignored.
+#define INI_FITMODE "FitMode"
 #define INI_USEORIENTATION "UseOrientation"
 #define INI_OPENBYENTER "OpenByEnter"
 #define INI_OPENBYCPGDN "OpenByCtrlPgDn"
@@ -46,9 +48,9 @@ Settings::Settings()
 			_image_masks = masks;
 		}
 
-		unsigned int default_scale = sv->GetUInt(INI_DEFAULTSCALE, _default_scale);
-		if (default_scale < (unsigned int)INVALID_SCALE_EDGE_VALUE) {
-			_default_scale = (DefaultScale)default_scale;
+		unsigned int fit_mode = sv->GetUInt(INI_FITMODE, _default_scale);
+		if (fit_mode < (unsigned int)INVALID_SCALE_EDGE_VALUE) {
+			_default_scale = (DefaultScale)fit_mode;
 		}
 	}
 }
@@ -56,8 +58,9 @@ Settings::Settings()
 void Settings::SetDefaultScale(DefaultScale default_scale)
 {
 	_default_scale = default_scale;
+	++_generation;
 	KeyFileHelper kfh(_ini_path);
-	kfh.SetUInt(INI_SETTINGS, INI_DEFAULTSCALE, (unsigned int)_default_scale);
+	kfh.SetUInt(INI_SETTINGS, INI_FITMODE, (unsigned int)_default_scale);
 }
 
 const wchar_t *Settings::Msg(int msgId)
@@ -67,32 +70,40 @@ const wchar_t *Settings::Msg(int msgId)
 		return msg;
 	}
 	static const wchar_t *default_msgs[] = {
-		L"Preview",            // M_TITLE
-		L"&OK",                 // M_OK
-		L"&Cancel",             // M_CANCEL
-		L"Extra commands",     // M_EXTRA_COMMANDS
-		L"Extra commands",     // M_EXTRA_COMMANDS_TITLE
-		L"Command name",       // M_INPUT_CMDNAME_TITLE
-		L"Enter command name", // M_INPUT_CMDNAME_PROMPT
-		L"Command line",       // M_INPUT_CMDLINE_TITLE
-		L"Enter command line", // M_INPUT_CMDLINE_PROMPT
-		L"PgUp/PgDn",          // M_HINT_NAVIGATE
-		L"+/-/arrows",         // M_HINT_PAN
-		L"Ins/Space/BS",       // M_HINT_SELECTION
-		L"Enter/Esc/F1",       // M_HINT_OTHER
-		L"Use EXIF &orientation",
-		L"&Open by Enter",
-		L"Open by &Ctrl+PgDn",
-		L"Open in &QuickView",
-		L"Override &F3 viewer",
-		L"&Auto-fit after rotation",
-		L"&Fast transforms",
-		L"Compact &frame",
-		L"Image masks",
-		L"&Enable Preview",
-		L"Use &OS engine",
-		L"",
-		L"",
+		L"Preview",                          // M_TITLE
+		L"&OK",                              // M_OK
+		L"&Cancel",                          // M_CANCEL
+		L"PgUp/PgDn",                        // M_HINT_NAVIGATE
+		L"+/-/arrows",                       // M_HINT_PAN
+		L"Ins/Space/BS",                     // M_HINT_SELECTION
+		L"Enter/Esc/F1",                     // M_HINT_OTHER
+		L"&Enable plugin",                   // M_TEXT_ENABLEPLUGIN
+		L"Apply EXIF &orientation",          // M_TEXT_USEORIENTATION
+		L"&Open with Enter",                 // M_TEXT_OPENBYENTER
+		L"Open with &Ctrl+PgDn",             // M_TEXT_OPENBYCTRLPGDN
+		L"Show in &QuickView",               // M_TEXT_OPENINQVIEW
+		L"Override built-in &F3 viewer",     // M_TEXT_OPENINFVIEW
+		L"&Auto-fit after rotate",           // M_TEXT_AUTOFITONROTATE
+		L"&Fast transforms",                 // M_TEXT_FASTTRANSFORMS
+		L"Compact &frame",                   // M_TEXT_COMPACTFRAME
+		L"Use OS image &codec",              // M_TEXT_IMPLEMENTATION
+		L"Image &masks",                     // M_TEXT_IMAGEMASKS
+		L"Default fit mode",                 // M_FIT_MODE_GROUP
+		L"&Auto",                            // M_FIT_AUTO
+		L"&Width",                           // M_FIT_WIDTH
+		L"&Height",                          // M_FIT_HEIGHT
+		L"&Original (100%)",                 // M_FIT_ORIGINAL
+		L"Failed to load image:",            // M_FAILED_LOAD
+		L"Rendering...",                     // M_STAGE_RENDERING
+		L"Unsupported format",               // M_ERR_UNSUPPORTED
+		L"Decode failed",                    // M_ERR_DECODE
+		L"Terminal lacks graphics support",  // M_ERR_NO_GFX
+		L"Cannot query terminal caps",       // M_ERR_CONSOLE_CAPS
+		L"Bad cell size",                    // M_ERR_BAD_CELL
+		L"Cancelled",                        // M_ERR_CANCELLED
+		L"Display failed",                   // M_ERR_TERM_SEND
+		L"Invalid file",                     // M_ERR_BAD_FILE
+		L"Bad screen layout",                // M_ERR_BAD_GRID
 	};
 	if (msgId >= 0 && msgId < (int)(sizeof(default_msgs)/sizeof(default_msgs[0]))) {
 		return default_msgs[msgId];
@@ -112,6 +123,11 @@ enum DialogItems {
 	DI_CFG_FASTTRANSFORMS,
 	DI_CFG_COMPACTFRAME,
 	DI_CFG_IMPLEMENTATION,
+	DI_CFG_FITMODE_LABEL,
+	DI_CFG_FITMODE_AUTO,
+	DI_CFG_FITMODE_WIDTH,
+	DI_CFG_FITMODE_HEIGHT,
+	DI_CFG_FITMODE_ORIGINAL,
 	DI_CFG_SEPARATOR,
 	DI_CFG_IMAGEMASKS_LABEL,
 	DI_CFG_IMAGEMASKS_EDIT,
@@ -122,7 +138,7 @@ enum DialogItems {
 
 void Settings::ConfigurationDialog()
 {
-	const int w = 45, h = 19;
+	const int w = 45, h = 22;
 
 	struct FarDialogItem fdi[DI_CFG_COUNT] = {
 	{DI_DOUBLEBOX, 3, 1, w - 4, h - 2, 0, {}, 0, 0, Msg(M_TITLE), 0},
@@ -136,11 +152,16 @@ void Settings::ConfigurationDialog()
 	{DI_CHECKBOX, 5, 9, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_FASTTRANSFORMS), 0},
 	{DI_CHECKBOX, 5, 10, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_COMPACTFRAME), 0},
 	{DI_CHECKBOX, 5, 11, 0, 0, TRUE, {}, 0, 0, Msg(M_TEXT_IMPLEMENTATION), 0},
-	{DI_SINGLEBOX, 4, 12, w - 5, 0, 0, {}, DIF_BOXCOLOR|DIF_SEPARATOR, 0, nullptr, 0},
-	{DI_TEXT, 5, 13, w - 11, 0, FALSE, {}, 0, 0, Msg(M_TEXT_IMAGEMASKS), 0},
-	{DI_EDIT, 5, 14, w - 6, 0, 0, {}, 0, 0, nullptr, 0},
-	{DI_BUTTON, 0, 16, 0, 0, FALSE, {}, DIF_CENTERGROUP, TRUE, Msg(M_OK), 0},
-	{DI_BUTTON, 0, 16, 0, 0, FALSE, {}, DIF_CENTERGROUP, 0, Msg(M_CANCEL), 0}
+	{DI_TEXT, 5, 12, w - 6, 0, FALSE, {}, 0, 0, Msg(M_FIT_MODE_GROUP), 0},
+	{DI_RADIOBUTTON, 5, 13, 0, 0, FALSE, {}, DIF_GROUP, 0, Msg(M_FIT_AUTO), 0},
+	{DI_RADIOBUTTON, 20, 13, 0, 0, FALSE, {}, 0, 0, Msg(M_FIT_WIDTH), 0},
+	{DI_RADIOBUTTON, 5, 14, 0, 0, FALSE, {}, 0, 0, Msg(M_FIT_HEIGHT), 0},
+	{DI_RADIOBUTTON, 20, 14, 0, 0, FALSE, {}, 0, 0, Msg(M_FIT_ORIGINAL), 0},
+	{DI_SINGLEBOX, 4, 15, w - 5, 0, 0, {}, DIF_BOXCOLOR|DIF_SEPARATOR, 0, nullptr, 0},
+	{DI_TEXT, 5, 16, w - 11, 0, FALSE, {}, 0, 0, Msg(M_TEXT_IMAGEMASKS), 0},
+	{DI_EDIT, 5, 17, w - 6, 0, 0, {}, 0, 0, nullptr, 0},
+	{DI_BUTTON, 0, 19, 0, 0, FALSE, {}, DIF_CENTERGROUP, TRUE, Msg(M_OK), 0},
+	{DI_BUTTON, 0, 19, 0, 0, FALSE, {}, DIF_CENTERGROUP, 0, Msg(M_CANCEL), 0}
 	};
 
 	fdi[DI_CFG_ENABLEPLUGIN].Param.Selected = _enabled;
@@ -153,7 +174,8 @@ void Settings::ConfigurationDialog()
 	fdi[DI_CFG_FASTTRANSFORMS].Param.Selected = _fast_transforms;
 	fdi[DI_CFG_COMPACTFRAME].Param.Selected = _compact_frame;
 	fdi[DI_CFG_IMPLEMENTATION].Param.Selected = _native_implementation;
-	
+	fdi[DI_CFG_FITMODE_AUTO + (int)_default_scale].Param.Selected = TRUE;
+
 	std::wstring image_masks;
 	StrMB2Wide(_image_masks, image_masks);
 	fdi[DI_CFG_IMAGEMASKS_EDIT].PtrData = image_masks.c_str();
@@ -173,7 +195,14 @@ void Settings::ConfigurationDialog()
 		_fast_transforms = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_FASTTRANSFORMS, 0) == BSTATE_CHECKED);
 		_compact_frame = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_COMPACTFRAME, 0) == BSTATE_CHECKED);
 		_native_implementation = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_IMPLEMENTATION, 0) == BSTATE_CHECKED);
-		
+
+		for (int i = 0; i < 4; ++i) {
+			if (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_FITMODE_AUTO + i, 0) == BSTATE_CHECKED) {
+				_default_scale = (DefaultScale)i;
+				break;
+			}
+		}
+
 		image_masks = (const wchar_t *)g_far.SendDlgMessage(dlg, DM_GETCONSTTEXTPTR, DI_CFG_IMAGEMASKS_EDIT, 0);
 		StrWide2MB(image_masks, _image_masks);
 
@@ -188,6 +217,7 @@ void Settings::ConfigurationDialog()
 		kfh.SetInt(INI_SETTINGS, INI_FASTTRANSFORMS, _fast_transforms);
 		kfh.SetInt(INI_SETTINGS, INI_COMPACTFRAME, _compact_frame);
 		kfh.SetInt(INI_SETTINGS, INI_NATIVE_IMPL, _native_implementation);
+		kfh.SetUInt(INI_SETTINGS, INI_FITMODE, (unsigned int)_default_scale);
 
 		if (_image_masks != DEFAULT_IMAGE_MASKS) {
 			kfh.SetString(INI_SETTINGS, INI_IMAGEMASKS, _image_masks);
@@ -196,6 +226,9 @@ void Settings::ConfigurationDialog()
 		}
 	}
 
+	if (r == DI_CFG_OK) {
+		++_generation;
+	}
 	g_far.DialogFree(dlg);
 }
 

@@ -87,6 +87,7 @@ public:
 	void Last();      // Go to last image
 	bool Iterate(bool forward);
 	void Scale(int change);
+	void CycleFitMode();           // Auto → Width → Height → Original → Auto
 	void Rotate(int change);       // 90-degree rotation
 	void RotateFine(int degrees);  // Fine rotation (arbitrary angle)
 	void Shift(int horizontal, int vertical);

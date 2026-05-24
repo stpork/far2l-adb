@@ -2,22 +2,25 @@
 #define FAR_SETTINGS_H
 #include <string>
 #include <stdint.h>
+#include <cstdint>
 #include "lng.h"
 
 class Settings
 {
 public:
 	enum DefaultScale {
-		EQUAL_SCREEN = 0,
-		LESSOREQUAL_SCREEN,
-		EQUAL_IMAGE,
+		FIT_AUTO = 0,
+		FIT_WIDTH,
+		FIT_HEIGHT,
+		FIT_ORIGINAL,
 
 		INVALID_SCALE_EDGE_VALUE
 	};
 
 private:
 	std::string _ini_path;
-	DefaultScale _default_scale{EQUAL_SCREEN};
+	uint32_t _generation{0};
+	DefaultScale _default_scale{FIT_AUTO};
 	bool _use_orientation = true;
 	bool _open_by_enter = true;
 	bool _open_by_cpgdn = true;
@@ -50,6 +53,8 @@ public:
 	void SetDefaultScale(DefaultScale default_scale);
 
 	bool MatchFile(const char *name) const;
+
+	uint32_t SettingsGeneration() const { return _generation; }
 };
 
 extern Settings g_settings;

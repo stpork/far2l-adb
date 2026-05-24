@@ -1,11 +1,13 @@
 #include "ImageDecoder.h"
 #include "../PreviewLog.h"
-#include <webp/decode.h>
 #include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <vector>
 #include "external/stb_image_resize2.h"
+
+#ifdef HAVE_WEBP
+#include <webp/decode.h>
 
 class WebPImageDecoder : public ImageDecoder {
 public:
@@ -17,20 +19,29 @@ public:
 		return strcasecmp(ext, "webp") == 0;
 	}
 
-	bool Decode(const std::string& path, Image& out, int& orientation, int maxPixelSize) override
+	bool Decode(const std::string& path, Image& out, int& orientation,
+	            int maxPixelSize, std::atomic<bool>* cancel) override
 	{
+		if (cancel && *cancel) return false;
 		DBG("Decoding via libwebp: %s", path.c_str());
-		orientation = 1; // WebP usually doesn't have EXIF orientation, or it's applied during decode
+		orientation = 1;
+
+		static constexpr std::streamsize kMaxFileBytes = 256LL * 1024 * 1024; // 256 MB
 
 		std::ifstream file(path, std::ios::binary | std::ios::ate);
 		if (!file.is_open()) return false;
 		std::streamsize size = file.tellg();
+		if (size < 0 || size > kMaxFileBytes) return false;
 		file.seekg(0, std::ios::beg);
 
 		std::vector<uint8_t> buffer(size);
 		if (!file.read((char*)buffer.data(), size)) return false;
 
+		// Pre-check dimensions before full decode
 		int width, height;
+		if (!WebPGetInfo(buffer.data(), buffer.size(), &width, &height)) return false;
+		if ((uint64_t)width * height > kMaxImagePixels) return false;
+
 		uint8_t* data = WebPDecodeRGB(buffer.data(), buffer.size(), &width, &height);
 		if (!data) return false;
 
@@ -56,8 +67,11 @@ public:
 		return true;
 	}
 };
+#endif // HAVE_WEBP
 
 void CreateWebPDecoder(std::vector<std::unique_ptr<ImageDecoder>>& decoders)
 {
+#ifdef HAVE_WEBP
 	decoders.push_back(std::make_unique<WebPImageDecoder>());
+#endif
 }

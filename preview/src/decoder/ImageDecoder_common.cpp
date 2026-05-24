@@ -134,8 +134,8 @@ int ReadExifOrientation(const std::string& path)
 				return 1;
 			}
 
-			// Seek to IFD0
-			if (fseek(f, ifd_offset + 8 - 8, SEEK_CUR) != 0) {
+			// Seek to IFD0 (ifd_offset is from TIFF header start; we've read 8 bytes already)
+			if (fseek(f, (long)ifd_offset - 8, SEEK_CUR) != 0) {
 				fclose(f);
 				return 1;
 			}
@@ -172,8 +172,11 @@ int ReadExifOrientation(const std::string& path)
 		} else if (marker == 0xD9) { // EOI
 			fclose(f);
 			return 1;
-		} else if (marker == 0x00 || marker == 0xFF) {
-			// Invalid or padding, continue
+		} else if (marker == 0x00) {
+			// Byte stuffing (0xFF00 in compressed data) — skip
+		} else if (marker == 0xFF) {
+			// Fill byte before real marker — back up 1 so next iteration reads [0xFF, realMarker]
+			fseek(f, -1, SEEK_CUR);
 		} else if (marker >= 0xD0 && marker <= 0xD7) {
 			// RST markers, no length
 		} else if (marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8) {

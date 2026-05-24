@@ -21,8 +21,9 @@ $ #Zoom#
   Shift+PgUp    Precise zoom in (1%)
   Shift+PgDn    Precise zoom out (1%)
   + / -         Zoom in/out
-  * / A         Fit to screen
-  / / Z         100%
+  * / A         Auto-fit
+  / / Z         100% (original size)
+  S             Cycle fit mode (Auto → Width → Height → 100%)
   = / Num5      Reset
   Wheel         Zoom
 

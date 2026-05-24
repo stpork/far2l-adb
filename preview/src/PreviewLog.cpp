@@ -1,4 +1,6 @@
 #include "PreviewLog.h"
+
+#if defined(DEBUG) || defined(_DEBUG)
 #include <ctime>
 #include <cstdio>
 #include <cstdarg>
@@ -26,3 +28,4 @@ void PreviewDebugLog(const char* format, ...) {
         fclose(f);
     }
 }
+#endif

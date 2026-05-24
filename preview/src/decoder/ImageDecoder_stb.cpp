@@ -14,6 +14,7 @@
 	#define STBIR_SSE2
 #endif
 
+#define STBI_MAX_DIMENSIONS 16384
 #define STB_IMAGE_IMPLEMENTATION
 #include "external/stb_image.h"
 
@@ -37,16 +38,18 @@ public:
 		return false;
 	}
 
-	bool Decode(const std::string& path, Image& out, int& orientation, int maxPixelSize) override
+	bool Decode(const std::string& path, Image& out, int& orientation,
+	            int maxPixelSize, std::atomic<bool>* cancel) override
 	{
 		DBG("Decoding via STB (Crossplatform): %s", path.c_str());
 		int width, height, channels;
 		orientation = ExifHelpers::ReadExifOrientation(path);
 
-		// Load image info first to check dimensions
+		// Load image info first to check dimensions and enforce pixel cap
 		if (!stbi_info(path.c_str(), &width, &height, &channels)) {
 			return false;
 		}
+		if ((uint64_t)width * height > kMaxImagePixels) return false;
 
 		// Calculate scaled dimensions if maxPixelSize is specified
 		int targetWidth = width;

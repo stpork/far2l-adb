@@ -51,24 +51,28 @@ void Image::Swap(Image &another)
 	std::swap(_bytes_per_pixel, another._bytes_per_pixel);
 }
 
-void Image::Assign(const void *data)
+void Image::Assign(const void *data, size_t size)
 {
-	memcpy(_data.data(), data, _data.size());
+	assert(size <= _data.size() && "Image::Assign: source larger than allocated buffer");
+	memcpy(_data.data(), data, size);
 }
 
 void Image::Resize(int width, int height, unsigned char bytes_per_pixel)
 {
-	assert(bytes_per_pixel == 3 || bytes_per_pixel == 4); // only RGB/RGBA supported for now
+	assert(bytes_per_pixel == 3 || bytes_per_pixel == 4);
 
-	assert(width >= 0);
-	assert(height >= 0);
+	if (width < 0 || height < 0) {
+		_data.clear(); _width = 0; _height = 0;
+		return;
+	}
 
 	const size_t bytes_size = size_t(width) * size_t(height) * size_t(bytes_per_pixel);
-	assert(bytes_size >= size_t(width) || !height); // overflow guard
-	assert(bytes_size >= size_t(height) || !width); // overflow guard
+	if (height && bytes_size < size_t(width)) { // overflow
+		_data.clear(); _width = 0; _height = 0;
+		return;
+	}
 
 	_data.resize(bytes_size);
-
 	_width = width;
 	_height = height;
 	_bytes_per_pixel = bytes_per_pixel;
