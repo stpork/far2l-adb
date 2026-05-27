@@ -1,6 +1,6 @@
 # far2l MTP plugin — version 1.0
 
-Browse and manage files on MTP-class devices (Android, cameras, media players) over USB. Self-contained: both [libmtp](https://libmtp.sourceforge.io/) 1.1.23 and [libusb](https://libusb.info) 1.0.29 are vendored under `mtp/libmtp/` and `mtp/libusb/` and built as static archives — no runtime dependency on system libusb/libmtp on either macOS or Linux. See `mtp/libusb/VENDORING.md` for the libusb refresh procedure.
+Browse and manage files on MTP-class devices (Android, cameras, media players) over USB.
 
 ## Features
 
@@ -24,7 +24,17 @@ cmake --build . --target mtp
 
 Output: `install/Plugins/mtp/plug/mtp.far-plug-wide` plus language and help files.
 
-Disable with `-DMTP=NO` at CMake-configure time.
+### Library linkage
+
+[libmtp](https://libmtp.sourceforge.io/) 1.1.23 and [libusb](https://libusb.info) 1.0.30 are vendored under `mtp/libmtp/` and `mtp/libusb/` (refresh: `mtp/libusb/VENDORING.md`).
+
+| Flag | Default | Effect |
+|---|---|---|
+| `-DMTP_SYSTEM_LIBUSB` | `ON` | `ON` → link system `libusb-1.0` (Debian/Ubuntu policy); `OFF` → vendored static |
+| `-DMTP_SYSTEM_LIBMTP` | `OFF` | `ON` → link system `libmtp`; disables the fast depth-1 listing (libmtp's internal PTP symbols are hidden by `libmtp.sym`), enumeration falls back to per-handle |
+| `-DMTP=NO` | — | skip plugin |
+
+Missing pkg-config libs → plugin is skipped with a `WARNING` ("install `libusb-1.0-0-dev`" / "install `libmtp-dev`"). `MTP_SYSTEM_LIBMTP=ON` requires `MTP_SYSTEM_LIBUSB=ON` (otherwise two libusb instances in one process).
 
 ## Install
 
@@ -37,8 +47,6 @@ Copy `install/Plugins/mtp/` into far2l's Plugins folder:
 Restart far2l. The plugin appears in **Alt+F1 / Alt+F2 → MTP**.
 
 ## Prerequisites
-
-No build-time or runtime libusb/libmtp packages are required (vendored static — see top of this file).
 
 ### Linux
 
