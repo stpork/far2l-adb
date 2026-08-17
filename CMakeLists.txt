@@ -511,13 +511,6 @@ if (NOT DEFINED NETROCKS OR NETROCKS)
         message(WARNING "${ColorRed}libneon not found, NetRocks will not have WebDav protocol support. Install libneon*-dev if you want WebDav protocol available in NetRocks.${ColorNormal}")
     endif(LIBNEON_FOUND)
 
-    find_package(AWSSDK QUIET COMPONENTS s3)
-    if(AWSSDK_FOUND)
-        message(STATUS "aws-sdk-cpp found -> enjoy AWS s3 support in NetRocks")
-    else()
-        message(WARNING "${ColorRed}aws-sdk-cpp not found, NetRocks will not have AWS S3 protocol support. Install aws-sdk-cpp if you want AWS S3 protocol available in NetRocks.${ColorNormal}")
-    endif(AWSSDK_FOUND)
-
     add_subdirectory (NetRocks)
 else()
     message(STATUS "${ColorRed}NETROCKS plugin disabled due to NETROCKS=${NETROCKS}${ColorNormal}")
@@ -578,6 +571,16 @@ else()
     message(STATUS "${ColorRed}OPENWITH plugin disabled due to OPENWITH=${OPENWITH}${ColorNormal}")
     install(CODE "
         execute_process(COMMAND rm -f ${CMAKE_INSTALL_PREFIX}/lib/far2l/Plugins/OpenWith/plug/OpenWith.far-plug-wide)
+        " COMPONENT system)
+endif()
+
+if (NOT DEFINED TRANSFORMER OR TRANSFORMER)
+    message(STATUS "TRANSFORMER plugin enabled")
+    add_subdirectory (transformer)
+else()
+    message(STATUS "${ColorRed}TRANSFORMER plugin disabled due to TRANSFORMER=${TRANSFORMER}${ColorNormal}")
+    install(CODE "
+        execute_process(COMMAND ${CMAKE_COMMAND} -E rm -f ${CMAKE_INSTALL_PREFIX}/lib/far2l/Plugins/transformer/plug/transformer.far-plug-wide)
         " COMPONENT system)
 endif()
 
