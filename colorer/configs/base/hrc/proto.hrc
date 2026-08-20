@@ -1055,7 +1055,7 @@
     </prototype>
     <prototype name="json" group="rare" description="JSON">
         <location link="rare/json.hrc" />
-        <filename weight='3'>/\.json$/i</filename>
+        <filename weight='3'>/\.(json|jsonc|json5)$/i</filename>
     </prototype>
     <prototype name="yaml" group="rare" description="YAML">
         <location link="rare/yaml.hrc" />
