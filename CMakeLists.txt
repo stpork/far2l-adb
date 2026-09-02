@@ -705,7 +705,7 @@ endif()
 
 if (NOT DEFINED PREVIEW OR PREVIEW)
     message(STATUS "PREVIEW plugin enabled")
-    add_subdirectory (preview)
+    add_subdirectory (plugins/preview)
 else()
     message(STATUS "${ColorRed}PREVIEW plugin disabled due to PREVIEW=${PREVIEW}${ColorNormal}")
     install(CODE "

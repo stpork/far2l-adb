@@ -87,8 +87,8 @@ endif()
 include_directories(
     ${PREVIEW_OPT_INCDIRS}
     .
-    ../far2l/far2sdk
-    ../WinPort
+    ${CMAKE_SOURCE_DIR}/far2l/far2sdk
+    ${CMAKE_SOURCE_DIR}/WinPort
 )
 
 add_library(preview MODULE ${SOURCES})
