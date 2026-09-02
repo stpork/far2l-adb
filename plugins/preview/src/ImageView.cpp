@@ -464,6 +464,24 @@ bool ImageView::RenderImage()
 	const auto tformed = EnsureTransformed();
 	const Image& ready = ReadyImage();
 	const bool fine_active = (_fine_rotate != 0);  // Fine rotation requires full re-render
+	auto normalize_rotation = [](int rotation) {
+		rotation %= 4;
+		return rotation < 0 ? rotation + 4 : rotation;
+	};
+	const int target_rotation = normalize_rotation(_rotate);
+	const int sent_rotation = normalize_rotation(_sent_rotate);
+	const int rotation_delta = normalize_rotation(target_rotation - sent_rotation);
+	uint16_t fast_transform = WP_IMGTF_ROTATE0;
+	switch (rotation_delta) {
+		case 1: fast_transform = WP_IMGTF_ROTATE90; break;
+		case 2: fast_transform = WP_IMGTF_ROTATE180; break;
+		case 3: fast_transform = WP_IMGTF_ROTATE270; break;
+	}
+	// Mirrors are rendered in software: unlike rotation their order relative to
+	// an existing terminal rotation matters, so an absolute mirror flag is not
+	// a safe incremental transform.
+	const bool can_fast_rotate = rotation_delta != 0 && !fine_active
+		&& !_mirror_h && !_mirror_v && !_sent_mirror_h && !_sent_mirror_v;
 
 	SMALL_RECT area = {_pos.X, _pos.Y, 0, 0};
 	int viewport_w = canvas_w, viewport_h = canvas_h;
@@ -496,12 +514,11 @@ bool ImageView::RenderImage()
 	if (_fine_dirty || fine_active) {
 		out = SendWholeViewport(&area, src_left, src_top, viewport_w, viewport_h);
 		_fine_dirty = false;
-	} else if (!scaled && _prev_left == src_left && _prev_top == src_top && _dx == 0 && _dy == 0 && tformed != 0
-			&& ((tformed & WP_IMGTF_MASK_ROTATE) == WP_IMGTF_ROTATE0 ||
-				(ready.Width() <= std::min(canvas_w, canvas_h) && ready.Height() <= std::min(canvas_w, canvas_h)))
+	} else if (!scaled && _prev_left == src_left && _prev_top == src_top && _dx == 0 && _dy == 0 && can_fast_rotate
+			&& (ready.Width() <= std::min(canvas_w, canvas_h) && ready.Height() <= std::min(canvas_w, canvas_h))
 			&& g_settings.FastTransforms()
 			&& (_wgi.Caps & WP_IMGCAP_ROTMIR) != 0) {
-		out = WINPORT(TransformConsoleImage)(NULL, WINPORT_IMAGE_ID, &area, tformed) != FALSE;
+		out = WINPORT(TransformConsoleImage)(NULL, WINPORT_IMAGE_ID, &area, fast_transform) != FALSE;
 	} else if (!scaled && tformed == 0 && abs(_prev_left - src_left) < viewport_w && abs(_prev_top - src_top) < viewport_h
 			&& (_wgi.Caps & WP_IMGCAP_ATTACH) != 0 && (_wgi.Caps & WP_IMGCAP_SCROLL) != 0) {
 		if (_prev_left != src_left) {
@@ -519,6 +536,9 @@ bool ImageView::RenderImage()
 	}
 	_prev_left = src_left;
 	_prev_top = src_top;
+	_sent_rotate = _rotate;
+	_sent_mirror_h = _mirror_h;
+	_sent_mirror_v = _mirror_v;
 	return true;
 }
 

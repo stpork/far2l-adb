@@ -32,6 +32,10 @@ class ImageView
 	int _prev_left{0}, _prev_top{0};
 	int _dx{0}, _dy{0};
 	signed char _rotate{0}, _rotated{0};  // 90-degree rotation steps
+	// Transform state represented by the image currently held by the terminal.
+	// Fast terminal transforms must be relative to this state, not absolute.
+	signed char _sent_rotate{0};
+	bool _sent_mirror_h{false}, _sent_mirror_v{false};
 	double _fine_rotate{0};  // Fine rotation in degrees (-45..45)
 	bool _mirror_h{false}, _mirrored_h{false};
 	bool _mirror_v{false}, _mirrored_v{false};
