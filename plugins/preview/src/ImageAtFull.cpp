@@ -246,9 +246,9 @@ static LONG_PTR WINAPI ImageDlgProc(HANDLE hDlg, int Msg, int Param1, LONG_PTR P
 					g_far.SendDlgMessage(hDlg, DM_CLOSE, EXITED_DUE_RESIZE, 0);
 					break;
 				case KEY_F9:
-					WINPORT(DeleteConsoleImage)(NULL, WINPORT_IMAGE_ID);
-					g_settings.ConfigurationDialog();
-					iv->ForceShow();
+						WINPORT(DeleteConsoleImage)(NULL, WINPORT_IMAGE_ID);
+						g_settings.ConfigurationDialog();
+						iv->Reload();
 					break;
 				case KEY_F1:
 					WINPORT(DeleteConsoleImage)(NULL, WINPORT_IMAGE_ID);

@@ -48,7 +48,7 @@ Settings::Settings()
 			_image_masks = masks;
 		}
 
-		unsigned int fit_mode = sv->GetUInt(INI_FITMODE, _default_scale);
+		unsigned int fit_mode = sv->GetUInt(INI_FITMODE, (unsigned int)_default_scale.load());
 		if (fit_mode < (unsigned int)INVALID_SCALE_EDGE_VALUE) {
 			_default_scale = (DefaultScale)fit_mode;
 		}
@@ -58,7 +58,7 @@ Settings::Settings()
 void Settings::SetDefaultScale(DefaultScale default_scale)
 {
 	_default_scale = default_scale;
-	++_generation;
+	_generation.fetch_add(1, std::memory_order_release);
 	KeyFileHelper kfh(_ini_path);
 	kfh.SetUInt(INI_SETTINGS, INI_FITMODE, (unsigned int)_default_scale);
 }
@@ -174,7 +174,11 @@ void Settings::ConfigurationDialog()
 	fdi[DI_CFG_FASTTRANSFORMS].Param.Selected = _fast_transforms;
 	fdi[DI_CFG_COMPACTFRAME].Param.Selected = _compact_frame;
 	fdi[DI_CFG_IMPLEMENTATION].Param.Selected = _native_implementation;
-	fdi[DI_CFG_FITMODE_AUTO + (int)_default_scale].Param.Selected = TRUE;
+	fdi[DI_CFG_FITMODE_AUTO + (int)_default_scale.load()].Param.Selected = TRUE;
+#if !PREVIEW_HAS_NATIVE
+	fdi[DI_CFG_IMPLEMENTATION].Flags |= DIF_DISABLE;
+	fdi[DI_CFG_IMPLEMENTATION].Param.Selected = FALSE;
+#endif
 
 	std::wstring image_masks;
 	StrMB2Wide(_image_masks, image_masks);
@@ -194,7 +198,11 @@ void Settings::ConfigurationDialog()
 		_autofit_on_rotate = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_AUTOFITONROTATE, 0) == BSTATE_CHECKED);
 		_fast_transforms = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_FASTTRANSFORMS, 0) == BSTATE_CHECKED);
 		_compact_frame = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_COMPACTFRAME, 0) == BSTATE_CHECKED);
+#if PREVIEW_HAS_NATIVE
 		_native_implementation = (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_IMPLEMENTATION, 0) == BSTATE_CHECKED);
+#else
+		_native_implementation = false;
+#endif
 
 		for (int i = 0; i < 4; ++i) {
 			if (g_far.SendDlgMessage(dlg, DM_GETCHECK, DI_CFG_FITMODE_AUTO + i, 0) == BSTATE_CHECKED) {
@@ -217,7 +225,7 @@ void Settings::ConfigurationDialog()
 		kfh.SetInt(INI_SETTINGS, INI_FASTTRANSFORMS, _fast_transforms);
 		kfh.SetInt(INI_SETTINGS, INI_COMPACTFRAME, _compact_frame);
 		kfh.SetInt(INI_SETTINGS, INI_NATIVE_IMPL, _native_implementation);
-		kfh.SetUInt(INI_SETTINGS, INI_FITMODE, (unsigned int)_default_scale);
+		kfh.SetUInt(INI_SETTINGS, INI_FITMODE, (unsigned int)_default_scale.load());
 
 		if (_image_masks != DEFAULT_IMAGE_MASKS) {
 			kfh.SetString(INI_SETTINGS, INI_IMAGEMASKS, _image_masks);
@@ -227,7 +235,7 @@ void Settings::ConfigurationDialog()
 	}
 
 	if (r == DI_CFG_OK) {
-		++_generation;
+		_generation.fetch_add(1, std::memory_order_release);
 	}
 	g_far.DialogFree(dlg);
 }

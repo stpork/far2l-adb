@@ -4,6 +4,7 @@
 #include <vector>
 #include <memory>
 #include <cstdint>
+#include <atomic>
 #include "../Image.h"
 
 // Hard cap: refuse to decode images larger than 64 megapixels
@@ -22,6 +23,23 @@ enum class ExifOrientation {
 	ROTATE_90_CCW = 8
 };
 
+using DecodeCancelFlag = std::atomic<bool>;
+
+inline bool DecodeCancelled(const DecodeCancelFlag* cancel)
+{
+	return cancel && cancel->load(std::memory_order_relaxed);
+}
+
+// Metadata always describes the unscaled logical source.  Backends must not
+// apply EXIF orientation to the returned pixels; ImageView applies it once in
+// the common rendering path so native and cross-platform modes behave alike.
+struct ImageDecodeInfo {
+	int sourceWidth{0};
+	int sourceHeight{0};
+	int orientation{1};
+	bool fullResolution{false};
+};
+
 class ImageDecoder {
 public:
 	virtual ~ImageDecoder() = default;
@@ -29,9 +47,12 @@ public:
 	// Decode image from file into RGB buffer
 	// maxPixelSize: if > 0, decode at max this size (for fast thumbnail decode+scale)
 	// Returns true on success, false on failure
-	// orientation is set to EXIF orientation value if available (1-8), or 1 if not
-	virtual bool Decode(const std::string& path, Image& out, int& orientation,
-	                    int maxPixelSize = 0, volatile bool* cancel = nullptr) = 0;
+	virtual bool Decode(const std::string& path, Image& out, ImageDecodeInfo& info,
+	                    int maxPixelSize = 0, const DecodeCancelFlag* cancel = nullptr) = 0;
+
+	// True only when the backend can avoid decoding the full raster when a
+	// smaller maxPixelSize is requested (ImageIO does; stb/libwebp currently do not).
+	virtual bool SupportsDecodeScaling(const std::string& /*path*/) const { return false; }
 
 	// Check if this decoder can handle the given file extension
 	virtual bool CanHandle(const char* ext) const = 0;
@@ -44,10 +65,10 @@ public:
 class DecoderFactory {
 public:
 	// Create all available decoders for the current platform
-	static std::vector<std::unique_ptr<ImageDecoder>> CreateDecoders();
+	static std::vector<std::shared_ptr<ImageDecoder>> CreateDecoders();
 
 	// Find a decoder that can handle the given file
-	static ImageDecoder* FindDecoder(const std::string& path);
+	static std::shared_ptr<ImageDecoder> FindDecoder(const std::string& path);
 };
 
 // Common helper functions for EXIF orientation

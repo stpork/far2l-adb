@@ -13,10 +13,11 @@
 #include <utils.h>
 #include <math.h>
 #include "Image.h"
+#include "decoder/ImageDecoder.h"
 
 class ImageView
 {
-	volatile bool *_cancel{nullptr};
+	const DecodeCancelFlag *_cancel{nullptr};
 
 	std::string _render_file, _tmp_file, _file_size_str;
 	std::vector<std::pair<std::string, bool> > _all_files;
@@ -34,31 +35,35 @@ class ImageView
 	double _fine_rotate{0};  // Fine rotation in degrees (-45..45)
 	bool _mirror_h{false}, _mirrored_h{false};
 	bool _mirror_v{false}, _mirrored_v{false};
-	bool _force_render{false};
+	bool _force_send{false};
 	bool _base_dirty{true};  // Need to rebuild _base_image
 	bool _fine_dirty{false}; // Fine rotation changed, need full re-render
+	bool _ready_uses_scaled{true};
 
 	// Efficient decoding: track decoded size and original dimensions
 	int _decoded_max_size{0};      // What maxPixelSize was used for current _orig_image
 	int _original_width{0};        // Original image width (before any scaling)
 	int _original_height{0};       // Original image height (before any scaling)
 	bool _has_full_resolution{false};  // Do we have full resolution decoded?
+	double _decoded_scale{1.0};    // Current raster pixels per logical source pixel
+	ImageDecodeInfo _decode_info;
 
 	// Async full-resolution decode (avoids freezing UI when zooming to > 100%)
 	Image _fullres_img;
-	int _fullres_orientation{1};
+	ImageDecodeInfo _fullres_info;
 	std::string _fullres_file;
 	double _fullres_target_scale{-1};
 	std::thread _fullres_thread;
-	volatile bool _fullres_cancel{false};
+	DecodeCancelFlag _fullres_cancel{false};
 	std::atomic<bool> _fullres_ready{false};
+	std::atomic<bool> _fullres_done{false};
 
 	bool IterateFile(bool forward);
 	bool PrepareImage();
 	bool ReadImage();
 	bool ReadImageInternal(int maxPixelSize);  // Internal: decode at specific size
 	void ApplyEXIFOrientation(int orientation);
-	void RequestFullResolution(double target_scale);  // Kick off async full-res decode
+	void RequestResolution(double target_scale, int max_pixel_size);
 	void CancelAndJoinFullRes();                      // Cancel + join (blocks briefly)
 
 	bool RefreshWGI();
@@ -71,6 +76,7 @@ class ImageView
 	bool SendScrollAttachH(const SMALL_RECT *area, int src_left, int src_top, int viewport_w, int viewport_h, int delta);
 	bool SendScrollAttachV(const SMALL_RECT *area, int src_left, int src_top, int viewport_w, int viewport_h, int delta);
 	bool RenderImage();
+	const Image& ReadyImage() const { return _ready_uses_scaled ? _scaled_image : _ready_image; }
 	void DenoteState(const char *stage = NULL);
 	void JustReset(bool keep_rotmir = false);
 
@@ -87,7 +93,7 @@ public:
 	size_t GetCurrentFileIndex() const { return _cur_file; }
 	std::unordered_set<std::string> GetSelection() const;
 
-	bool Setup(SMALL_RECT &rc, volatile bool *cancel = nullptr);
+	bool Setup(SMALL_RECT &rc, const DecodeCancelFlag *cancel = nullptr);
 
 	// Call from idle loop (e.g. DN_ENTERIDLE) to apply a completed async full-res decode.
 	// Returns true if the image was upgraded and re-rendered.
@@ -95,6 +101,7 @@ public:
 
 	// Preload image for compact frame mode (returns false on error)
 	bool Preload();
+	bool Reload();
 
 	// Get preferred dialog rectangle (for compact frame mode)
 	SMALL_RECT GetPreferredRect(const SMALL_RECT &screen_rect) const;
@@ -113,7 +120,7 @@ public:
 	void Reset(bool keep_rotmir);
 	void ForceShow()
 	{
-		_force_render = true;
+		_force_send = true;
 		RenderImage();
 		DenoteState();
 	};

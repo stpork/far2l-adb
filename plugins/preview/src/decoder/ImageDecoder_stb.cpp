@@ -38,32 +38,39 @@ public:
 		return false;
 	}
 
-	bool Decode(const std::string& path, Image& out, int& orientation,
-	            int maxPixelSize, volatile bool* cancel) override
+	bool Decode(const std::string& path, Image& out, ImageDecodeInfo& info,
+	            int maxPixelSize, const DecodeCancelFlag* cancel) override
 	{
-		if (cancel && *cancel) return false;
+		if (DecodeCancelled(cancel)) return false;
 		DBG("Decoding via STB (Crossplatform): %s", path.c_str());
 		int width, height, channels;
-		orientation = ExifHelpers::ReadExifOrientation(path);
+		info = {};
+		info.orientation = ExifHelpers::ReadExifOrientation(path);
 
 		// Load image info first to check dimensions and enforce pixel cap
 		if (!stbi_info(path.c_str(), &width, &height, &channels)) {
 			return false;
 		}
 		if ((uint64_t)width * height > kMaxImagePixels) return false;
+		info.sourceWidth = width;
+		info.sourceHeight = height;
 
 		// Calculate scaled dimensions if maxPixelSize is specified
 		int targetWidth = width;
 		int targetHeight = height;
 		if (maxPixelSize > 0 && (width > maxPixelSize || height > maxPixelSize)) {
 			float scale = (float)maxPixelSize / (float)std::max(width, height);
-			targetWidth = (int)(width * scale);
-			targetHeight = (int)(height * scale);
+			targetWidth = std::max(1, (int)(width * scale));
+			targetHeight = std::max(1, (int)(height * scale));
 		}
 
 		// Load the image. stb_image can convert to RGB (3 channels) automatically.
 		unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 3);
 		if (!data) return false;
+		if (DecodeCancelled(cancel)) {
+			stbi_image_free(data);
+			return false;
+		}
 
 		if (targetWidth != width || targetHeight != height) {
 			// Resize using stb_image_resize2
@@ -81,11 +88,12 @@ public:
 			out = std::move(loaded);
 		}
 
+		info.fullResolution = (out.Width() == info.sourceWidth && out.Height() == info.sourceHeight);
 		return true;
 	}
 };
 
-void CreateCrossPlatformDecoders(std::vector<std::unique_ptr<ImageDecoder>>& decoders)
+void CreateCrossPlatformDecoders(std::vector<std::shared_ptr<ImageDecoder>>& decoders)
 {
-	decoders.push_back(std::make_unique<StbImageDecoder>());
+	decoders.push_back(std::make_shared<StbImageDecoder>());
 }

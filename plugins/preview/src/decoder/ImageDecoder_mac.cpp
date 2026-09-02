@@ -4,11 +4,14 @@
 #include "../PreviewLog.h"
 #include <cstdio>
 #include <cstring>
+#include <strings.h>
 #include <vector>
+#include <algorithm>
 
 #include <ImageIO/ImageIO.h>
 #include <CoreGraphics/CoreGraphics.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <ImageIO/CGImageProperties.h>
 #include <Accelerate/Accelerate.h>  // vImage for fast ARGB→RGB
 
 // ============================================================================
@@ -16,13 +19,14 @@
 // ============================================================================
 class MacOSImageDecoder : public ImageDecoder {
 public:
-	bool Decode(const std::string& path, Image& out, int& orientation,
-	            int maxPixelSize, volatile bool* cancel = nullptr) override;
+	bool Decode(const std::string& path, Image& out, ImageDecodeInfo& info,
+	            int maxPixelSize, const DecodeCancelFlag* cancel = nullptr) override;
 	bool CanHandle(const char* ext) const override;
 	const char* Name() const override { return "ImageIO"; }
+	bool SupportsDecodeScaling(const std::string&) const override { return true; }
 
 private:
-	static CGImageRef LoadScaledImage(const char* path, int maxPixelSize);
+	static CGImageRef LoadScaledImage(CGImageSourceRef src, int maxPixelSize, int sourceMaxSide);
 	static bool ExtractRGB(CGImageRef image, Image& out);
 };
 
@@ -44,25 +48,22 @@ bool MacOSImageDecoder::CanHandle(const char* ext) const
 	return false;
 }
 
-CGImageRef MacOSImageDecoder::LoadScaledImage(const char* path, int maxPixelSize)
+static int GetImagePropertyInt(CFDictionaryRef properties, CFStringRef key, int fallback)
 {
-	// Create URL from file path
-	CFURLRef url = CFURLCreateFromFileSystemRepresentation(
-		nullptr,
-		(const UInt8*)path,
-		strlen(path),
-		false
-	);
-	if (!url) return nullptr;
+	if (!properties) return fallback;
+	CFNumberRef value = static_cast<CFNumberRef>(CFDictionaryGetValue(properties, key));
+	int out = fallback;
+	if (value && CFGetTypeID(value) == CFNumberGetTypeID()) {
+		CFNumberGetValue(value, kCFNumberIntType, &out);
+	}
+	return out;
+}
 
-	// Create image source
-	CGImageSourceRef src = CGImageSourceCreateWithURL(url, nullptr);
-	CFRelease(url);
-	if (!src) return nullptr;
-
+CGImageRef MacOSImageDecoder::LoadScaledImage(CGImageSourceRef src, int maxPixelSize, int sourceMaxSide)
+{
 	CGImageRef img = nullptr;
 
-	if (maxPixelSize > 0) {
+	if (maxPixelSize > 0 && maxPixelSize < sourceMaxSide) {
 		// Use thumbnail API for fast decode + scale in one pass
 		int maxSide = maxPixelSize;
 		CFNumberRef maxSizeNum = CFNumberCreate(nullptr, kCFNumberIntType, &maxSide);
@@ -76,7 +77,7 @@ CGImageRef MacOSImageDecoder::LoadScaledImage(const char* path, int maxPixelSize
 		const void* values[] = {
 			kCFBooleanTrue,
 			maxSizeNum,
-			kCFBooleanTrue,  // Apply EXIF orientation during decode
+			kCFBooleanFalse, // Common renderer applies EXIF orientation
 			kCFBooleanFalse  // Don't cache thumbnails immediately to save memory/time
 		};
 
@@ -97,7 +98,6 @@ CGImageRef MacOSImageDecoder::LoadScaledImage(const char* path, int maxPixelSize
 		img = CGImageSourceCreateImageAtIndex(src, 0, nullptr);
 	}
 
-	CFRelease(src);
 	return img;
 }
 
@@ -145,36 +145,56 @@ bool MacOSImageDecoder::ExtractRGB(CGImageRef image, Image& out)
 	return err == kvImageNoError;
 }
 
-bool MacOSImageDecoder::Decode(const std::string& path, Image& out, int& orientation,
-                               int maxPixelSize, volatile bool* /*cancel*/)
+bool MacOSImageDecoder::Decode(const std::string& path, Image& out, ImageDecodeInfo& info,
+                               int maxPixelSize, const DecodeCancelFlag* cancel)
 {
+	if (DecodeCancelled(cancel)) return false;
 	DBG("Decoding via Native ImageIO: %s", path.c_str());
+	info = {};
+
+	CFURLRef url = CFURLCreateFromFileSystemRepresentation(
+		nullptr, reinterpret_cast<const UInt8*>(path.data()), path.size(), false);
+	if (!url) return false;
+	CGImageSourceRef source = CGImageSourceCreateWithURL(url, nullptr);
+	CFRelease(url);
+	if (!source) return false;
+
+	CFDictionaryRef properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nullptr);
+	info.sourceWidth = GetImagePropertyInt(properties, kCGImagePropertyPixelWidth, 0);
+	info.sourceHeight = GetImagePropertyInt(properties, kCGImagePropertyPixelHeight, 0);
+	info.orientation = GetImagePropertyInt(properties, kCGImagePropertyOrientation, 1);
+	if (properties) CFRelease(properties);
+	if (info.orientation < 1 || info.orientation > 8) info.orientation = 1;
+	if (info.sourceWidth <= 0 || info.sourceHeight <= 0 ||
+	    (uint64_t)info.sourceWidth * info.sourceHeight > kMaxImagePixels) {
+		CFRelease(source);
+		return false;
+	}
+
 	// Load image with optional scaling
-	CGImageRef image = LoadScaledImage(path.c_str(), maxPixelSize);
+	CGImageRef image = LoadScaledImage(source, maxPixelSize,
+	                                  std::max(info.sourceWidth, info.sourceHeight));
+	CFRelease(source);
 	if (!image) {
 		DBG("Native ImageIO failed to load image: %s", path.c_str());
 		return false;
 	}
 
-	// Get orientation from image properties
-	orientation = 1;
-	// Note: When using kCGImageSourceCreateThumbnailWithTransform, orientation
-	// is already applied, so we return 1 (normal)
-
 	// Extract RGB data
-	bool success = ExtractRGB(image, out);
+	bool success = !DecodeCancelled(cancel) && ExtractRGB(image, out) && !DecodeCancelled(cancel);
 	DBG("Native ImageIO extraction success=%d, size=%zux%zu", success, CGImageGetWidth(image), CGImageGetHeight(image));
 
 	CGImageRelease(image);
+	info.fullResolution = success && out.Width() == info.sourceWidth && out.Height() == info.sourceHeight;
 	return success;
 }
 
 // ============================================================================
 // Factory function
 // ============================================================================
-void CreateMacDecoders(std::vector<std::unique_ptr<ImageDecoder>>& decoders)
+void CreateMacDecoders(std::vector<std::shared_ptr<ImageDecoder>>& decoders)
 {
-	decoders.push_back(std::make_unique<MacOSImageDecoder>());
+	decoders.push_back(std::make_shared<MacOSImageDecoder>());
 }
 
 #endif // __APPLE__

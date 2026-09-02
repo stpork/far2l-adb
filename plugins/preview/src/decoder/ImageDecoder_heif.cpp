@@ -2,6 +2,7 @@
 #include "../PreviewLog.h"
 #include <algorithm>
 #include <cstring>
+#include <strings.h>
 #include "external/stb_image_resize2.h"
 
 #ifdef HAVE_HEIF
@@ -17,12 +18,12 @@ public:
 		return strcasecmp(ext, "heic") == 0 || strcasecmp(ext, "heif") == 0;
 	}
 
-	bool Decode(const std::string& path, Image& out, int& orientation,
-	            int maxPixelSize, volatile bool* cancel) override
+	bool Decode(const std::string& path, Image& out, ImageDecodeInfo& info,
+	            int maxPixelSize, const DecodeCancelFlag* cancel) override
 	{
-		if (cancel && *cancel) return false;
+		if (DecodeCancelled(cancel)) return false;
 		DBG("Decoding via libheif: %s", path.c_str());
-		orientation = ExifHelpers::ReadExifOrientation(path);
+		info = {};
 
 		heif_context* ctx = heif_context_alloc();
 		if (!ctx) return false;
@@ -42,6 +43,8 @@ public:
 
 		int width = heif_image_handle_get_width(handle);
 		int height = heif_image_handle_get_height(handle);
+		info.sourceWidth = width;
+		info.sourceHeight = height;
 
 		if ((uint64_t)width * height > kMaxImagePixels) {
 			heif_image_handle_release(handle);
@@ -53,13 +56,19 @@ public:
 		int targetHeight = height;
 		if (maxPixelSize > 0 && (width > maxPixelSize || height > maxPixelSize)) {
 			float scale = (float)maxPixelSize / (float)std::max(width, height);
-			targetWidth = (int)(width * scale);
-			targetHeight = (int)(height * scale);
+			targetWidth = std::max(1, (int)(width * scale));
+			targetHeight = std::max(1, (int)(height * scale));
 		}
 
 		heif_image* img = nullptr;
 		error = heif_decode_image(handle, &img, heif_colorspace_RGB, heif_chroma_interleaved_RGB, nullptr);
 		if (error.code != heif_error_Ok) {
+			heif_image_handle_release(handle);
+			heif_context_free(ctx);
+			return false;
+		}
+		if (DecodeCancelled(cancel)) {
+			heif_image_release(img);
 			heif_image_handle_release(handle);
 			heif_context_free(ctx);
 			return false;
@@ -87,14 +96,15 @@ public:
 		heif_image_release(img);
 		heif_image_handle_release(handle);
 		heif_context_free(ctx);
+		info.fullResolution = (out.Width() == info.sourceWidth && out.Height() == info.sourceHeight);
 		return true;
 	}
 };
 #endif // HAVE_HEIF
 
-void CreateHeifDecoder(std::vector<std::unique_ptr<ImageDecoder>>& decoders)
+void CreateHeifDecoder(std::vector<std::shared_ptr<ImageDecoder>>& decoders)
 {
 #ifdef HAVE_HEIF
-	decoders.push_back(std::make_unique<HeifImageDecoder>());
+	decoders.push_back(std::make_shared<HeifImageDecoder>());
 #endif
 }

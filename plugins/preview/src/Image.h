@@ -33,8 +33,8 @@ public:
 
 	void Blit(Image &dst, int dst_left, int dst_top, int width, int height, int src_left, int src_top) const;
 	void Rotate(Image &dst, bool clockwise) const;
-	void RotateArbitrary(Image &dst, double angle_degrees, bool high_quality) const;
-	void Scale(Image &dst, double scale) const;
+	void RotateArbitrary(Image &dst, double angle_degrees, bool high_quality, bool native_acceleration) const;
+	void Scale(Image &dst, double scale, bool native_acceleration) const;
 
 
 	inline size_t Offset(int x, int y, unsigned char channel = 0) const

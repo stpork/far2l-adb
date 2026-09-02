@@ -13,8 +13,8 @@ class ImageAtQV : public Threaded
 {
 	std::condition_variable _cond;
 	std::mutex _mtx;
-	volatile bool _exiting{false};
-	volatile bool _changing{true};
+	std::atomic<bool> _exiting{false};
+	std::atomic<bool> _changing{true};
 
 	std::string _cur_file;
 	SMALL_RECT _cur_area{-1, -1, -1, -1};
@@ -29,12 +29,12 @@ class ImageAtQV : public Threaded
 		for (;;) {
 			for (;;) {
 				std::unique_lock<std::mutex> lock(_mtx);
-				if (_exiting) {
+				if (_exiting.load(std::memory_order_relaxed)) {
 					DBG("thread exited");
 					return nullptr;
 				}
-				if (_changing) {
-					_changing = false;
+				if (_changing.load(std::memory_order_relaxed)) {
+					_changing.store(false, std::memory_order_relaxed);
 					file = _cur_file;
 					area = _cur_area;
 					RectReduce(area);
@@ -69,8 +69,8 @@ public:
 			DBG("exiting...");
 			{
 				std::lock_guard<std::mutex> lock(_mtx);
-				_exiting = true;
-				_changing = true;
+				_exiting.store(true, std::memory_order_relaxed);
+				_changing.store(true, std::memory_order_relaxed);
 				_cond.notify_all();
 			}
 			DWORD tmout;
@@ -89,7 +89,7 @@ public:
 	{
 		std::lock_guard<std::mutex> lock(_mtx);
 		if (_cur_file != file || memcmp(&_cur_area, &area, sizeof(_cur_area)) != 0) {
-			_changing = true;
+			_changing.store(true, std::memory_order_relaxed);
 			_cur_file = file;
 			_cur_area = area;
 			_cond.notify_all();

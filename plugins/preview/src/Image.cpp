@@ -1,6 +1,9 @@
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <thread>
+#include <atomic>
+#include <cstdint>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -15,6 +18,44 @@
 #ifdef __APPLE__
 #include <Accelerate/Accelerate.h>
 #endif
+
+static constexpr double kPi = 3.14159265358979323846;
+
+static bool ResizeLinearParallel(const unsigned char* src, int src_w, int src_h, int src_stride,
+	unsigned char* dst, int dst_w, int dst_h, int dst_stride, stbir_pixel_layout layout)
+{
+	const uint64_t output_pixels = (uint64_t)dst_w * dst_h;
+	const unsigned int hw_threads = std::thread::hardware_concurrency();
+	const int requested_threads = (output_pixels >= 2ULL * 1024 * 1024 && hw_threads > 1)
+		? (int)std::min(8u, hw_threads) : 1;
+	if (requested_threads == 1) {
+		return stbir_resize_uint8_linear(src, src_w, src_h, src_stride,
+			dst, dst_w, dst_h, dst_stride, layout) != nullptr;
+	}
+
+	STBIR_RESIZE resize;
+	stbir_resize_init(&resize, src, src_w, src_h, src_stride,
+		dst, dst_w, dst_h, dst_stride, layout, STBIR_TYPE_UINT8);
+	const int splits = stbir_build_samplers_with_splits(&resize, requested_threads);
+	if (splits <= 1) {
+		if (splits == 1) stbir_free_samplers(&resize);
+		return stbir_resize_uint8_linear(src, src_w, src_h, src_stride,
+			dst, dst_w, dst_h, dst_stride, layout) != nullptr;
+	}
+
+	std::atomic<bool> ok{true};
+	std::vector<std::thread> workers;
+	workers.reserve((size_t)splits - 1);
+	for (int split = 1; split < splits; ++split) {
+		workers.emplace_back([&resize, &ok, split]() {
+			if (!stbir_resize_extended_split(&resize, split, 1)) ok.store(false, std::memory_order_relaxed);
+		});
+	}
+	if (!stbir_resize_extended_split(&resize, 0, 1)) ok.store(false, std::memory_order_relaxed);
+	for (auto& worker : workers) worker.join();
+	stbir_free_samplers(&resize);
+	return ok.load(std::memory_order_relaxed);
+}
 
 Image::Image(int width, int height, unsigned char bytes_per_pixel)
 {
@@ -132,7 +173,7 @@ void Image::Blit(Image &dst, int dst_left, int dst_top, int width, int height, i
 	}
 }
 
-void Image::Scale(Image &dst, double scale) const
+void Image::Scale(Image &dst, double scale, bool native_acceleration) const
 {
 	if (fabs(scale - 1.0) < 0.0001) {
 		dst = *this;
@@ -148,56 +189,47 @@ void Image::Scale(Image &dst, double scale) const
 	}
 
 #ifdef __APPLE__
-	// Convert RGB→ARGB, scale with vImage (Accelerate framework, SIMD), convert ARGB→RGB
-	if (_bytes_per_pixel == 3) {
-		const size_t src_argb_bytes = (size_t)_width * _height * 4;
-		const size_t dst_argb_bytes = (size_t)out_w * out_h * 4;
-		if (_scratch_argb_src.size() < src_argb_bytes) _scratch_argb_src.resize(src_argb_bytes);
-		if (_scratch_argb_dst.size() < dst_argb_bytes) _scratch_argb_dst.resize(dst_argb_bytes);
+	if (native_acceleration) {
+		// Convert RGB→ARGB, scale with vImage (Accelerate framework, SIMD), convert ARGB→RGB
+		if (_bytes_per_pixel == 3) {
+			const size_t src_argb_bytes = (size_t)_width * _height * 4;
+			const size_t dst_argb_bytes = (size_t)out_w * out_h * 4;
+			if (_scratch_argb_src.size() < src_argb_bytes) _scratch_argb_src.resize(src_argb_bytes);
+			if (_scratch_argb_dst.size() < dst_argb_bytes) _scratch_argb_dst.resize(dst_argb_bytes);
 
-		const uint8_t *s = _data.data();
-		uint8_t *a = _scratch_argb_src.data();
-		for (int i = 0, n = _width * _height; i < n; ++i) {
-			a[i*4+0] = 255;
-			a[i*4+1] = s[i*3+0];
-			a[i*4+2] = s[i*3+1];
-			a[i*4+3] = s[i*3+2];
-		}
+			vImage_Buffer rgb_src = { const_cast<unsigned char*>(_data.data()), (vImagePixelCount)_height,
+				(vImagePixelCount)_width, (size_t)_width * 3 };
+			vImage_Buffer src_buf = { _scratch_argb_src.data(), (vImagePixelCount)_height, (vImagePixelCount)_width, (size_t)_width * 4 };
+			vImage_Buffer dst_buf = { _scratch_argb_dst.data(), (vImagePixelCount)out_h, (vImagePixelCount)out_w, (size_t)out_w * 4 };
+			vImage_Buffer rgb_dst = { dst._data.data(), (vImagePixelCount)out_h, (vImagePixelCount)out_w, (size_t)out_w * 3 };
 
-		vImage_Buffer src_buf = { _scratch_argb_src.data(), (vImagePixelCount)_height, (vImagePixelCount)_width, (size_t)_width * 4 };
-		vImage_Buffer dst_buf = { _scratch_argb_dst.data(), (vImagePixelCount)out_h, (vImagePixelCount)out_w, (size_t)out_w * 4 };
-
-		if (vImageScale_ARGB8888(&src_buf, &dst_buf, nullptr, kvImageHighQualityResampling) == kvImageNoError) {
-			const uint8_t *d = _scratch_argb_dst.data();
-			uint8_t *out = dst._data.data();
-			for (int i = 0, n = out_w * out_h; i < n; ++i) {
-				out[i*3+0] = d[i*4+1];
-				out[i*3+1] = d[i*4+2];
-				out[i*3+2] = d[i*4+3];
+			if (vImageConvert_RGB888toARGB8888(&rgb_src, nullptr, 255, &src_buf, false, kvImageNoFlags) == kvImageNoError &&
+			    vImageScale_ARGB8888(&src_buf, &dst_buf, nullptr, kvImageHighQualityResampling) == kvImageNoError &&
+			    vImageConvert_ARGB8888toRGB888(&dst_buf, &rgb_dst, kvImageNoFlags) == kvImageNoError) {
+				return;
 			}
-			return;
-		}
-		// Fall through to stbir on error
-	} else {
-		// 4-channel: vImage works directly (channel labels don't matter for pure scaling)
-		vImage_Buffer src_buf = { const_cast<void*>(static_cast<const void*>(_data.data())), (vImagePixelCount)_height, (vImagePixelCount)_width, (size_t)_width * 4 };
-		vImage_Buffer dst_buf = { dst._data.data(), (vImagePixelCount)out_h, (vImagePixelCount)out_w, (size_t)out_w * 4 };
-		if (vImageScale_ARGB8888(&src_buf, &dst_buf, nullptr, kvImageHighQualityResampling) == kvImageNoError) {
-			return;
+			// Fall through to stbir on error
+		} else {
+			// 4-channel: vImage works directly (channel labels don't matter for pure scaling)
+			vImage_Buffer src_buf = { const_cast<void*>(static_cast<const void*>(_data.data())), (vImagePixelCount)_height, (vImagePixelCount)_width, (size_t)_width * 4 };
+			vImage_Buffer dst_buf = { dst._data.data(), (vImagePixelCount)out_h, (vImagePixelCount)out_w, (size_t)out_w * 4 };
+			if (vImageScale_ARGB8888(&src_buf, &dst_buf, nullptr, kvImageHighQualityResampling) == kvImageNoError) {
+				return;
+			}
 		}
 	}
 #endif
 
 	// Cross-platform: stb_image_resize2 (SSE2/NEON SIMD, compiled in ImageDecoder_stb.cpp)
 	const stbir_pixel_layout layout = (_bytes_per_pixel == 4) ? STBIR_RGBA : STBIR_RGB;
-	stbir_resize_uint8_linear(
+	ResizeLinearParallel(
 		_data.data(), _width, _height, 0,
 		dst._data.data(), out_w, out_h, 0,
 		layout);
 }
 
 
-void Image::RotateArbitrary(Image &dst, double angle_degrees, bool high_quality) const
+void Image::RotateArbitrary(Image &dst, double angle_degrees, bool high_quality, bool native_acceleration) const
 {
 	if (_data.empty()) {
 		dst.Resize(0, 0, _bytes_per_pixel);
@@ -225,97 +257,57 @@ void Image::RotateArbitrary(Image &dst, double angle_degrees, bool high_quality)
 	}
 
 #ifdef __APPLE__
-	// Use vImage for arbitrary rotation on macOS
-	const double angle_rad = -angle_degrees * M_PI / 180.0;  // Negative for clockwise convention
+	if (native_acceleration) {
+		// Use vImage for arbitrary rotation on macOS.
+		const double angle_rad = -angle_degrees * kPi / 180.0;
+		const double cos_a = fabs(cos(angle_rad));
+		const double sin_a = fabs(sin(angle_rad));
+		const int new_width = int(_width * cos_a + _height * sin_a + 0.5);
+		const int new_height = int(_width * sin_a + _height * cos_a + 0.5);
 
-	// Calculate new dimensions for rotated image
-	const double cos_a = fabs(cos(angle_rad));
-	const double sin_a = fabs(sin(angle_rad));
-	const int new_width = int(_width * cos_a + _height * sin_a + 0.5);
-	const int new_height = int(_width * sin_a + _height * cos_a + 0.5);
+		const size_t src_stride = (size_t)_width * 4;
+		const size_t dst_stride = (size_t)new_width * 4;
+		const size_t src_size = src_stride * _height;
+		const size_t dst_size = dst_stride * new_height;
+		if (_scratch_argb_src.size() < src_size) _scratch_argb_src.resize(src_size);
+		if (_scratch_argb_dst.size() < dst_size) _scratch_argb_dst.resize(dst_size);
 
-	const size_t src_stride = (size_t)_width * 4;
-	const size_t dst_stride = (size_t)new_width * 4;
-	const size_t src_size = src_stride * _height;
-	const size_t dst_size = dst_stride * new_height;
+		vImage_Buffer rgb_src = { const_cast<unsigned char*>(_data.data()), (vImagePixelCount)_height,
+			(vImagePixelCount)_width, (size_t)_width * 3 };
+		vImage_Buffer src_buf = { _scratch_argb_src.data(), (vImagePixelCount)_height,
+			(vImagePixelCount)_width, src_stride };
+		if (vImageConvert_RGB888toARGB8888(&rgb_src, nullptr, 255, &src_buf, false, kvImageNoFlags) != kvImageNoError) {
+			dst = *this;
+			return;
+		}
 
-	// Grow scratch buffers only if needed (avoid reallocations in hot path)
-	if (_scratch_argb_src.size() < src_size) {
-		_scratch_argb_src.resize(src_size);
-	}
-	if (_scratch_argb_dst.size() < dst_size) {
-		_scratch_argb_dst.resize(dst_size);
-	}
+		memset(_scratch_argb_dst.data(), 0, dst_size);
+		vImage_Buffer dst_buf = { _scratch_argb_dst.data(), (vImagePixelCount)new_height,
+			(vImagePixelCount)new_width, dst_stride };
+		Pixel_8888 bg_color = {255, 0, 0, 0};
+		vImage_Flags flags = kvImageBackgroundColorFill;
+		if (high_quality) flags |= kvImageHighQualityResampling;
 
-	// RGB → ARGB (manual, vImageConvert requires planar input)
-	uint8_t *argb_src = _scratch_argb_src.data();
-	for (int y = 0; y < _height; ++y) {
-		const uint8_t *src_row = Ptr(0, y);
-		uint8_t *dst_row = argb_src + y * src_stride;
-		for (int x = 0; x < _width; ++x) {
-			dst_row[x * 4 + 0] = 255;                  // A
-			dst_row[x * 4 + 1] = src_row[x * 3 + 0];   // R
-			dst_row[x * 4 + 2] = src_row[x * 3 + 1];   // G
-			dst_row[x * 4 + 3] = src_row[x * 3 + 2];   // B
+		const vImage_Error error = vImageRotate_ARGB8888(
+			&src_buf, &dst_buf, nullptr, (float)angle_rad, bg_color, flags);
+		if (error != kvImageNoError) {
+			DBG("vImageRotate_ARGB8888 failed: %ld", (long)error);
+			dst = *this;
+			return;
+		}
+
+		dst.Resize(new_width, new_height, 3);
+		vImage_Buffer rgb_dst = { dst.Data(), (vImagePixelCount)new_height,
+			(vImagePixelCount)new_width, (size_t)new_width * 3 };
+		if (vImageConvert_ARGB8888toRGB888(&dst_buf, &rgb_dst, kvImageNoFlags) != kvImageNoError) {
+			dst = *this;
+		} else {
+			return;
 		}
 	}
-
-	// Clear destination buffer (black background)
-	memset(_scratch_argb_dst.data(), 0, dst_size);
-
-	vImage_Buffer src_buf = {
-		.data = argb_src,
-		.height = (vImagePixelCount)_height,
-		.width = (vImagePixelCount)_width,
-		.rowBytes = src_stride
-	};
-
-	vImage_Buffer dst_buf = {
-		.data = _scratch_argb_dst.data(),
-		.height = (vImagePixelCount)new_height,
-		.width = (vImagePixelCount)new_width,
-		.rowBytes = dst_stride
-	};
-
-	// Background color (black, ARGB)
-	Pixel_8888 bgColor = {255, 0, 0, 0};  // ARGB: Alpha=255, R=0, G=0, B=0
-
-	// Perform rotation - use fast mode for interactive rotation
-	vImage_Flags flags = kvImageBackgroundColorFill;
-	if (high_quality) {
-		flags |= kvImageHighQualityResampling;
-	}
-
-	vImage_Error err = vImageRotate_ARGB8888(
-		&src_buf,
-		&dst_buf,
-		nullptr,  // temp buffer (auto-allocated)
-		(float)angle_rad,
-		bgColor,
-		flags
-	);
-
-	if (err != kvImageNoError) {
-		DBG("vImageRotate_ARGB8888 failed: %ld", (long)err);
-		dst = *this;
-		return;
-	}
-
-	// ARGB → RGB (manual)
-	dst.Resize(new_width, new_height, 3);
-	const uint8_t *argb_dst = _scratch_argb_dst.data();
-	for (int y = 0; y < new_height; ++y) {
-		const uint8_t *src_row = argb_dst + y * dst_stride;
-		uint8_t *dst_row = dst.Ptr(0, y);
-		for (int x = 0; x < new_width; ++x) {
-			dst_row[x * 3 + 0] = src_row[x * 4 + 1];  // R
-			dst_row[x * 3 + 1] = src_row[x * 4 + 2];  // G
-			dst_row[x * 3 + 2] = src_row[x * 4 + 3];  // B
-		}
-	}
-#else
-	// High-performance software fallback for non-macOS platforms
-	const double angle_rad = -angle_degrees * M_PI / 180.0;
+#endif
+	// High-performance cross-platform fallback
+	const double angle_rad = -angle_degrees * kPi / 180.0;
 	const double cos_a = cos(angle_rad);
 	const double sin_a = sin(angle_rad);
 
@@ -387,7 +379,5 @@ void Image::RotateArbitrary(Image &dst, double angle_degrees, bool high_quality)
 		rotate_y_range(0, new_height);
 	}
 
-	(void)high_quality; 
-#endif
+	(void)high_quality;
 }
-

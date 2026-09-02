@@ -2,6 +2,7 @@
 #include "../PreviewLog.h"
 #include <algorithm>
 #include <cstring>
+#include <strings.h>
 #include <fstream>
 #include <vector>
 #include "external/stb_image_resize2.h"
@@ -19,12 +20,12 @@ public:
 		return strcasecmp(ext, "webp") == 0;
 	}
 
-	bool Decode(const std::string& path, Image& out, int& orientation,
-	            int maxPixelSize, volatile bool* cancel) override
+	bool Decode(const std::string& path, Image& out, ImageDecodeInfo& info,
+	            int maxPixelSize, const DecodeCancelFlag* cancel) override
 	{
-		if (cancel && *cancel) return false;
+		if (DecodeCancelled(cancel)) return false;
 		DBG("Decoding via libwebp: %s", path.c_str());
-		orientation = 1;
+		info = {};
 
 		static constexpr std::streamsize kMaxFileBytes = 256LL * 1024 * 1024; // 256 MB
 
@@ -41,16 +42,22 @@ public:
 		int width, height;
 		if (!WebPGetInfo(buffer.data(), buffer.size(), &width, &height)) return false;
 		if ((uint64_t)width * height > kMaxImagePixels) return false;
+		info.sourceWidth = width;
+		info.sourceHeight = height;
 
 		uint8_t* data = WebPDecodeRGB(buffer.data(), buffer.size(), &width, &height);
 		if (!data) return false;
+		if (DecodeCancelled(cancel)) {
+			WebPFree(data);
+			return false;
+		}
 
 		int targetWidth = width;
 		int targetHeight = height;
 		if (maxPixelSize > 0 && (width > maxPixelSize || height > maxPixelSize)) {
 			float scale = (float)maxPixelSize / (float)std::max(width, height);
-			targetWidth = (int)(width * scale);
-			targetHeight = (int)(height * scale);
+			targetWidth = std::max(1, (int)(width * scale));
+			targetHeight = std::max(1, (int)(height * scale));
 		}
 
 		if (targetWidth != width || targetHeight != height) {
@@ -64,14 +71,15 @@ public:
 		}
 
 		WebPFree(data);
+		info.fullResolution = (out.Width() == info.sourceWidth && out.Height() == info.sourceHeight);
 		return true;
 	}
 };
 #endif // HAVE_WEBP
 
-void CreateWebPDecoder(std::vector<std::unique_ptr<ImageDecoder>>& decoders)
+void CreateWebPDecoder(std::vector<std::shared_ptr<ImageDecoder>>& decoders)
 {
 #ifdef HAVE_WEBP
-	decoders.push_back(std::make_unique<WebPImageDecoder>());
+	decoders.push_back(std::make_shared<WebPImageDecoder>());
 #endif
 }

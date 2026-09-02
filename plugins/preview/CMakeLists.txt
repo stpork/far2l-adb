@@ -3,10 +3,12 @@ project(preview)
 find_package(PkgConfig REQUIRED)
 
 if(APPLE)
-    option(PREVIEW_NATIVE "Use native macOS image decoding and processing" ON)
+    option(PREVIEW_NATIVE "Use native macOS decoding by default (runtime-switchable)" ON)
 else()
     set(PREVIEW_NATIVE OFF)
 endif()
+
+find_package(Threads REQUIRED)
 
 set(SOURCES
     src/Plugin.cpp
@@ -87,13 +89,13 @@ endif()
 include_directories(
     ${PREVIEW_OPT_INCDIRS}
     .
-    ${CMAKE_SOURCE_DIR}/far2l/far2sdk
-    ${CMAKE_SOURCE_DIR}/WinPort
+    ../../far2l/far2sdk
+    ../../WinPort
 )
 
 add_library(preview MODULE ${SOURCES})
 
-target_link_libraries(preview utils far2l ${PREVIEW_NATIVE_LIBS} ${PREVIEW_CROSSPLATFORM_LIBS})
+target_link_libraries(preview utils far2l Threads::Threads ${PREVIEW_NATIVE_LIBS} ${PREVIEW_CROSSPLATFORM_LIBS})
 
 target_compile_definitions(preview PRIVATE
     -DWINPORT_DIRECT
@@ -101,6 +103,17 @@ target_compile_definitions(preview PRIVATE
     -D_UNICODE
     ${PREVIEW_OPT_DEFS}
 )
+
+if(APPLE)
+    target_compile_definitions(preview PRIVATE PREVIEW_HAS_NATIVE=1)
+    if(PREVIEW_NATIVE)
+        target_compile_definitions(preview PRIVATE PREVIEW_NATIVE_DEFAULT=1)
+    else()
+        target_compile_definitions(preview PRIVATE PREVIEW_NATIVE_DEFAULT=0)
+    endif()
+else()
+    target_compile_definitions(preview PRIVATE PREVIEW_HAS_NATIVE=0 PREVIEW_NATIVE_DEFAULT=0)
+endif()
 
 set_target_properties(preview PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${INSTALL_DIR}/Plugins/preview/plug"
