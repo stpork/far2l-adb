@@ -6,56 +6,58 @@ $ #Preview Plugin - Quick Reference & Cheat Sheet#
  Fast, native image viewer with hardware-accelerated decoding
 and terminal graphics support for far2l.
 
- ^#KEYBOARD SHORTCUTS & CONTROLS (CHEATSHEET)#
+@-
+^#KEYBOARD SHORTCUTS & CONTROLS (CHEATSHEET)#
 
  #Navigation#
-   #Right#, #Down#         Next image in folder
-   #Left#, #Up#           Previous image in folder
-   #Up# / #Down#          First / Last image in folder (when not panned)
+   #Right#, #Down#            Next image in folder
+   #Left#, #Up#               Previous image in folder
+   #Up# / #Down#              First / Last image in folder
 
  #Zoom & Scaling#
-   #PgUp# / #+# / #Num+#  Zoom in (+10%)
-   #PgDn# / #-# / #Num-#  Zoom out (-10%)
-   #Shift+PgUp/PgDn#      Fine zoom (+1% / -1%)
-   #*# / #A#              Auto-fit image to window
-   #/# / #Z#              100% original size (1:1 pixels)
-   #S#                    Cycle fit modes (Auto -> Width -> Height -> 100%)
-   #=# / #Num5#           Reset zoom and pan offsets to default
-   #Mouse Wheel#          Smooth zoom in / out
+   #PgUp# / #+# / #Num+#        Zoom in (+10%)
+   #PgDn# / #-# / #Num-#        Zoom out (-10%)
+   #Shift+PgUp# / #PgDn#      Fine zoom (+1% / -1%)
+   #*# / #A#                  Auto-fit image to window
+   #/# / #Z#                  100% original size (1:1 pixels)
+   #S#                      Cycle fit modes (Auto -> Width -> Height -> 100%)
+   #=# / #Num5#               Reset zoom and pan offsets to default
+   #Mouse Wheel#            Smooth zoom in / out
 
  #Panning (when zoomed in)#
-   #Alt+Arrows#           Pan image viewport (or #Alt+Num 1..9#)
-   #Alt+Shift+Arrows#     Fine pan (1 pixel per press)
-   #Mouse Left Drag#      Click and drag to pan interactively
+   #Alt+Arrows#             Pan image viewport (or #Alt+Num 1..9#)
+   #Alt+Shift+Arrows#       Fine pan (1 pixel per press)
+   #Mouse Left Drag#        Click and drag to pan interactively
 
  #Rotation & Mirroring#
-   #Tab# / #End#          Rotate 90° clockwise
-   #Shift+Tab# / #Home#   Rotate 90° counter-clockwise
-   #Shift+End# / #Shift+Home# Fine rotate 1° clockwise / counter-clockwise
-   #F7# / #H#             Mirror horizontally
-   #F8# / #V#             Mirror vertically
-   #Mouse Right Click#    Rotate 90° clockwise
+   #Tab# / #End#              Rotate 90° clockwise
+   #Shift+Tab# / #Home#       Rotate 90° counter-clockwise
+   #Shift+Home# / #End#       Fine rotate 1° (CCW / CW)
+   #F7# / #H#                 Mirror horizontally
+   #F8# / #V#                 Mirror vertically
+   #Mouse Right Click#      Rotate 90° clockwise
 
  #File Selection & Tagging#
-   #Ins# / #Num0#         Toggle selection of current file
-   #Space#                Select file and advance to next image
-   #Backspace#            Deselect file and return to previous
-   #Esc# / #F10#          Close viewer (selections preserved on far2l panel)
+   #Ins# / #Num0#             Toggle selection of current file
+   #Space#                  Select file and advance to next image
+   #Backspace#              Deselect file and return to previous
+   #Esc# / #F10#              Close viewer (selections kept on panel)
 
  #Window & System Actions#
-   #F5# / #F#             Toggle full-screen / compact frame mode
-   #Enter# / #O#          Open file in default OS application
-   #F9#                   Open Preview Configuration dialog
-   #F1#                   Show this Help cheat sheet
+   #F5# / #F#                 Toggle full-screen / compact frame
+   #Enter# / #O#              Open file in default OS application
+   #F9#                     Open Preview Configuration dialog
+   #F1#                     Show this Help cheat sheet
 
- ^#DETAILED HELP TOPICS#
+^#DETAILED HELP TOPICS#
 
-   ~Overview & Features~@Overview@          ~Configuration & Settings~@Preview@
-   ~Opening Images~@Opening@               ~Supported Formats~@Formats@
-   ~Navigation Details~@Navigation@           ~Video Storyboards~@Video@
-   ~Zoom & Scaling Details~@Zoom@       ~Troubleshooting & FAQ~@Troubleshooting@
-   ~Panning & Dragging~@Pan@               ~Selection & Batch Actions~@Selection@
+   ~Overview & Features~@Overview@                       ~Configuration & Settings~@Preview@
+   ~Opening Images~@Opening@                            ~Supported Formats~@Formats@
+   ~Navigation Details~@Navigation@                        ~Video Storyboards~@Video@
+   ~Zoom & Scaling Details~@Zoom@                    ~Troubleshooting & FAQ~@Troubleshooting@
+   ~Panning & Dragging~@Pan@                        ~Selection & Batch Actions~@Selection@
    ~Rotation & Mirroring~@Rotation@
+@+
 
 @Overview
 $ #Overview & Features#
@@ -159,7 +161,7 @@ $ #File Selection & Tagging#
 
    #Ins#                     Toggle selection of current file
    #Space#                   Select file and advance to next image
-   #Backspace#               Deselect file and go back to previous
+   #Backspace#               Deselect file and return to previous
    #Esc# / #F10#             Close viewer (all selections are preserved
                              on the far2l panel)
 
