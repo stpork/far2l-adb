@@ -26,11 +26,21 @@ public:
 	            int maxPixelSize, const DecodeCancelFlag* cancel) override
 	{
 		const std::string ext = ExifHelpers::GetExtension(path);
+
+		// Fast path: try backends that declare support for this extension
 		for (const auto& backend : _backends) {
 			if (DecodeCancelled(cancel)) return false;
 			if (backend && backend->CanHandle(ext.c_str()) &&
 			    backend->Decode(path, out, info, maxPixelSize, cancel)) return true;
 		}
+
+		// Fallback: try remaining backends (handles misnamed extensions, e.g. webp/heic saved with .jpg)
+		for (const auto& backend : _backends) {
+			if (DecodeCancelled(cancel)) return false;
+			if (backend && !backend->CanHandle(ext.c_str()) &&
+			    backend->Decode(path, out, info, maxPixelSize, cancel)) return true;
+		}
+
 		return false;
 	}
 
@@ -42,7 +52,7 @@ public:
 		return false;
 	}
 
-	const char* Name() const override { return "ImageIO with cross-platform fallback"; }
+	const char* Name() const override { return "FallbackImageDecoder"; }
 	bool SupportsDecodeScaling(const std::string& path) const override
 	{
 		const std::string ext = ExifHelpers::GetExtension(path);
@@ -57,29 +67,19 @@ public:
 std::vector<std::shared_ptr<ImageDecoder>> DecoderFactory::CreateDecoders()
 {
 	std::vector<std::shared_ptr<ImageDecoder>> decoders;
+	std::vector<std::shared_ptr<ImageDecoder>> backends;
 
 	if (g_settings.NativeImplementation()) {
 #if PREVIEW_HAS_NATIVE
-		std::vector<std::shared_ptr<ImageDecoder>> backends;
 		CreateMacDecoders(backends);
-		CreateCrossPlatformDecoders(backends);
-		CreateHeifDecoder(backends);
-		CreateWebPDecoder(backends);
-		CreateTiffDecoder(backends);
-		decoders.push_back(std::make_shared<FallbackImageDecoder>(std::move(backends)));
-#else
-		CreateCrossPlatformDecoders(decoders);
-		CreateHeifDecoder(decoders);
-		CreateWebPDecoder(decoders);
-		CreateTiffDecoder(decoders);
 #endif
-	} else {
-		CreateCrossPlatformDecoders(decoders);
-		CreateHeifDecoder(decoders);
-		CreateWebPDecoder(decoders);
-		CreateTiffDecoder(decoders);
 	}
+	CreateCrossPlatformDecoders(backends);
+	CreateHeifDecoder(backends);
+	CreateWebPDecoder(backends);
+	CreateTiffDecoder(backends);
 
+	decoders.push_back(std::make_shared<FallbackImageDecoder>(std::move(backends)));
 	return decoders;
 }
 
@@ -100,14 +100,15 @@ std::shared_ptr<ImageDecoder> DecoderFactory::FindDecoder(const std::string& pat
 	}
 
 	std::string ext = ExifHelpers::GetExtension(path);
-	if (ext.empty()) {
-		return nullptr;
-	}
 
 	for (auto& decoder : s_decoders) {
 		if (decoder && decoder->CanHandle(ext.c_str())) {
 			return decoder;
 		}
+	}
+
+	if (!s_decoders.empty()) {
+		return s_decoders.front();
 	}
 
 	return nullptr;
