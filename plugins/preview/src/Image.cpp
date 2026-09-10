@@ -113,7 +113,14 @@ void Image::Resize(int width, int height, unsigned char bytes_per_pixel)
 		return;
 	}
 
-	_data.resize(bytes_size);
+	try {
+		_data.resize(bytes_size);
+	} catch (...) {
+		_data.clear();
+		_width = 0;
+		_height = 0;
+		return;
+	}
 	_width = width;
 	_height = height;
 	_bytes_per_pixel = bytes_per_pixel;

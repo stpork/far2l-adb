@@ -29,19 +29,24 @@ public:
 
 		static constexpr std::streamsize kMaxFileBytes = 256LL * 1024 * 1024; // 256 MB
 
-		std::ifstream file(path, std::ios::binary | std::ios::ate);
+		std::ifstream file(path, std::ios::binary);
 		if (!file.is_open()) return false;
+
+		// Fast header check (32 bytes) before loading full file into memory
+		uint8_t header[32];
+		if (!file.read((char*)header, sizeof(header))) return false;
+
+		int width = 0, height = 0;
+		if (!WebPGetInfo(header, sizeof(header), &width, &height)) return false;
+		if ((uint64_t)width * height > kMaxImagePixels) return false;
+
+		file.seekg(0, std::ios::end);
 		std::streamsize size = file.tellg();
 		if (size < 0 || size > kMaxFileBytes) return false;
 		file.seekg(0, std::ios::beg);
 
 		std::vector<uint8_t> buffer(size);
 		if (!file.read((char*)buffer.data(), size)) return false;
-
-		// Pre-check dimensions before full decode
-		int width, height;
-		if (!WebPGetInfo(buffer.data(), buffer.size(), &width, &height)) return false;
-		if ((uint64_t)width * height > kMaxImagePixels) return false;
 		info.sourceWidth = width;
 		info.sourceHeight = height;
 

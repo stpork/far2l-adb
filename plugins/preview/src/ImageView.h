@@ -97,7 +97,7 @@ public:
 	size_t GetCurrentFileIndex() const { return _cur_file; }
 	std::unordered_set<std::string> GetSelection() const;
 
-	bool Setup(SMALL_RECT &rc, const DecodeCancelFlag *cancel = nullptr);
+	bool Setup(SMALL_RECT &rc, const DecodeCancelFlag *cancel = nullptr, bool keep_state = false);
 
 	// Call from idle loop (e.g. DN_ENTERIDLE) to apply a completed async full-res decode.
 	// Returns true if the image was upgraded and re-rendered.

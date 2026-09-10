@@ -63,9 +63,12 @@ static std::pair<std::string, bool> GetPanelItem(int cmd, int index)
 	out.second = false;
 	size_t sz = g_far.Control(PANEL_ACTIVE, cmd, index, 0);
 	if (sz) {
-		std::vector<char> buf(sz + 16);
-		sz = g_far.Control(PANEL_ACTIVE, cmd, index, (LONG_PTR)buf.data());
-		const PluginPanelItem *ppi = (const PluginPanelItem *)buf.data();
+		static std::vector<char> s_buf;
+		if (s_buf.size() < sz + 16) {
+			s_buf.resize(std::max(s_buf.size() * 2, sz + 64));
+		}
+		sz = g_far.Control(PANEL_ACTIVE, cmd, index, (LONG_PTR)s_buf.data());
+		const PluginPanelItem *ppi = (const PluginPanelItem *)s_buf.data();
 		if (ppi->FindData.lpwszFileName && *ppi->FindData.lpwszFileName) {
 			out.first = Wide2MB(ppi->FindData.lpwszFileName);
 			out.second = (ppi->Flags & PPIF_SELECTED) != 0;

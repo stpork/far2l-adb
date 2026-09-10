@@ -172,6 +172,9 @@ int ReadExifOrientation(const std::string& path)
 		} else if (marker == 0xD9) { // EOI
 			fclose(f);
 			return 1;
+		} else if (marker == 0xD8) {
+			// SOI marker (e.g. nested thumbnail), has no length — skip
+			continue;
 		} else if (marker == 0x00) {
 			// Byte stuffing (0xFF00 in compressed data) — skip
 		} else if (marker == 0xFF) {
@@ -186,6 +189,10 @@ int ReadExifOrientation(const std::string& path)
 				return 1;
 			}
 			int seg_len = (buf[0] << 8) | buf[1];
+			if (seg_len < 2) {
+				fclose(f);
+				return 1;
+			}
 			fseek(f, seg_len - 2, SEEK_CUR);
 		} else {
 			// Other markers with length

@@ -162,9 +162,6 @@ bool ImageView::ApplyPendingFullRes()
 	                          double(_orig_image.Height()) / _original_height);
 	_has_full_resolution = _decode_info.fullResolution;
 
-	if (_fullres_target_scale > 0) {
-		_scale = _fullres_target_scale;
-	}
 	_scaled_image_scale = -1;
 	_base_dirty = true;
 
@@ -301,8 +298,14 @@ uint16_t ImageView::EnsureTransformed()
 		while (rotate_steps < 0) rotate_steps += 4;
 		rotate_steps %= 4;
 
-		for (int i = 0; i < rotate_steps; ++i) {
+		if (rotate_steps == 1) {
 			_base_image.Rotate(_tmp_image, true);
+			_base_image.Swap(_tmp_image);
+		} else if (rotate_steps == 2) {
+			_base_image.MirrorH();
+			_base_image.MirrorV();
+		} else if (rotate_steps == 3) {
+			_base_image.Rotate(_tmp_image, false);
 			_base_image.Swap(_tmp_image);
 		}
 		_rotated = _rotate;
@@ -520,11 +523,11 @@ bool ImageView::RenderImage()
 			&& (_wgi.Caps & WP_IMGCAP_ROTMIR) != 0) {
 		out = WINPORT(TransformConsoleImage)(NULL, WINPORT_IMAGE_ID, &area, fast_transform) != FALSE;
 	} else if (!scaled && tformed == 0 && abs(_prev_left - src_left) < viewport_w && abs(_prev_top - src_top) < viewport_h
-			&& (_wgi.Caps & WP_IMGCAP_ATTACH) != 0 && (_wgi.Caps & WP_IMGCAP_SCROLL) != 0) {
+			&& (_wgi.Caps & WP_IMGCAP_ATTACH) != 0 && (_wgi.Caps & WP_IMGCAP_SCROLL) != 0
+			&& ((_prev_left == src_left) != (_prev_top == src_top))) {
 		if (_prev_left != src_left) {
 			out = SendScrollAttachH(&area, src_left, _prev_top, viewport_w, viewport_h, _prev_left - src_left);
-		}
-		if (_prev_top != src_top) {
+		} else if (_prev_top != src_top) {
 			out = SendScrollAttachV(&area, src_left, src_top, viewport_w, viewport_h, _prev_top - src_top);
 		}
 	} else if (_force_send || scaled || tformed != 0 || _prev_left != src_left || _prev_top != src_top) {
@@ -675,6 +678,7 @@ bool ImageView::Preload()
 	if (!RefreshWGI()) {
 		return false;
 	}
+	_render_file = CurFile();
 	if (!ReadImage()) {
 		return false;
 	}
@@ -695,7 +699,7 @@ bool ImageView::Reload()
 	return true;
 }
 
-bool ImageView::Setup(SMALL_RECT &rc, const DecodeCancelFlag *cancel)
+bool ImageView::Setup(SMALL_RECT &rc, const DecodeCancelFlag *cancel, bool keep_state)
 {
 	_cancel = cancel;
 	_pos.X = rc.Left;
@@ -703,20 +707,29 @@ bool ImageView::Setup(SMALL_RECT &rc, const DecodeCancelFlag *cancel)
 	_size.X = rc.Right > rc.Left ? rc.Right - rc.Left + 1 : 1;
 	_size.Y = rc.Bottom > rc.Top ? rc.Bottom - rc.Top + 1 : 1;
 
-	_orig_image.Resize();
-	_ready_image.Resize();
-	_tmp_image.Resize();
-	JustReset();
-
 	// Get pixel info early for optimized decode+scale
 	if (!RefreshWGI()) {
 		return false;
 	}
 
 	_err_str.clear();
-	if (!PrepareImage() || !RenderImage()) {
-		return false;
+
+	// Reuse already loaded image (e.g. from Preload() or before window resize)
+	if (_orig_image.Width() > 0 && _render_file == CurFile()) {
+		JustReset(keep_state);
+		if (!RenderImage()) {
+			return false;
+		}
+	} else {
+		_orig_image.Resize();
+		_ready_image.Resize();
+		_tmp_image.Resize();
+		JustReset(keep_state);
+		if (!PrepareImage() || !RenderImage()) {
+			return false;
+		}
 	}
+
 	DenoteState();
 	return true;
 }

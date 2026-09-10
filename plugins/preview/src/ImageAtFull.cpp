@@ -3,6 +3,11 @@
 #include "Settings.h"
 #include "PreviewLog.h"
 #include <unistd.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+
+extern char **environ;
 
 class ImageViewAtFull : public ImageView
 {
@@ -68,6 +73,7 @@ public:
 	bool may_select{false};
 	bool full_size{false};
 	bool _first_draw{true};
+	bool _is_configured{false};
 
 	ImageViewAtFull(size_t initial_file, const std::vector<std::pair<std::string, bool> > &all_files)
 		: ImageView(initial_file, all_files)
@@ -78,7 +84,9 @@ public:
 	{
 		_dlg = dlg;
 		_first_draw = true;
-		return ImageView::Setup(rc);
+		bool res = ImageView::Setup(rc, nullptr, _is_configured);
+		if (res) _is_configured = true;
+		return res;
 	}
 
 	void DraggingMove(COORD pos)
@@ -221,19 +229,26 @@ static LONG_PTR WINAPI ImageDlgProc(HANDLE hDlg, int Msg, int Param1, LONG_PTR P
 						iv->Deselect();
 					break;
 				case KEY_ENTER: case KEY_NUMENTER: case 'o': case 'O':
-					// Open in default OS viewer securely
+					// Open in default OS viewer securely without leaving zombie processes
 					{
 						std::string filename = iv->CurFile();
-						pid_t pid = fork();
-						if (pid == 0) {
 #ifdef __APPLE__
-							const char *cmd[] = {"open", filename.c_str(), nullptr};
+						const char *cmd[] = {"open", filename.c_str(), nullptr};
 #else
-							const char *cmd[] = {"xdg-open", filename.c_str(), nullptr};
+						const char *cmd[] = {"xdg-open", filename.c_str(), nullptr};
 #endif
-							execvp(cmd[0], (char *const *)cmd);
-							exit(1); // Exit child process if exec fails
+						pid_t pid;
+						posix_spawn_file_actions_t actions;
+						posix_spawn_file_actions_init(&actions);
+						posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
+						posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
+						posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
+
+						if (posix_spawnp(&pid, cmd[0], &actions, nullptr, (char *const *)cmd, environ) == 0) {
+							int status = 0;
+							waitpid(pid, &status, 0);
 						}
+						posix_spawn_file_actions_destroy(&actions);
 					}
 					break;
 				case KEY_ESC: case KEY_F10:
