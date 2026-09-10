@@ -104,6 +104,7 @@ class ImageView
 	{
 		if (_ready_mode == READY_ORIG) return _orig_image;
 		if (_ready_mode == READY_SCALED) return _scaled_image;
+		if (_fine_rotate == 0) return _base_image;
 		return _ready_image;
 	}
 	void DenoteState(const char *stage = NULL);

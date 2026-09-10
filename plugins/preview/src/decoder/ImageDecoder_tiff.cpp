@@ -11,6 +11,8 @@
 #include <atomic>
 #include <cstring>
 
+#include <strings.h>
+
 class TiffImageDecoder : public ImageDecoder {
 public:
 	const char* Name() const override { return "libtiff"; }
@@ -18,7 +20,7 @@ public:
 	bool CanHandle(const char* ext) const override
 	{
 		if (!ext) return false;
-		return strcmp(ext, "tiff") == 0 || strcmp(ext, "tif") == 0;
+		return strcasecmp(ext, "tiff") == 0 || strcasecmp(ext, "tif") == 0;
 	}
 
 	bool Decode(const std::string& path, Image& out, ImageDecodeInfo& info,

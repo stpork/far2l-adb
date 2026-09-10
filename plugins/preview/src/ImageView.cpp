@@ -84,6 +84,9 @@ bool ImageView::ReadImageInternal(int maxPixelSize)
 			_has_full_resolution = info.fullResolution;
 
 			_scaled_image.Resize();
+			_base_image.Resize();
+			_ready_image.Resize();
+			_tmp_image.Resize();
 			_scaled_image_scale = -1;
 			_scale = -1;
 			_rotate = _rotated = 0;
@@ -132,6 +135,9 @@ bool ImageView::ReadImageInternal(int maxPixelSize)
 	_has_full_resolution = info.fullResolution;
 
 	_scaled_image.Resize();
+	_base_image.Resize();
+	_ready_image.Resize();
+	_tmp_image.Resize();
 	_scaled_image_scale = -1;
 	_scale = -1;
 	_rotate = _rotated = 0;
@@ -398,6 +404,8 @@ uint16_t ImageView::EnsureTransformed()
 	if (normalized_rotate < 0) normalized_rotate += 4;
 	if (!_mirror_h && !_mirror_v && normalized_rotate == 0 && _fine_rotate == 0) {
 		_ready_mode = _is_identity_scale ? READY_ORIG : READY_SCALED;
+		_base_image.Resize();
+		_ready_image.Resize();
 		_base_dirty = false;
 		return out;
 	}
@@ -431,12 +439,14 @@ uint16_t ImageView::EnsureTransformed()
 		if (rotate_steps == 1) {
 			_base_image.Rotate(_tmp_image, true);
 			_base_image.Swap(_tmp_image);
+			_tmp_image.Resize();
 		} else if (rotate_steps == 2) {
 			_base_image.MirrorH();
 			_base_image.MirrorV();
 		} else if (rotate_steps == 3) {
 			_base_image.Rotate(_tmp_image, false);
 			_base_image.Swap(_tmp_image);
+			_tmp_image.Resize();
 		}
 		_rotated = _rotate;
 
@@ -455,7 +465,7 @@ uint16_t ImageView::EnsureTransformed()
 		if (_fine_rotate != 0) {
 			_base_image.RotateArbitrary(_ready_image, _fine_rotate, false, g_settings.NativeImplementation());
 		} else {
-			_ready_image = _base_image;
+			_ready_image.Resize(); // Free duplicate memory; ReadyImage() returns _base_image directly
 		}
 	}
 
@@ -733,13 +743,18 @@ void ImageView::JustReset(bool keep_rotmir)
 {
 	_dx = _dy = 0;
 	_scale = -1;
+	_scaled_image_scale = -1;
 	_base_dirty = true;
 	_is_identity_scale = false;
 	_ready_mode = READY_ORIG;
+	_scaled_image.Resize();
+	_tmp_image.Resize();
 	if (!keep_rotmir) {
 		_rotate = 0;
 		_fine_rotate = 0;
 		_mirror_h = _mirror_v = false;
+		_base_image.Resize();
+		_ready_image.Resize();
 	}
 }
 

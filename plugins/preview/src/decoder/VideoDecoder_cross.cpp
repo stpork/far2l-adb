@@ -9,6 +9,14 @@
 #include <vector>
 #include <array>
 #include <memory>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <cerrno>
+
+extern char **environ;
 
 #ifdef HAVE_FFMPEG
 extern "C" {
@@ -82,17 +90,25 @@ bool CrossPlatformVideoDecoder::DecodeViaLibAV(const std::string& path, Image& o
 	}
 
 	double durationSec = (fmtCtx->duration > 0) ? (static_cast<double>(fmtCtx->duration) / AV_TIME_BASE) : 10.0;
-	if (durationSec <= 0.0 || std::isnan(durationSec)) durationSec = 10.0;
+	if (durationSec <= 0.0 || std::isnan(durationSec) || std::isinf(durationSec)) durationSec = 10.0;
 
 	int videoW = codecCtx->width > 0 ? codecCtx->width : 1920;
 	int videoH = codecCtx->height > 0 ? codecCtx->height : 1080;
 
 	const int margin = 6;
-	int cellW = 480;
+	int maxCellDim = 480;
 	if (maxPixelSize > 0) {
-		cellW = std::clamp((maxPixelSize - 4 * margin) / 3, 240, 640);
+		maxCellDim = std::clamp((maxPixelSize - 4 * margin) / 3, 180, 640);
 	}
-	int cellH = std::max(120, static_cast<int>(std::round(static_cast<double>(cellW) * videoH / videoW)));
+	int cellW = maxCellDim;
+	int cellH = maxCellDim;
+	if (videoW >= videoH) {
+		cellW = maxCellDim;
+		cellH = std::max(60, static_cast<int>(std::round(static_cast<double>(cellW) * videoH / videoW)));
+	} else {
+		cellH = maxCellDim;
+		cellW = std::max(60, static_cast<int>(std::round(static_cast<double>(cellH) * videoW / videoH)));
+	}
 
 	SwsContext* sws = sws_getContext(codecCtx->width, codecCtx->height, codecCtx->pix_fmt,
 	                                 cellW, cellH, AV_PIX_FMT_RGB24,
@@ -184,41 +200,71 @@ bool CrossPlatformVideoDecoder::DecodeViaLibAV(const std::string& path, Image& o
 bool CrossPlatformVideoDecoder::DecodeViaFFmpegCLI(const std::string& path, Image& out, ImageDecodeInfo& info,
                                                    int maxPixelSize, const DecodeCancelFlag* cancel)
 {
-	// Shell-escape path (wrap in single quotes, escaping internal single quotes)
-	std::string escPath = "'";
-	for (char c : path) {
-		if (c == '\'') escPath += "'\\''";
-		else escPath += c;
+	int pipefd[2];
+	if (pipe(pipefd) != 0) return false;
+
+	posix_spawn_file_actions_t actions;
+	posix_spawn_file_actions_init(&actions);
+	posix_spawn_file_actions_addclose(&actions, pipefd[0]);
+	posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDOUT_FILENO);
+	posix_spawn_file_actions_addclose(&actions, pipefd[1]);
+	posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+	posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+
+	const char* filter = "thumbnail=30,scale='if(gt(iw,ih),360,-2)':'if(gt(iw,ih),-2,360)',tile=3x3";
+	const char* argv[] = {
+		"ffmpeg",
+		"-v", "error",
+		"-ss", "0.5",
+		"-i", path.c_str(),
+		"-vf", filter,
+		"-frames:v", "1",
+		"-f", "image2pipe",
+		"-vcodec", "png",
+		"-",
+		nullptr
+	};
+
+	pid_t pid = 0;
+	int spawn_res = posix_spawnp(&pid, "ffmpeg", &actions, nullptr, const_cast<char* const*>(argv), environ);
+	posix_spawn_file_actions_destroy(&actions);
+	close(pipefd[1]);
+
+	if (spawn_res != 0) {
+		close(pipefd[0]);
+		return false;
 	}
-	escPath += "'";
-
-	// Compose a single fast ffmpeg command that outputs an in-memory PNG contact sheet directly to stdout
-	// -ss 1 avoids static black introductory frames
-	char cmd[2048];
-	snprintf(cmd, sizeof(cmd),
-	         "ffmpeg -v error -ss 1 -i %s -vf \"fps=1/5,scale=360:-1,tile=3x3\" -frames:v 1 -f image2pipe -vcodec png - 2>/dev/null",
-	         escPath.c_str());
-
-	FILE* fp = popen(cmd, "r");
-	if (!fp) return false;
 
 	std::vector<uint8_t> buffer;
 	buffer.reserve(256 * 1024);
 	std::array<uint8_t, 65536> chunk;
+	bool cancelled = false;
 
 	while (true) {
 		if (DecodeCancelled(cancel)) {
-			pclose(fp);
-			return false;
+			cancelled = true;
+			break;
 		}
-		size_t bytesRead = fread(chunk.data(), 1, chunk.size(), fp);
+		ssize_t bytesRead = read(pipefd[0], chunk.data(), chunk.size());
 		if (bytesRead > 0) {
 			buffer.insert(buffer.end(), chunk.data(), chunk.data() + bytesRead);
+		} else if (bytesRead == 0) {
+			break; // EOF
 		} else {
+			if (errno == EINTR) continue;
 			break;
 		}
 	}
-	pclose(fp);
+	close(pipefd[0]);
+
+	if (cancelled) {
+		kill(pid, SIGKILL);
+		waitpid(pid, nullptr, 0);
+		return false;
+	}
+
+	int status = 0;
+	waitpid(pid, &status, 0);
 
 	if (buffer.empty()) return false;
 

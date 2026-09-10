@@ -64,16 +64,15 @@ void StampTimecodeBadge(Image& img, int x, int y, const std::string& text)
 
 	// 1. Draw dark background box (semi-transparent dimming or dark slate)
 	for (int by = boxY1; by <= boxY2; ++by) {
-		for (int bx = boxX1; bx <= boxX2; ++bx) {
-			unsigned char* p = img.Ptr(bx, by);
-			// Blend towards dark translucent black (20% original + 80% black)
-			p[0] = static_cast<unsigned char>((p[0] * 3) / 16);
-			p[1] = static_cast<unsigned char>((p[1] * 3) / 16);
-			p[2] = static_cast<unsigned char>((p[2] * 3) / 16);
+		unsigned char* row = img.Ptr(boxX1, by);
+		for (int bx = 0; bx <= (boxX2 - boxX1); ++bx) {
+			row[bx * 3 + 0] = static_cast<unsigned char>((row[bx * 3 + 0] * 3) / 16);
+			row[bx * 3 + 1] = static_cast<unsigned char>((row[bx * 3 + 1] * 3) / 16);
+			row[bx * 3 + 2] = static_cast<unsigned char>((row[bx * 3 + 2] * 3) / 16);
 		}
 	}
 
-	// 2. Draw text glyphs in high-contrast crisp white with 1px drop shadow
+	// 2. Draw text glyphs in high-contrast crisp white
 	int curX = x;
 	for (char ch : text) {
 		int gIdx = GetGlyphIndex(ch);
@@ -82,17 +81,18 @@ void StampTimecodeBadge(Image& img, int x, int y, const std::string& text)
 		for (int row = 0; row < 7; ++row) {
 			uint8_t rowBits = glyph[row];
 			for (int col = 0; col < 5; ++col) {
-				// Bit 4 is leftmost
 				if (rowBits & (1 << (4 - col))) {
 					for (int dy = 0; dy < scale; ++dy) {
-						for (int dx = 0; dx < scale; ++dx) {
-							int px = curX + col * scale + dx;
-							int py = y + row * scale + dy;
-							if (px >= 0 && px < img.Width() && py >= 0 && py < img.Height()) {
-								unsigned char* p = img.Ptr(px, py);
-								p[0] = 0xFF;
-								p[1] = 0xFF;
-								p[2] = 0xFF;
+						int py = y + row * scale + dy;
+						if (py >= 0 && py < img.Height()) {
+							for (int dx = 0; dx < scale; ++dx) {
+								int px = curX + col * scale + dx;
+								if (px >= 0 && px < img.Width()) {
+									unsigned char* p = img.Ptr(px, py);
+									p[0] = 0xFF;
+									p[1] = 0xFF;
+									p[2] = 0xFF;
+								}
 							}
 						}
 					}
@@ -116,14 +116,16 @@ bool ComposeGrid(const std::vector<Image>& frames,
 	const int totalH = rows * cellHeight + (rows + 1) * margin;
 
 	out.Resize(totalW, totalH, 3);
-	// Fill background with elegant dark charcoal color (0x16, 0x16, 0x18)
+	// Fill background with elegant dark charcoal color (0x16, 0x16, 0x18) via fast row memcpy
+	uint8_t* outData = static_cast<uint8_t*>(out.Data());
+	std::vector<uint8_t> bgRow(static_cast<size_t>(totalW) * 3);
+	for (int x = 0; x < totalW; ++x) {
+		bgRow[x * 3 + 0] = 0x16;
+		bgRow[x * 3 + 1] = 0x16;
+		bgRow[x * 3 + 2] = 0x18;
+	}
 	for (int y = 0; y < totalH; ++y) {
-		for (int x = 0; x < totalW; ++x) {
-			unsigned char* p = out.Ptr(x, y);
-			p[0] = 0x16;
-			p[1] = 0x16;
-			p[2] = 0x18;
-		}
+		memcpy(outData + static_cast<size_t>(y) * totalW * 3, bgRow.data(), bgRow.size());
 	}
 
 	for (size_t i = 0; i < frames.size() && i < 9; ++i) {

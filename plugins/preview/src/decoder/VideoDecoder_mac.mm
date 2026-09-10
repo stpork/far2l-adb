@@ -4,6 +4,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <Accelerate/Accelerate.h>
 
 #include "VideoDecoder.h"
 #include "../PreviewLog.h"
@@ -53,18 +54,21 @@ bool MacVideoStoryboardDecoder::ExtractRGBFromCGImage(CGImageRef cgImage, int ta
 		return false;
 	}
 
-	for (int y = 0; y < targetH; ++y) {
-		const uint8_t* srcRow = rgba + y * (targetW * 4);
-		uint8_t* dstRow = out.Ptr(0, y);
-		for (int x = 0; x < targetW; ++x) {
-			dstRow[x * 3 + 0] = srcRow[x * 4 + 0];
-			dstRow[x * 3 + 1] = srcRow[x * 4 + 1];
-			dstRow[x * 3 + 2] = srcRow[x * 4 + 2];
-		}
-	}
-
+	vImage_Buffer srcBuf = {
+		const_cast<void*>(static_cast<const void*>(rgba)),
+		static_cast<vImagePixelCount>(targetH),
+		static_cast<vImagePixelCount>(targetW),
+		static_cast<size_t>(targetW * 4)
+	};
+	vImage_Buffer dstBuf = {
+		out.Data(),
+		static_cast<vImagePixelCount>(targetH),
+		static_cast<vImagePixelCount>(targetW),
+		static_cast<size_t>(targetW * 3)
+	};
+	vImage_Error err = vImageConvert_RGBA8888toRGB888(&srcBuf, &dstBuf, kvImageNoFlags);
 	CGContextRelease(ctx);
-	return true;
+	return (err == kvImageNoError);
 }
 
 #pragma clang diagnostic push
@@ -100,23 +104,33 @@ bool MacVideoStoryboardDecoder::Decode(const std::string& path, Image& out, Imag
 		}
 
 		Float64 durationSec = CMTimeGetSeconds(asset.duration);
-		if (durationSec <= 0.0 || std::isnan(durationSec)) {
+		if (CMTIME_IS_INVALID(asset.duration) || CMTIME_IS_INDEFINITE(asset.duration) ||
+		    std::isnan(durationSec) || std::isinf(durationSec) || durationSec <= 0.0) {
 			durationSec = 10.0;
 		}
 
-		// Calculate cell dimensions
+		// Calculate cell dimensions bounded within maxCellDim box for both portrait & landscape
 		const int margin = 6;
-		int cellW = 480;
+		int maxCellDim = 480;
 		if (maxPixelSize > 0) {
-			cellW = std::clamp((maxPixelSize - 4 * margin) / 3, 240, 640);
+			maxCellDim = std::clamp((maxPixelSize - 4 * margin) / 3, 180, 640);
 		}
-		int cellH = std::max(120, static_cast<int>(std::round(static_cast<double>(cellW) * videoH / videoW)));
+		int cellW = maxCellDim;
+		int cellH = maxCellDim;
+		if (videoW >= videoH) {
+			cellW = maxCellDim;
+			cellH = std::max(60, static_cast<int>(std::round(static_cast<double>(cellW) * videoH / videoW)));
+		} else {
+			cellH = maxCellDim;
+			cellW = std::max(60, static_cast<int>(std::round(static_cast<double>(cellH) * videoW / videoH)));
+		}
 
 		AVAssetImageGenerator* gen = [AVAssetImageGenerator assetImageGeneratorWithAsset:asset];
 		gen.appliesPreferredTrackTransform = YES;
-		// 2-second keyframe tolerance allows instant hardware keyframe decoding
-		gen.requestedTimeToleranceBefore = CMTimeMakeWithSeconds(2.0, 600);
-		gen.requestedTimeToleranceAfter = CMTimeMakeWithSeconds(2.0, 600);
+		// Dynamic keyframe tolerance: avoids keyframe collisions on short videos while remaining fast
+		Float64 maxTol = std::max(0.05, std::min(2.0, durationSec / 18.0));
+		gen.requestedTimeToleranceBefore = CMTimeMakeWithSeconds(maxTol, 600);
+		gen.requestedTimeToleranceAfter = CMTimeMakeWithSeconds(maxTol, 600);
 		gen.maximumSize = CGSizeMake(cellW, cellH);
 
 		const int numFrames = 9;

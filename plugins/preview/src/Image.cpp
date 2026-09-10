@@ -102,14 +102,24 @@ void Image::Resize(int width, int height, unsigned char bytes_per_pixel)
 {
 	assert(bytes_per_pixel == 3 || bytes_per_pixel == 4);
 
-	if (width < 0 || height < 0) {
-		_data.clear(); _width = 0; _height = 0;
+	if (width <= 0 || height <= 0) {
+		_data.clear();
+		_data.shrink_to_fit();
+		_scratch_argb_src.clear();
+		_scratch_argb_src.shrink_to_fit();
+		_scratch_argb_dst.clear();
+		_scratch_argb_dst.shrink_to_fit();
+		_width = 0;
+		_height = 0;
 		return;
 	}
 
 	const size_t bytes_size = size_t(width) * size_t(height) * size_t(bytes_per_pixel);
-	if (height && bytes_size < size_t(width)) { // overflow
-		_data.clear(); _width = 0; _height = 0;
+	if (bytes_size < size_t(width)) { // overflow
+		_data.clear();
+		_data.shrink_to_fit();
+		_width = 0;
+		_height = 0;
 		return;
 	}
 

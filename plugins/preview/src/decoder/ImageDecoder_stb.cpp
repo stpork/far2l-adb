@@ -29,11 +29,12 @@ public:
 
 	bool CanHandle(const char* ext) const override
 	{
+		if (!ext) return false;
 		static const char* supported[] = {
 			"jpg", "jpeg", "png", "bmp", "tga", "psd", "gif", "hdr", "pic", "pnm"
 		};
 		for (const auto& s : supported) {
-			if (strcmp(ext, s) == 0) return true;
+			if (strcasecmp(ext, s) == 0) return true;
 		}
 		return false;
 	}
@@ -70,18 +71,13 @@ public:
 		if (!data) return false;
 		if (DecodeCancelled(cancel)) return false;
 
+		out.Resize(targetWidth, targetHeight, 3);
 		if (targetWidth != width || targetHeight != height) {
-			// Resize using stb_image_resize2
-			Image resized(targetWidth, targetHeight, 3);
 			stbir_resize_uint8_linear(data.get(), width, height, 0,
-			                          (unsigned char*)resized.Data(), targetWidth, targetHeight, 0,
+			                          (unsigned char*)out.Data(), targetWidth, targetHeight, 0,
 			                          STBIR_RGB);
-			out = std::move(resized);
 		} else {
-			// Copy data into Image
-			Image loaded(width, height, 3);
-			memcpy(loaded.Data(), data.get(), width * height * 3);
-			out = std::move(loaded);
+			memcpy(out.Data(), data.get(), (size_t)width * height * 3);
 		}
 
 		info.fullResolution = (out.Width() == info.sourceWidth && out.Height() == info.sourceHeight);
