@@ -51,7 +51,7 @@ public:
 	                    int maxPixelSize = 0, const DecodeCancelFlag* cancel = nullptr) = 0;
 
 	// True only when the backend can avoid decoding the full raster when a
-	// smaller maxPixelSize is requested (ImageIO does; stb/libwebp currently do not).
+	// smaller maxPixelSize is requested (ImageIO and libwebp do; stb currently does not).
 	virtual bool SupportsDecodeScaling(const std::string& /*path*/) const { return false; }
 
 	// Check if this decoder can handle the given file extension

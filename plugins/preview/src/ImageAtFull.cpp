@@ -238,17 +238,19 @@ static LONG_PTR WINAPI ImageDlgProc(HANDLE hDlg, int Msg, int Param1, LONG_PTR P
 						const char *cmd[] = {"xdg-open", filename.c_str(), nullptr};
 #endif
 						pid_t pid;
-						posix_spawn_file_actions_t actions;
-						posix_spawn_file_actions_init(&actions);
-						posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
-						posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
-						posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
+						struct ActionsGuard {
+							posix_spawn_file_actions_t a;
+							ActionsGuard() { posix_spawn_file_actions_init(&a); }
+							~ActionsGuard() { posix_spawn_file_actions_destroy(&a); }
+						} actions;
+						posix_spawn_file_actions_addopen(&actions.a, 0, "/dev/null", O_RDONLY, 0);
+						posix_spawn_file_actions_addopen(&actions.a, 1, "/dev/null", O_WRONLY, 0);
+						posix_spawn_file_actions_addopen(&actions.a, 2, "/dev/null", O_WRONLY, 0);
 
-						if (posix_spawnp(&pid, cmd[0], &actions, nullptr, (char *const *)cmd, environ) == 0) {
+						if (posix_spawnp(&pid, cmd[0], &actions.a, nullptr, (char *const *)cmd, environ) == 0) {
 							int status = 0;
 							waitpid(pid, &status, 0);
 						}
-						posix_spawn_file_actions_destroy(&actions);
 					}
 					break;
 				case KEY_ESC: case KEY_F10:
@@ -374,7 +376,7 @@ static EXITED_DUE ShowImageAtFullInternal(size_t initial_file, std::vector<std::
 				*final_file = iv.GetCurrentFileIndex();
 			}
 			if (exit_code == EXITED_DUE_ERROR && !silent_exit_on_error) {
-				std::wstring ws_cur_file = L"\"" + StrMB2Wide(all_files[initial_file].first) + L"\"";
+				std::wstring ws_cur_file = L"\"" + StrMB2Wide(iv.CurFile()) + L"\"";
 				std::wstring werr_str = StrMB2Wide(iv.ErrorString());
 				const wchar_t *MsgItems[] = {g_settings.Msg(M_TITLE),
 					g_settings.Msg(M_FAILED_LOAD),

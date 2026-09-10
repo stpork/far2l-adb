@@ -65,26 +65,22 @@ public:
 		}
 
 		// Load the image. stb_image can convert to RGB (3 channels) automatically.
-		unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 3);
+		struct StbImageFree { void operator()(unsigned char* p) const { if (p) stbi_image_free(p); } };
+		std::unique_ptr<unsigned char, StbImageFree> data(stbi_load(path.c_str(), &width, &height, &channels, 3));
 		if (!data) return false;
-		if (DecodeCancelled(cancel)) {
-			stbi_image_free(data);
-			return false;
-		}
+		if (DecodeCancelled(cancel)) return false;
 
 		if (targetWidth != width || targetHeight != height) {
 			// Resize using stb_image_resize2
 			Image resized(targetWidth, targetHeight, 3);
-			stbir_resize_uint8_linear(data, width, height, 0,
+			stbir_resize_uint8_linear(data.get(), width, height, 0,
 			                          (unsigned char*)resized.Data(), targetWidth, targetHeight, 0,
 			                          STBIR_RGB);
-			stbi_image_free(data);
 			out = std::move(resized);
 		} else {
 			// Copy data into Image
 			Image loaded(width, height, 3);
-			memcpy(loaded.Data(), data, width * height * 3);
-			stbi_image_free(data);
+			memcpy(loaded.Data(), data.get(), width * height * 3);
 			out = std::move(loaded);
 		}
 

@@ -27,19 +27,18 @@ public:
 		if (DecodeCancelled(cancel)) return false;
 		info = {};
 
-		TIFF* tif = TIFFOpen(path.c_str(), "r");
+		struct TiffCloser { void operator()(TIFF* t) const { if (t) TIFFClose(t); } };
+		std::unique_ptr<TIFF, TiffCloser> tif(TIFFOpen(path.c_str(), "r"));
 		if (!tif) return false;
 
 		uint32_t image_width = 0, image_height = 0;
-		if (!TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &image_width) ||
-		    !TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &image_height) ||
+		if (!TIFFGetField(tif.get(), TIFFTAG_IMAGEWIDTH, &image_width) ||
+		    !TIFFGetField(tif.get(), TIFFTAG_IMAGELENGTH, &image_height) ||
 		    image_width == 0 || image_height == 0) {
-			TIFFClose(tif);
 			return false;
 		}
 
 		if ((uint64_t)image_width * image_height > kMaxImagePixels) {
-			TIFFClose(tif);
 			return false;
 		}
 		info.sourceWidth = (int)image_width;
@@ -56,12 +55,11 @@ public:
 
 		// TIFFReadRGBAImageOriented stores RGBA as uint32 per pixel
 		std::vector<uint32_t> rgba_buf(image_width * image_height);
-		if (!TIFFReadRGBAImageOriented(tif, image_width, image_height,
+		if (!TIFFReadRGBAImageOriented(tif.get(), image_width, image_height,
 		                               rgba_buf.data(), ORIENTATION_TOPLEFT, 0)) {
-			TIFFClose(tif);
 			return false;
 		}
-		TIFFClose(tif);
+		tif.reset(); // close file handle as soon as read completes
 		if (DecodeCancelled(cancel)) return false;
 
 		// libtiff's uint32 raster byte order is platform-dependent.  Convert via

@@ -73,6 +73,7 @@ bool ImageView::ReadImageInternal(int maxPixelSize)
 			_orig_image = std::move(hit->image);
 			ImageDecodeInfo info = hit->info;
 			hit->valid = false;
+			hit->file.clear();
 
 			_decode_info = info;
 			_decoded_max_size = std::max(_orig_image.Width(), _orig_image.Height());
@@ -887,13 +888,14 @@ bool ImageView::Setup(SMALL_RECT &rc, const DecodeCancelFlag *cancel, bool keep_
 
 void ImageView::Home()
 {
+	if (_all_files.empty()) return;
 	CancelPrefetch();
 	{
 		std::lock_guard<std::mutex> lk(_prefetch_mtx);
 		_prefetch_next.valid = false;
 		_prefetch_prev.valid = false;
 	}
-	_cur_file = _initial_file;
+	_cur_file = 0;
 	JustReset();
 	if (PrepareImage() && RenderImage()) {
 		DenoteState();
@@ -920,6 +922,8 @@ void ImageView::Last()
 
 bool ImageView::Iterate(bool forward)
 {
+	if (_all_files.size() <= 1) return false;
+
 	for (size_t i = 0;; ++i) {
 		CancelPrefetch();
 		// Cache current decoded image into opposite slot before changing file
