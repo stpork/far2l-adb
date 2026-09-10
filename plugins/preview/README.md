@@ -32,8 +32,11 @@ Supports macOS, Linux, and BSD operating systems.
 - **Far2l Panel Selection & Batch Culling**:
   - Mark (`Space`), unmark (`Backspace`), or toggle (`Ins`) files directly while viewing.
   - Selections automatically synchronize back to the active panel upon exit (`Esc` or `F10`), allowing immediate batch copying (`F5`), moving (`F6`), or deleting (`F8`).
-- **System Integration**:
-  - Press `Enter` or `O` inside the viewer to launch the image in your OS default image editor or viewer (`open` on macOS, `xdg-open` on Linux).
+- **Video Storyboard Generation**:
+  - **Fast native 3×3 contact sheets**: When opening or previewing video files, the plugin automatically extracts 9 keyframes across the duration and renders a composite contact sheet with clean timecode badges.
+  - **macOS**: 100% native via Apple `AVFoundation` with Metal/GPU hardware decode acceleration (~50–80 ms per video).
+  - **Linux / BSD**: In-process `libavformat`/`libavcodec` or zero-temp-file streaming fallback via `ffmpeg`.
+  - **External player launch**: Press `Enter` or `O` to immediately open the full video in your default external media player (`mpv`, `IINA`, `VLC`).
 - **Full Localization**:
   - Complete English (`previewEng.lng`, `previewEng.hlf`) and Russian (`previewRus.lng`, `previewRus.hlf`) language and help documentation.
 
@@ -77,6 +80,7 @@ When viewing image $N$ in a directory:
 | **GIF** | `.gif` | Apple ImageIO | GdkPixbuf / stb_image | stb_image |
 | **BMP / ICO** | `.bmp`, `.ico` | Apple ImageIO | GdkPixbuf / stb_image | stb_image |
 | **TGA / PSD / HDR** | `.tga`, `.psd`, `.hdr` | stb_image | stb_image | stb_image |
+| **Video Storyboards** | `.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`, `.m4v` | Apple AVFoundation (HW) | libavcodec / FFmpeg | FFmpeg pipe |
 
 ---
 

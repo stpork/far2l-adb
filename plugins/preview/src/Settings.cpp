@@ -4,7 +4,7 @@
 #include <utils.h>
 #include <wchar.h>
 
-#define DEFAULT_IMAGE_MASKS "*.jpg *.jpeg *.png *.gif *.bmp *.tga *.psd *.hdr *.webp *.heic *.heif *.tiff *.tif"
+#define DEFAULT_IMAGE_MASKS "*.jpg *.jpeg *.png *.gif *.bmp *.tga *.psd *.hdr *.webp *.heic *.heif *.tiff *.tif *.mp4 *.mkv *.mov *.avi *.webm *.m4v *.flv *.wmv *.ts *.3gp"
 #define INI_PATH "plugins/preview/config.ini"
 #define INI_SETTINGS "Settings"
 // Renamed from "DefaultScale" — old enum (EQUAL_SCREEN/LESSOREQUAL_SCREEN/EQUAL_IMAGE)

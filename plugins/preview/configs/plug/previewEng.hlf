@@ -30,6 +30,7 @@ both in GUI mode and inside supported terminal emulators.
    - QuickView panel preview (#Ctrl+Q#)
    - Terminal graphics: far2l GUI, Kitty, iTerm2, and Sixel
    - Smooth zooming, panning, 90° & fine 1° rotation, mirroring
+   - Fast native video storyboards (3×3 contact sheets with timecode badges)
    - Far2l panel selection synchronization (mark files in viewer,
      batch copy/move/delete on exit)
 
@@ -163,11 +164,17 @@ $ #Supported Formats#
    - #HEIC / HEIF / AVIF# (.heic, .heif) via libheif / ImageIO
    - #TIFF# (.tif, .tiff) multi-page and uncompressed/compressed
    - #BMP#, #TGA#, #PSD#, #HDR#, #ICO#
+   - #Video files# (.mp4, .mkv, .mov, .avi, .webm, .m4v, etc.)
 
- On macOS, Apple ImageIO provides hardware-accelerated decode
-for JPEG, PNG, HEIC, TIFF, and WebP.
- On Linux, GdkPixbuf and native modular libraries (libwebp,
-libheif, libtiff) are utilized with graceful fallbacks.
+ For video files, the plugin automatically generates a 3x3 contact
+sheet (storyboard) with timecode badges, giving an instant visual
+summary of the entire film. Press #Enter# or #O# to open the video
+in the system's default media player.
+
+ On macOS, Apple ImageIO and AVFoundation provide hardware-accelerated
+decode for images and video storyboards.
+ On Linux, GdkPixbuf, native modular libraries, and FFmpeg provide
+fast decoding with graceful fallbacks.
 
  ~Contents~@Contents@
 

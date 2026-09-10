@@ -24,6 +24,8 @@ set(SOURCES
     src/decoder/ImageDecoder_heif.cpp
     src/decoder/ImageDecoder_webp.cpp
     src/decoder/ImageDecoder_tiff.cpp
+    src/decoder/VideoDecoder_common.cpp
+    src/decoder/VideoDecoder_cross.cpp
 )
 
 set(PREVIEW_NATIVE_LIBS "")
@@ -32,12 +34,30 @@ set(PREVIEW_OPT_DEFS "")
 set(PREVIEW_OPT_INCDIRS "")
 
 if(APPLE)
-    list(APPEND SOURCES src/decoder/ImageDecoder_mac.cpp)
+    list(APPEND SOURCES src/decoder/ImageDecoder_mac.cpp src/decoder/VideoDecoder_mac.mm)
+    find_library(FOUNDATION Foundation REQUIRED)
     find_library(IMAGEIO ImageIO REQUIRED)
     find_library(COREGRAPHICS CoreGraphics REQUIRED)
     find_library(COREFOUNDATION CoreFoundation REQUIRED)
     find_library(ACCELERATE Accelerate REQUIRED)
-    set(PREVIEW_NATIVE_LIBS ${IMAGEIO} ${COREGRAPHICS} ${COREFOUNDATION} ${ACCELERATE})
+    find_library(AVFOUNDATION AVFoundation REQUIRED)
+    find_library(COREMEDIA CoreMedia REQUIRED)
+    set(PREVIEW_NATIVE_LIBS ${FOUNDATION} ${IMAGEIO} ${COREGRAPHICS} ${COREFOUNDATION} ${ACCELERATE} ${AVFOUNDATION} ${COREMEDIA})
+endif()
+
+# Soft-detect optional FFmpeg libraries on Linux/BSD
+pkg_check_modules(FFMPEG QUIET libavformat libavcodec libswscale libavutil)
+if(FFMPEG_FOUND)
+    list(APPEND PREVIEW_OPT_DEFS -DHAVE_FFMPEG)
+    list(APPEND PREVIEW_OPT_INCDIRS ${FFMPEG_INCLUDE_DIRS})
+    foreach(lib_name ${FFMPEG_LIBRARIES})
+        find_library(LIB_FFMPEG_${lib_name} NAMES ${lib_name} HINTS ${FFMPEG_LIBRARY_DIRS})
+        if(LIB_FFMPEG_${lib_name})
+            list(APPEND PREVIEW_CROSSPLATFORM_LIBS ${LIB_FFMPEG_${lib_name}})
+        else()
+            list(APPEND PREVIEW_CROSSPLATFORM_LIBS ${lib_name})
+        endif()
+    endforeach()
 endif()
 
 # Soft-detect optional image libraries — build succeeds even if absent

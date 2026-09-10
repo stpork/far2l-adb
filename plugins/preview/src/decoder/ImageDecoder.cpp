@@ -1,5 +1,6 @@
 #include "ImageDecoder.h"
 #include "ImageDecoder_tiff.h"
+#include "VideoDecoder.h"
 #include "../Settings.h"
 #include <algorithm>
 #include <cctype>
@@ -72,12 +73,14 @@ std::vector<std::shared_ptr<ImageDecoder>> DecoderFactory::CreateDecoders()
 	if (g_settings.NativeImplementation()) {
 #if PREVIEW_HAS_NATIVE
 		CreateMacDecoders(backends);
+		CreateMacVideoDecoders(backends);
 #endif
 	}
 	CreateCrossPlatformDecoders(backends);
 	CreateHeifDecoder(backends);
 	CreateWebPDecoder(backends);
 	CreateTiffDecoder(backends);
+	CreateCrossPlatformVideoDecoders(backends);
 
 	decoders.push_back(std::make_shared<FallbackImageDecoder>(std::move(backends)));
 	return decoders;
