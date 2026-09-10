@@ -12,6 +12,7 @@
 #include <dirent.h>
 #include <utils.h>
 #include <math.h>
+#include <mutex>
 #include "Image.h"
 #include "decoder/ImageDecoder.h"
 
@@ -42,7 +43,26 @@ class ImageView
 	bool _force_send{false};
 	bool _base_dirty{true};  // Need to rebuild _base_image
 	bool _fine_dirty{false}; // Fine rotation changed, need full re-render
-	bool _ready_uses_scaled{true};
+	enum ReadyMode { READY_ORIG, READY_SCALED, READY_TRANSFORMED };
+	ReadyMode _ready_mode{READY_ORIG};
+	bool _is_identity_scale{false};
+
+	// Background prefetcher
+	struct PrefetchedImage {
+		std::string file;
+		Image image;
+		ImageDecodeInfo info;
+		int max_pixel_size{0};
+		bool valid{false};
+	};
+	std::mutex _prefetch_mtx;
+	std::thread _prefetch_thread;
+	DecodeCancelFlag _prefetch_cancel{false};
+	PrefetchedImage _prefetch_next;
+	PrefetchedImage _prefetch_prev;
+
+	void StartPrefetch();
+	void CancelPrefetch();
 
 	// Efficient decoding: track decoded size and original dimensions
 	int _decoded_max_size{0};      // What maxPixelSize was used for current _orig_image
@@ -80,7 +100,12 @@ class ImageView
 	bool SendScrollAttachH(const SMALL_RECT *area, int src_left, int src_top, int viewport_w, int viewport_h, int delta);
 	bool SendScrollAttachV(const SMALL_RECT *area, int src_left, int src_top, int viewport_w, int viewport_h, int delta);
 	bool RenderImage();
-	const Image& ReadyImage() const { return _ready_uses_scaled ? _scaled_image : _ready_image; }
+	const Image& ReadyImage() const
+	{
+		if (_ready_mode == READY_ORIG) return _orig_image;
+		if (_ready_mode == READY_SCALED) return _scaled_image;
+		return _ready_image;
+	}
 	void DenoteState(const char *stage = NULL);
 	void JustReset(bool keep_rotmir = false);
 
@@ -97,7 +122,7 @@ public:
 	size_t GetCurrentFileIndex() const { return _cur_file; }
 	std::unordered_set<std::string> GetSelection() const;
 
-	bool Setup(SMALL_RECT &rc, const DecodeCancelFlag *cancel = nullptr, bool keep_state = false);
+	bool Setup(SMALL_RECT &rc, const DecodeCancelFlag *cancel = nullptr, bool keep_state = false, bool render = true);
 
 	// Call from idle loop (e.g. DN_ENTERIDLE) to apply a completed async full-res decode.
 	// Returns true if the image was upgraded and re-rendered.
@@ -127,6 +152,7 @@ public:
 		_force_send = true;
 		RenderImage();
 		DenoteState();
+		StartPrefetch();
 	};
 	void Select();
 	void Deselect();

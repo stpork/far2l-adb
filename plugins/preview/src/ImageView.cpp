@@ -4,7 +4,7 @@
 #include "PreviewLog.h"
 #include "decoder/ImageDecoder.h"
 
-#define SETIMG_INITALLY_ASSUMED_SPEED    8192
+#define SETIMG_INITALLY_ASSUMED_SPEED    65536
 #define SETIMG_DELAY_BASELINE_MSEC       256
 #define SETIMG_ESTIMATION_SIZE_THRESHOLD 0x10000
 
@@ -50,18 +50,62 @@ bool ImageView::ReadImageInternal(int maxPixelSize)
 {
 	const bool use_orientation = g_settings.UseOrientation();
 
-	auto decoder = DecoderFactory::FindDecoder(_render_file);
-	if (!decoder) {
-		_err_str = Wide2MB(g_settings.Msg(M_ERR_UNSUPPORTED));
-		return false;
-	}
-
 	// If maxPixelSize is 0, decode at viewport size for efficiency
 	if (maxPixelSize == 0 && _wgi.PixPerCell.X > 0 && _wgi.PixPerCell.Y > 0) {
 		int viewport_w = _size.X * _wgi.PixPerCell.X;
 		int viewport_h = _size.Y * _wgi.PixPerCell.Y;
 		maxPixelSize = std::max(viewport_w, viewport_h);
 	}
+
+	// Check if file is already pre-decoded in prefetch cache
+	{
+		std::lock_guard<std::mutex> lk(_prefetch_mtx);
+		PrefetchedImage* hit = nullptr;
+		if (_prefetch_next.valid && _prefetch_next.file == _render_file &&
+		    (_prefetch_next.max_pixel_size == maxPixelSize || _prefetch_next.info.fullResolution || maxPixelSize == 0)) {
+			hit = &_prefetch_next;
+		} else if (_prefetch_prev.valid && _prefetch_prev.file == _render_file &&
+		           (_prefetch_prev.max_pixel_size == maxPixelSize || _prefetch_prev.info.fullResolution || maxPixelSize == 0)) {
+			hit = &_prefetch_prev;
+		}
+
+		if (hit) {
+			_orig_image = std::move(hit->image);
+			ImageDecodeInfo info = hit->info;
+			hit->valid = false;
+
+			_decode_info = info;
+			_decoded_max_size = std::max(_orig_image.Width(), _orig_image.Height());
+			_original_width = info.sourceWidth;
+			_original_height = info.sourceHeight;
+			_decoded_scale = std::min(double(_orig_image.Width()) / _original_width,
+			                          double(_orig_image.Height()) / _original_height);
+			_has_full_resolution = info.fullResolution;
+
+			_scaled_image.Resize();
+			_scaled_image_scale = -1;
+			_scale = -1;
+			_rotate = _rotated = 0;
+			_fine_rotate = 0;
+			_mirror_h = _mirrored_h = _mirror_v = _mirrored_v = false;
+			_base_dirty = true;
+			_fine_dirty = false;
+			_is_identity_scale = false;
+			_ready_mode = READY_ORIG;
+
+			if (use_orientation && info.orientation > 1 && info.orientation <= 8) {
+				ApplyEXIFOrientation(info.orientation);
+			}
+			return true;
+		}
+	}
+
+	auto decoder = DecoderFactory::FindDecoder(_render_file);
+	if (!decoder) {
+		_err_str = Wide2MB(g_settings.Msg(M_ERR_UNSUPPORTED));
+		return false;
+	}
+
 	if (!decoder->SupportsDecodeScaling(_render_file)) {
 		maxPixelSize = 0;
 	}
@@ -94,12 +138,89 @@ bool ImageView::ReadImageInternal(int maxPixelSize)
 	_mirror_h = _mirrored_h = _mirror_v = _mirrored_v = false;
 	_base_dirty = true;
 	_fine_dirty = false;
+	_is_identity_scale = false;
+	_ready_mode = READY_ORIG;
 
 	if (use_orientation && info.orientation > 1 && info.orientation <= 8) {
 		ApplyEXIFOrientation(info.orientation);
 	}
 
 	return true;
+}
+
+void ImageView::CancelPrefetch()
+{
+	if (_prefetch_thread.joinable()) {
+		_prefetch_cancel.store(true, std::memory_order_relaxed);
+		_prefetch_thread.join();
+		_prefetch_cancel.store(false, std::memory_order_relaxed);
+	}
+}
+
+void ImageView::StartPrefetch()
+{
+	CancelPrefetch();
+	if (_all_files.size() <= 1) return;
+	if (_wgi.PixPerCell.X <= 0 || _wgi.PixPerCell.Y <= 0) return;
+
+	int viewport_w = _size.X * _wgi.PixPerCell.X;
+	int viewport_h = _size.Y * _wgi.PixPerCell.Y;
+	int max_pixel_size = std::max(viewport_w, viewport_h);
+
+	size_t next_idx = (_cur_file + 1) % _all_files.size();
+	size_t prev_idx = (_cur_file > 0) ? _cur_file - 1 : _all_files.size() - 1;
+
+	std::string next_file = _all_files[next_idx].first;
+	std::string prev_file = _all_files[prev_idx].first;
+
+	bool need_next = false;
+	bool need_prev = false;
+	{
+		std::lock_guard<std::mutex> lk(_prefetch_mtx);
+		if (!_prefetch_next.valid || _prefetch_next.file != next_file ||
+		    (_prefetch_next.max_pixel_size != max_pixel_size && !_prefetch_next.info.fullResolution)) {
+			_prefetch_next.valid = false;
+			need_next = true;
+		}
+		if (_all_files.size() > 2 &&
+		    (!_prefetch_prev.valid || _prefetch_prev.file != prev_file ||
+		     (_prefetch_prev.max_pixel_size != max_pixel_size && !_prefetch_prev.info.fullResolution))) {
+			_prefetch_prev.valid = false;
+			need_prev = true;
+		}
+	}
+
+	if (!need_next && !need_prev) return;
+
+	_prefetch_cancel.store(false, std::memory_order_relaxed);
+	_prefetch_thread = std::thread([this, next_file, prev_file, need_next, need_prev, max_pixel_size]() {
+		auto try_prefetch = [this, max_pixel_size](const std::string &file, PrefetchedImage &target) {
+			if (DecodeCancelled(&_prefetch_cancel) || DecodeCancelled(_cancel)) return;
+			auto decoder = DecoderFactory::FindDecoder(file);
+			if (!decoder) return;
+			int msize = decoder->SupportsDecodeScaling(file) ? max_pixel_size : 0;
+			Image img;
+			ImageDecodeInfo info;
+			if (decoder->Decode(file, img, info, msize, &_prefetch_cancel)) {
+				if (!DecodeCancelled(&_prefetch_cancel) && !DecodeCancelled(_cancel) &&
+				    img.Width() > 0 && img.Height() > 0) {
+					std::lock_guard<std::mutex> lk(_prefetch_mtx);
+					target.file = file;
+					target.image = std::move(img);
+					target.info = info;
+					target.max_pixel_size = max_pixel_size;
+					target.valid = true;
+				}
+			}
+		};
+
+		if (need_next) {
+			try_prefetch(next_file, _prefetch_next);
+		}
+		if (need_prev && !DecodeCancelled(&_prefetch_cancel) && !DecodeCancelled(_cancel)) {
+			try_prefetch(prev_file, _prefetch_prev);
+		}
+	});
 }
 
 void ImageView::CancelAndJoinFullRes()
@@ -164,6 +285,8 @@ bool ImageView::ApplyPendingFullRes()
 
 	_scaled_image_scale = -1;
 	_base_dirty = true;
+	_is_identity_scale = false;
+	_ready_mode = READY_ORIG;
 
 	RenderImage();
 	DenoteState();
@@ -253,7 +376,12 @@ bool ImageView::EnsureReadyAndScaled()
 		return false;
 	}
 	const double raster_scale = _scale / std::max(_decoded_scale, 0.000001);
-	_orig_image.Scale(_scaled_image, raster_scale, g_settings.NativeImplementation());
+	_is_identity_scale = (fabs(raster_scale - 1.0) < 0.001);
+	if (!_is_identity_scale) {
+		_orig_image.Scale(_scaled_image, raster_scale, g_settings.NativeImplementation());
+	} else {
+		_scaled_image.Resize();
+	}
 	_scaled_image_scale = _scale;
 	_rotated = 0;
 	_mirrored_h = _mirrored_v = false;
@@ -268,18 +396,19 @@ uint16_t ImageView::EnsureTransformed()
 	int normalized_rotate = _rotate % 4;
 	if (normalized_rotate < 0) normalized_rotate += 4;
 	if (!_mirror_h && !_mirror_v && normalized_rotate == 0 && _fine_rotate == 0) {
-		_ready_uses_scaled = true;
+		_ready_mode = _is_identity_scale ? READY_ORIG : READY_SCALED;
 		_base_dirty = false;
 		return out;
 	}
-	if (_ready_uses_scaled) _base_dirty = true;
-	_ready_uses_scaled = false;
+	if (_ready_mode != READY_TRANSFORMED) _base_dirty = true;
+	_ready_mode = READY_TRANSFORMED;
 	const bool rebuild_base = _base_dirty;
 
-	// Step 1: Build _base_image from _scaled_image with mirrors and 90° rotations
+	// Step 1: Build _base_image from clean source with mirrors and 90° rotations
 	// This happens when scale changes or when _base_dirty is set
 	if (_base_dirty) {
-		_base_image = _scaled_image;  // Copy clean scaled image
+		const Image &src = _is_identity_scale ? _orig_image : _scaled_image;
+		_base_image = src;  // Copy clean source image
 
 		// Apply mirrors
 		if (_mirror_h) {
@@ -341,10 +470,10 @@ bool ImageView::SendWholeImage(const SMALL_RECT *area, const Image &img)
 	}
 	auto msec = GetProcessUptimeMSec();
 	auto chunk_h = img.Height();
-	if ((_wgi.Caps & WP_IMGCAP_ATTACH) != 0 && avg_speed != 0) {
+	if (img.Size() > 2 * 1024 * 1024 && (_wgi.Caps & WP_IMGCAP_ATTACH) != 0 && avg_speed != 0) {
 		auto estimated_time = img.Size() / avg_speed;
 		if (estimated_time >= 2 * SETIMG_DELAY_BASELINE_MSEC) {
-			chunk_h = std::max(32, int(img.Height() / (estimated_time / SETIMG_DELAY_BASELINE_MSEC)));
+			chunk_h = std::max(256, int(img.Height() / (estimated_time / SETIMG_DELAY_BASELINE_MSEC)));
 		}
 	}
 
@@ -604,6 +733,8 @@ void ImageView::JustReset(bool keep_rotmir)
 	_dx = _dy = 0;
 	_scale = -1;
 	_base_dirty = true;
+	_is_identity_scale = false;
+	_ready_mode = READY_ORIG;
 	if (!keep_rotmir) {
 		_rotate = 0;
 		_fine_rotate = 0;
@@ -619,6 +750,7 @@ ImageView::ImageView(size_t initial_file, const std::vector<std::pair<std::strin
 
 ImageView::~ImageView()
 {
+	CancelPrefetch();
 	CancelAndJoinFullRes();
 	WINPORT(DeleteConsoleImage)(NULL, WINPORT_IMAGE_ID);
 	if (!_tmp_file.empty()) {
@@ -687,7 +819,13 @@ bool ImageView::Preload()
 
 bool ImageView::Reload()
 {
+	CancelPrefetch();
 	CancelAndJoinFullRes();
+	{
+		std::lock_guard<std::mutex> lk(_prefetch_mtx);
+		_prefetch_next.valid = false;
+		_prefetch_prev.valid = false;
+	}
 	JustReset();
 	_orig_image.Resize();
 	_scaled_image.Resize();
@@ -696,10 +834,11 @@ bool ImageView::Reload()
 	_err_str.clear();
 	if (!PrepareImage() || !RenderImage()) return false;
 	DenoteState();
+	StartPrefetch();
 	return true;
 }
 
-bool ImageView::Setup(SMALL_RECT &rc, const DecodeCancelFlag *cancel, bool keep_state)
+bool ImageView::Setup(SMALL_RECT &rc, const DecodeCancelFlag *cancel, bool keep_state, bool render)
 {
 	_cancel = cancel;
 	_pos.X = rc.Left;
@@ -717,7 +856,7 @@ bool ImageView::Setup(SMALL_RECT &rc, const DecodeCancelFlag *cancel, bool keep_
 	// Reuse already loaded image (e.g. from Preload() or before window resize)
 	if (_orig_image.Width() > 0 && _render_file == CurFile()) {
 		JustReset(keep_state);
-		if (!RenderImage()) {
+		if (render && !RenderImage()) {
 			return false;
 		}
 	} else {
@@ -725,37 +864,75 @@ bool ImageView::Setup(SMALL_RECT &rc, const DecodeCancelFlag *cancel, bool keep_
 		_ready_image.Resize();
 		_tmp_image.Resize();
 		JustReset(keep_state);
-		if (!PrepareImage() || !RenderImage()) {
+		if (!PrepareImage()) {
+			return false;
+		}
+		if (render && !RenderImage()) {
 			return false;
 		}
 	}
 
+	const int canvas_w = _size.X * _wgi.PixPerCell.X;
+	const int canvas_h = _size.Y * _wgi.PixPerCell.Y;
+	if (_scale <= 0) {
+		SetupInitialScale(canvas_w, canvas_h);
+	}
+
 	DenoteState();
+	if (render) {
+		StartPrefetch();
+	}
 	return true;
 }
 
 void ImageView::Home()
 {
+	CancelPrefetch();
+	{
+		std::lock_guard<std::mutex> lk(_prefetch_mtx);
+		_prefetch_next.valid = false;
+		_prefetch_prev.valid = false;
+	}
 	_cur_file = _initial_file;
 	JustReset();
 	if (PrepareImage() && RenderImage()) {
 		DenoteState();
+		StartPrefetch();
 	}
 }
 
 void ImageView::Last()
 {
 	if (_all_files.empty()) return;
+	CancelPrefetch();
+	{
+		std::lock_guard<std::mutex> lk(_prefetch_mtx);
+		_prefetch_next.valid = false;
+		_prefetch_prev.valid = false;
+	}
 	_cur_file = _all_files.size() - 1;
 	JustReset();
 	if (PrepareImage() && RenderImage()) {
 		DenoteState();
+		StartPrefetch();
 	}
 }
 
 bool ImageView::Iterate(bool forward)
 {
 	for (size_t i = 0;; ++i) {
+		CancelPrefetch();
+		// Cache current decoded image into opposite slot before changing file
+		if (_orig_image.Width() > 0 && !_render_file.empty()) {
+			std::lock_guard<std::mutex> lk(_prefetch_mtx);
+			auto &slot = forward ? _prefetch_prev : _prefetch_next;
+			slot.file = _render_file;
+			slot.image = std::move(_orig_image);
+			slot.info = _decode_info;
+			slot.max_pixel_size = _decoded_max_size;
+			slot.valid = true;
+		}
+
 		if (!IterateFile(forward) || i > _all_files.size()) {
 			_cur_file = _initial_file;
 			return false;
@@ -763,6 +940,7 @@ bool ImageView::Iterate(bool forward)
 		JustReset();
 		if (PrepareImage() && RenderImage()) {
 			DenoteState();
+			StartPrefetch();
 			return true;
 		}
 	}

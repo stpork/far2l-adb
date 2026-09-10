@@ -5,7 +5,6 @@
 #include <strings.h>
 #include <fstream>
 #include <vector>
-#include "external/stb_image_resize2.h"
 
 #ifdef HAVE_WEBP
 #include <webp/decode.h>
@@ -19,6 +18,8 @@ public:
 		if (!ext) return false;
 		return strcasecmp(ext, "webp") == 0;
 	}
+
+	bool SupportsDecodeScaling(const std::string&) const override { return true; }
 
 	bool Decode(const std::string& path, Image& out, ImageDecodeInfo& info,
 	            int maxPixelSize, const DecodeCancelFlag* cancel) override
@@ -50,12 +51,10 @@ public:
 		info.sourceWidth = width;
 		info.sourceHeight = height;
 
-		uint8_t* data = WebPDecodeRGB(buffer.data(), buffer.size(), &width, &height);
-		if (!data) return false;
-		if (DecodeCancelled(cancel)) {
-			WebPFree(data);
-			return false;
-		}
+		if (DecodeCancelled(cancel)) return false;
+
+		WebPDecoderConfig config;
+		if (!WebPInitDecoderConfig(&config)) return false;
 
 		int targetWidth = width;
 		int targetHeight = height;
@@ -63,19 +62,29 @@ public:
 			float scale = (float)maxPixelSize / (float)std::max(width, height);
 			targetWidth = std::max(1, (int)(width * scale));
 			targetHeight = std::max(1, (int)(height * scale));
+			config.options.use_scaling = 1;
+			config.options.scaled_width = targetWidth;
+			config.options.scaled_height = targetHeight;
+		}
+		config.options.use_threads = 1;
+
+		out.Resize(targetWidth, targetHeight, 3);
+		if (out.Width() != targetWidth || out.Height() != targetHeight) return false;
+
+		config.output.colorspace = MODE_RGB;
+		config.output.is_external_memory = 1;
+		config.output.u.RGBA.rgba = (uint8_t*)out.Data();
+		config.output.u.RGBA.stride = targetWidth * 3;
+		config.output.u.RGBA.size = (size_t)targetWidth * targetHeight * 3;
+
+		VP8StatusCode status = WebPDecode(buffer.data(), buffer.size(), &config);
+		WebPFreeDecBuffer(&config.output);
+
+		if (status != VP8_STATUS_OK || DecodeCancelled(cancel)) {
+			out.Resize();
+			return false;
 		}
 
-		if (targetWidth != width || targetHeight != height) {
-			out.Resize(targetWidth, targetHeight, 3);
-			stbir_resize_uint8_linear(data, width, height, width * 3,
-			                          (unsigned char*)out.Data(), targetWidth, targetHeight, 0,
-			                          STBIR_RGB);
-		} else {
-			out.Resize(width, height, 3);
-			memcpy(out.Data(), data, width * height * 3);
-		}
-
-		WebPFree(data);
 		info.fullResolution = (out.Width() == info.sourceWidth && out.Height() == info.sourceHeight);
 		return true;
 	}

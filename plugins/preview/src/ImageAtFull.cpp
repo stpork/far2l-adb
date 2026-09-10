@@ -84,7 +84,7 @@ public:
 	{
 		_dlg = dlg;
 		_first_draw = true;
-		bool res = ImageView::Setup(rc, nullptr, _is_configured);
+		bool res = ImageView::Setup(rc, nullptr, _is_configured, false);
 		if (res) _is_configured = true;
 		return res;
 	}
