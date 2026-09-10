@@ -1,60 +1,194 @@
-.Contents
-Help on Preview plugin
+.Language=English,English
+.PluginContents=Preview Plugin
 
-@Preview
-$ #Preview#
-Native image viewer with hardware-accelerated decoding.
+@Contents
+$ #Preview Plugin#
+ Fast, native image viewer with hardware-accelerated decoding
+and terminal graphics support for far2l.
 
-Supported: JPEG, PNG, GIF, WebP, HEIC/HEIF, TIFF, BMP
+   ~Overview & Features~@Overview@
+   ~Opening Images~@Opening@
+   ~Navigation~@Navigation@
+   ~Zoom & Scaling~@Zoom@
+   ~Panning & Dragging~@Pan@
+   ~Rotation & Mirroring~@Rotation@
+   ~File Selection & Tagging~@Selection@
+   ~Configuration & Settings~@Preview@
+   ~Supported Formats~@Formats@
+   ~Troubleshooting & FAQ~@Troubleshooting@
+
+@Overview
+$ #Overview & Features#
+ The Preview plugin provides seamless image viewing inside far2l
+both in GUI mode and inside supported terminal emulators.
+
+ Key features:
+   - Zero-delay image browsing with background async prefetch
+   - Native OS hardware-accelerated decoders (Apple ImageIO on
+     macOS, GdkPixbuf on Linux)
+   - Built-in fallback decoders for WebP, HEIC/AVIF, TIFF, etc.
+   - QuickView panel preview (#Ctrl+Q#)
+   - Terminal graphics: far2l GUI, Kitty, iTerm2, and Sixel
+   - Smooth zooming, panning, 90° & fine 1° rotation, mirroring
+   - Far2l panel selection synchronization (mark files in viewer,
+     batch copy/move/delete on exit)
+
+ ~Contents~@Contents@
+
+@Opening
+$ #Opening Images#
+ There are multiple ways to open images with the Preview plugin:
+
+   #F3#             If "Override built-in F3 viewer" is enabled,
+                    pressing F3 on an image file opens Preview.
+   #Enter#          If "Open with Enter" is enabled, pressing Enter
+                    opens the image in Preview.
+   #Ctrl+PgDn#      If "Open with Ctrl+PgDn" is enabled, opens
+                    the image directly.
+   #Ctrl+Q#         QuickView: shows live preview in inactive panel.
+   #F11#            Plugins menu -> select #Preview#.
+   #preview:<path># Type in far2l command line to open specific file.
+   #Enter# / #O#    Inside viewer: open image in default system app.
+
+ ~Contents~@Contents@
 
 @Navigation
 $ #Navigation#
-  Right     Next image
-  Left      Previous image
-  Up        First image
-  Down      Last image
+ Switch between images in the current directory:
+
+   #Right# / #Down#    Next image in folder
+   #Left# / #Up#       Previous image in folder
+   #Home#              First image in folder (when not rotated)
+   #End#               Last image in folder (when not rotated)
+   #PgDn# / #PgUp#     Next / Previous image (if not bound to zoom)
+
+ Background prefetching automatically decodes adjacent images
+in a worker thread, ensuring instantaneous (0 ms) flipping.
+
+ ~Contents~@Contents@
 
 @Zoom
-$ #Zoom#
-  PgUp          Zoom in
-  PgDn          Zoom out
-  Shift+PgUp    Precise zoom in (1%)
-  Shift+PgDn    Precise zoom out (1%)
-  + / -         Zoom in/out
-  * / A         Auto-fit
-  / / Z         100% (original size)
-  S             Cycle fit mode (Auto → Width → Height → 100%)
-  = / Num5      Reset
-  Wheel         Zoom
+$ #Zoom & Scaling#
+ Adjust zoom level and viewport fit:
+
+   #PgUp# / #+# / #Num+#     Zoom in
+   #PgDn# / #-# / #Num-#     Zoom out
+   #Shift+PgUp#              Fine zoom in (+1%)
+   #Shift+PgDn#              Fine zoom out (-1%)
+   #*# / #A#                 Auto-fit to window / panel
+   #/# / #Z#                 100% (original 1:1 pixel size)
+   #S#                       Cycle fit modes (Auto -> Width -> Height -> 100%)
+   #=# / #Num5#              Reset zoom and pan offsets
+   #Mouse Wheel#             Smooth zoom in / out
+
+ ~Contents~@Contents@
 
 @Pan
-$ #Panning#
-  Alt+Arrows        Pan image
-  Alt+Shift+Arrows  Fine pan (1px)
-  Mouse drag        Pan
+$ #Panning & Dragging#
+ Move around within zoomed-in images:
+
+   #Alt+Arrows#              Pan image viewport
+   #Alt+Shift+Arrows#        Fine pan (1 pixel per press)
+   #Mouse Left Drag#         Click and drag to pan interactively
+
+ ~Contents~@Contents@
 
 @Rotation
-$ #Rotation#
-  Home          Counter-clockwise (90°)
-  End           Clockwise (90°)
-  Shift+Home    Fine counter-clockwise (1°)
-  Shift+End     Fine clockwise (1°)
-  Tab           Clockwise
-  Shift+Tab     Counter-clockwise
-  Right click   Rotate
-  F7 / H        Mirror horizontal
-  F8 / V        Mirror vertical
+$ #Rotation & Mirroring#
+ Rotate and flip images on the fly:
+
+   #Home#                    Rotate 90° counter-clockwise
+   #End#                     Rotate 90° clockwise
+   #Shift+Home#              Fine rotate 1° counter-clockwise
+   #Shift+End#               Fine rotate 1° clockwise
+   #Tab#                     Rotate 90° clockwise
+   #Shift+Tab#               Rotate 90° counter-clockwise
+   #F7# / #H#                Mirror horizontally
+   #F8# / #V#                Mirror vertically
+   #Mouse Right Click#       Rotate image clockwise
+
+ Images with EXIF orientation metadata are automatically rotated
+upright upon loading (configurable in settings).
+
+ ~Contents~@Contents@
 
 @Selection
-$ #Selection#
-  Ins        Toggle
-  Space      Select
-  Backspace  Deselect
+$ #File Selection & Tagging#
+ Select images directly in the viewer for subsequent batch operations:
 
-@Other
-$ #Other#
-  Enter / O  Open in Finder
-  Esc / F10  Exit (apply selection)
-  F5 / F     Fullscreen
-  F9         Settings
-  F1         Help
+   #Ins#                     Toggle selection of current file
+   #Space#                   Select file and advance to next image
+   #Backspace#               Deselect file and go back to previous
+   #Esc# / #F10#             Close viewer (all selections are preserved
+                             on the far2l panel)
+
+ Use this workflow to quickly cull photos or review albums, then
+press #F5# (Copy), #F6# (Move), or #F8# (Delete) on the panel.
+
+ ~Contents~@Contents@
+
+@Preview
+$ #Configuration & Settings#
+ Press #F9# in the viewer or open #F11# -> #Options# -> #Preview#:
+
+   #Enable plugin#           Enable or disable preview functionality
+   #Apply EXIF orientation#  Auto-rotate based on EXIF tag
+   #Open with Enter#         Intercept Enter key on image files
+   #Open with Ctrl+PgDn#     Open viewer on Ctrl+PgDn
+   #Show in QuickView#       Display image in QuickView panel (Ctrl+Q)
+   #Override built-in F3#    Use Preview when pressing F3
+   #Auto-fit after rotate#   Recalculate fit after 90° rotation
+   #Fast transforms#         Use fast integer scaling
+   #Compact frame#           Minimal window frame border
+   #Use OS image codec#      Use hardware-accelerated system decoder
+   #Default fit mode#        Auto, Fit Width, Fit Height, 100%
+   #Image masks#             Space-separated wildcard extensions
+
+ ~Contents~@Contents@
+
+@Config
+$ #Configuration & Settings#
+  See ~Configuration & Settings~@Preview@.
+
+ ~Contents~@Contents@
+
+@Formats
+$ #Supported Formats#
+ The plugin supports a wide range of image formats:
+
+   - #JPEG# (.jpg, .jpeg) with EXIF orientation
+   - #PNG# (.png) with 8-bit, 16-bit, and alpha channel
+   - #GIF# (.gif) static and animated
+   - #WebP# (.webp) lossy, lossless, and alpha
+   - #HEIC / HEIF / AVIF# (.heic, .heif) via libheif / ImageIO
+   - #TIFF# (.tif, .tiff) multi-page and uncompressed/compressed
+   - #BMP#, #TGA#, #PSD#, #HDR#, #ICO#
+
+ On macOS, Apple ImageIO provides hardware-accelerated decode
+for JPEG, PNG, HEIC, TIFF, and WebP.
+ On Linux, GdkPixbuf and native modular libraries (libwebp,
+libheif, libtiff) are utilized with graceful fallbacks.
+
+ ~Contents~@Contents@
+
+@Troubleshooting
+$ #Troubleshooting & FAQ#
+ #Terminal lacks graphics support#
+   The running terminal emulator does not support Kitty, iTerm2,
+   or Sixel graphics protocols. Run far2l in GUI mode or use a
+   supported terminal (e.g. Kitty, Ghostty, iTerm2, WezTerm, Foot).
+
+ #Image does not open on Enter or F3#
+   Check #F9# settings: make sure "Override built-in F3 viewer"
+   or "Open with Enter" is checked, and verify that the file
+   extension is listed in "Image masks".
+
+ #Large images take time to load#
+   Ensure "Use OS image codec" is enabled. On macOS, ImageIO
+   automatically downsamples huge photos directly during decoding.
+
+ #Selections lost#
+   Selections made with #Ins#, #Space#, and #Backspace# are applied
+   to the active panel upon exiting with #Esc# or #F10#.
+
+ ~Contents~@Contents@
