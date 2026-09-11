@@ -3,20 +3,87 @@ set -euo pipefail
 export LC_ALL=C LANG=C
 
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-usage() { echo "Usage: $0 debug|release [full] [dmg] [clean]" >&2; exit 1; }
+usage() {
+    cat <<EOF >&2
+Usage: $0 [debug|release] [full] [dmg] [clean|clear]
+       $0 clear|clean
 
-TYPE="Debug"; DMG=0; CLEAN=0; FULL=0
+Commands:
+  debug|release  Build the specified configuration (default: debug)
+  full           Enable AWS, SMB, and NFS netrocks plugins
+  dmg            Package macOS DragNDrop DMG bundle
+  clean|clear    When used alone, remove all build artifacts, junk, and caches.
+                 When used with debug/release, clean the build directory first.
+EOF
+    exit 1
+}
+
+clean_all() {
+    echo "Cleaning all build artifacts, temporary files, and caches..."
+    rm -rf "$SD"/_debug "$SD"/_release "$SD"/_build "$SD"/build "$SD"/cmake-build-*
+    rm -rf "$SD"/_CPack_Packages "$SD"/install "$SD"/install_manifest.txt "$SD"/*.dmg
+    rm -rf "$SD"/.cache
+    rm -rf "$SD"/python/staging "$SD"/python/python "$SD"/python/incpy "$SD"/tools
+    rm -f "$SD"/CPackConfig.cmake "$SD"/CPackSourceConfig.cmake
+    rm -f "$SD"/packaging/osx/FixupBundle.cmake "$SD"/packaging/osx/Setup.scpt
+    rm -f "$SD"/far2l/far2l_askpass "$SD"/far2l/far2l_sudoapp "$SD"/far2l_askpass "$SD"/far2l_sudoapp "$SD"/far2l/far2ledit
+
+    if git -C "$SD" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        git -C "$SD" clean -fdx
+    else
+        find "$SD" \
+            \( -path '*/.git' -o -path '*/.vscode' \) -prune -o \
+            \( \
+                -name 'CMakeCache.txt' -o \
+                -name 'CMakeFiles' -o \
+                -name 'CMakeScripts' -o \
+                -name 'CMakeLists.txt.user' -o \
+                -name 'cmake_install.cmake' -o \
+                -name 'CTestTestfile.cmake' -o \
+                -name 'compile_commands.json' -o \
+                -name 'CPackConfig.cmake' -o \
+                -name 'CPackSourceConfig.cmake' -o \
+                -name 'Testing' -o \
+                -name '.ninja_*' -o \
+                -name '*.ninja*' -o \
+                -name '*.a' -o \
+                -name '*.o' -o \
+                -name '*.dylib' -o \
+                -name '*.so' -o \
+                -name '.DS_Store' -o \
+                -name '._*' -o \
+                -name '*~' -o \
+                -name '*.swp' -o \
+                -name '*.swo' -o \
+                -name '*.orig' -o \
+                -name '*.bak' -o \
+                -name '__pycache__' -o \
+                -name '*.pyc' -o \
+                -name '*.pyo' \
+            \) -exec rm -rf {} + 2>/dev/null || true
+    fi
+    echo "Cleanup complete."
+}
+
+TYPE=""; DMG=0; CLEAN=0; FULL=0
 for a in "$@"; do
     case "$(echo "$a" | tr A-Z a-z)" in
-        debug)   TYPE=Debug ;;
-        release) TYPE=Release ;;
-        full)    FULL=1 ;;
-        dmg)     DMG=1 ;;
-        clean)   CLEAN=1 ;;
-        *)       usage ;;
+        debug)       TYPE=Debug ;;
+        release)     TYPE=Release ;;
+        full)        FULL=1 ;;
+        dmg)         DMG=1 ;;
+        clean|clear) CLEAN=1 ;;
+        -h|--help|help) usage ;;
+        *)           usage ;;
     esac
 done
-[[ -n "$TYPE" ]] || usage
+
+if (( CLEAN )) && [[ -z "$TYPE" ]]; then
+    clean_all
+    exit 0
+fi
+
+[[ -z "$TYPE" ]] && TYPE="Debug"
 
 NR_FLAGS=""
 (( FULL )) || NR_FLAGS="-DNR_AWS=OFF -DNR_SMB=OFF -DNR_NFS=OFF"

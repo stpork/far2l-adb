@@ -27,4 +27,9 @@ packaging/osx/FixupBundle.cmake
 packaging/osx/Setup.scpt
 far2l_askpass
 far2l_sudoapp
+_debug/
+_release/
+.cache
+far2ledit
+far2l/far2ledit
 
