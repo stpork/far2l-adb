@@ -3397,12 +3397,36 @@ int Viewer::vread(wchar_t *Buf, int Count, bool Raw)
 
 		LPBYTE View = ViewFile.ViewBytesAt(Ptr, ReadSize);
 
-		if (Count == 1 && ReadSize == 2 && !Raw && (VM.CodePage == CP_UTF16LE || VM.CodePage == CP_UTF16BE)) {
-			// Если UTF16 то простой ли это символ или нет?
-			if (*(uint16_t *)View >= 0xd800 && *(uint16_t *)View <= 0xdfff) {
-				ReadSize+= 2;
-				View = ViewFile.ViewBytesAt(Ptr, ReadSize);
+		if (Count == 1 && !Raw && (VM.CodePage == CP_UTF16LE || VM.CodePage == CP_UTF16BE)) {
+			if (!View || !ReadSize) return 0;
+			const auto ReadUnit = [&](const unsigned char *bytes) -> unsigned int {
+				return VM.CodePage == CP_UTF16BE ? (bytes[0] << 8) | bytes[1]
+						: (bytes[1] << 8) | bytes[0];
+			};
+			wchar_t character = WCHAR_REPLACEMENT;
+			DWORD consumed = ReadSize;
+			if (ReadSize >= 2) {
+				const unsigned int first = ReadUnit(View);
+				consumed = 2;
+				if (first >= 0xd800 && first <= 0xdbff) {
+					ReadSize = 4;
+					View = ViewFile.ViewBytesAt(Ptr, ReadSize);
+					if (!View || !ReadSize) return 0;
+					consumed = std::min<DWORD>(ReadSize, 2);
+					if (ReadSize >= 4) {
+						const unsigned int second = ReadUnit(View + 2);
+						if (second >= 0xdc00 && second <= 0xdfff) {
+							character = 0x10000 + ((first - 0xd800) << 10) + second - 0xdc00;
+							consumed = 4;
+						}
+					}
+				} else if (first < 0xdc00 || first > 0xdfff) {
+					character = first;
+				}
 			}
+			Buf[0] = character;
+			ViewFile.SetPointer(Ptr + consumed);
+			return 1;
 		}
 
 		ViewFile.SetPointer(Ptr + ReadSize);
