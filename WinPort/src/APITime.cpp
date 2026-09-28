@@ -116,7 +116,7 @@ WINPORT_DECL(SystemTimeToFileTime, BOOL, (const SYSTEMTIME *lpSystemTime, LPFILE
 		lpSystemTime->wHour > 23 ||
 		lpSystemTime->wMonth < 1 || lpSystemTime->wMonth > 12 ||
 		lpSystemTime->wDay < 1 ||
-		lpSystemTime->wDay > MonthLengths [ lpSystemTime->wMonth ==2 || IsLeapYear(lpSystemTime->wYear)] [ lpSystemTime->wMonth - 1] ||
+		lpSystemTime->wDay > MonthLengths [ IsLeapYear(lpSystemTime->wYear)] [ lpSystemTime->wMonth - 1] ||
 		lpSystemTime->wYear < 1601 ) return FALSE;
 
 	/* now calculate a day count from the date
