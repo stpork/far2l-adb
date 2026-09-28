@@ -2781,7 +2781,7 @@ DWORD ShellFileTransfer::PieceCopy()
 			likely we have written bit more due to no_buffering requires aligned io
 			move backward and correct file size
 		*/
-		if (!_DestFile.SetPointer((INT64)BytesRead - (INT64)WriteSize, nullptr, FILE_CURRENT))
+		if (!_DestFile.SetPointer((INT64)BytesRead - (INT64)BytesWritten, nullptr, FILE_CURRENT))
 			throw ErrnoSaver();
 		if (!_DestFile.SetEnd())
 			throw ErrnoSaver();
