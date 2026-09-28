@@ -44,7 +44,6 @@ BufferedFileView::BufferedFileView() {}
 BufferedFileView::~BufferedFileView()
 {
 	Close();
-	free(Buffer);
 }
 
 bool BufferedFileView::Open(const std::string &PathName)
@@ -80,6 +79,12 @@ bool BufferedFileView::Open(const std::string &PathName)
 		}
 		if (!Tmp.empty()) {
 			Buffer = AllocBuffer(Tmp.size());
+			if (!Buffer) {
+				Close();
+				errno = ENOMEM;
+				return false;
+			}
+			BufferSize = DWORD(Tmp.size());
 			memcpy(Buffer, Tmp.data(), Tmp.size());
 			FileSize = Tmp.size();
 			BufferBounds.Ptr = 0;
@@ -117,6 +122,11 @@ void BufferedFileView::Close()
 		sdc_close(FD);
 		FD = -1;
 	}
+	free(Buffer);
+	Buffer = nullptr;
+	BufferSize = 0;
+	CurPtr = LastPtr = FileSize = 0;
+	PseudoFile = false;
 }
 
 void BufferedFileView::ActualizeFileSize()
