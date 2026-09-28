@@ -341,17 +341,19 @@ int _cdecl SortList(const void *el1, const void *el2)
 	FileListItem *SPtr1 = ((FileListItem **)el1)[0];
 	FileListItem *SPtr2 = ((FileListItem **)el2)[0];
 
-	if (SPtr1->strName.GetLength() == 2 && SPtr1->strName.At(0) == L'.' && SPtr1->strName.At(1) == L'.')
-		return -1;
-
-	if (SPtr2->strName.GetLength() == 2 && SPtr2->strName.At(0) == L'.' && SPtr2->strName.At(1) == L'.')
-		return 1;
+	if (SPtr1 == SPtr2) return 0;
+	const bool parent1 = SPtr1->strName.GetLength() == 2
+			&& SPtr1->strName.At(0) == L'.' && SPtr1->strName.At(1) == L'.';
+	const bool parent2 = SPtr2->strName.GetLength() == 2
+			&& SPtr2->strName.At(0) == L'.' && SPtr2->strName.At(1) == L'.';
+	if (parent1 || parent2) return parent1 == parent2 ? 0 : (parent1 ? -1 : 1);
 
 	if (ListSortMode == UNSORTED) {
 		if (ListSelectedFirst && SPtr1->Selected != SPtr2->Selected)
 			return SPtr1->Selected > SPtr2->Selected ? -1 : 1;
 
-		return (SPtr1->Position > SPtr2->Position) ? ListSortOrder : -ListSortOrder;
+		return SPtr1->Position == SPtr2->Position ? 0
+				: (SPtr1->Position > SPtr2->Position ? ListSortOrder : -ListSortOrder);
 	}
 
 	if (ListDirectoriesFirst) {
