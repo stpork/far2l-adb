@@ -2538,7 +2538,8 @@ ShellFileTransfer::ShellFileTransfer(const wchar_t *SrcName, const FAR_FIND_DATA
 		_DstFlags|= FILE_FLAG_WRITE_THROUGH;
 
 #ifdef __linux__										// anyway OSX doesn't have O_DIRECT
-		if (SrcData.nFileSize > 32 * USE_PAGE_SIZE)		// just empiric
+		// Existing destination lengths need not satisfy direct-I/O alignment.
+		if (!Append && !Resume && SrcData.nFileSize > 32 * USE_PAGE_SIZE)
 			_DstFlags|= FILE_FLAG_NO_BUFFERING;
 #endif
 	}
