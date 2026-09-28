@@ -47,7 +47,7 @@ for (i = 0; ; ++i) {
 	}
 }
 
-recent_left_hash = HashPathes(right_items, true, true, true, true, true)
+recent_left_hash = HashPathes(left_items, true, true, true, true, true)
 if (left_hash != recent_left_hash) {
 	Log("Lhash: " + left_hash + " -> " + recent_left_hash)
 	Panic("Source files had changed!")
