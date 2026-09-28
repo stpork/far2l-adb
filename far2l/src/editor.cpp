@@ -4465,12 +4465,9 @@ void Editor::DeleteString(Edit *DelPtr, int LineNumber, int DeleteLast, int Undo
 			TopScreen = TopScreen->m_next;
 		else
 			TopScreen = TopScreen->m_prev;
-	}
 
-	if (m_bWordWrap && DelPtr == TopScreen) {
 		m_TopScreenVisualLine = 0;
 	}
-
 
 	if (DelPtr == TopList)
 		TopList = TopList->m_next;
