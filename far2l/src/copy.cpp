@@ -2855,7 +2855,7 @@ int ShellCopy::ShellCopyFile(const wchar_t *SrcName, const FAR_FIND_DATA_EX &Src
 
 	try {
 #if defined(COW_SUPPORTED) && defined(__APPLE__)
-		if (Flags.USECOW) {
+		if (Flags.USECOW && !Append && !Resume) {
 			const std::string mbSrc = Wide2MB(SrcName);
 			const std::string &mbDest = strDestName.GetMB();
 			int r = clonefile(mbSrc.c_str(), mbDest.c_str(), 0);
@@ -2870,7 +2870,7 @@ int ShellCopy::ShellCopyFile(const wchar_t *SrcName, const FAR_FIND_DATA_EX &Src
 			}
 
 			ErrnoSaver ErSr;
-			if (ErSr.Get() != EXDEV && ErSr.Get() != ENOTSUP)
+			if (ErSr.Get() != EXDEV && ErSr.Get() != ENOTSUP && ErSr.Get() != EEXIST)
 				throw ErSr;
 
 			fprintf(stderr, "Skip CoW errno=%d for '%s' -> '%s'\n", ErSr.Get(), mbSrc.c_str(),
