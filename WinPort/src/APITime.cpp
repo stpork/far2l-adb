@@ -1,4 +1,5 @@
 #include <time.h>
+#include <limits>
 #include <errno.h>
 #include "WinCompat.h"
 #include "WinPort.h"
@@ -78,30 +79,55 @@ WINPORT_DECL(GetSystemTime, VOID, (LPSYSTEMTIME lpSystemTime))
 WINPORT_DECL(FileTime_UnixToWin32, VOID, (struct timespec ts, FILETIME *lpFileTime))
 {
 	if (!lpFileTime) return;
-	time_t tm = ts.tv_sec;
-	time_t add_ns = ts.tv_nsec / 1000000000;
-	if (add_ns) {
-		tm+= add_ns;
-		ts.tv_nsec-= add_ns * 1000000000;
-	}
 
-	SYSTEMTIME sys_time = {};
-	TM2Systemtime(&sys_time, gmtime(&tm));
-	sys_time.wMilliseconds+= ts.tv_nsec/1000000;
-	WINPORT(SystemTimeToFileTime)(&sys_time, lpFileTime);
+	// Normalize nanoseconds before converting. Saturate outside FILETIME's range;
+	// this void API cannot return an error or leave an uninitialized timestamp.
+	int64_t sec = ts.tv_sec;
+	int64_t carry = ts.tv_nsec / 1000000000;
+	int64_t ns = ts.tv_nsec % 1000000000;
+	if (ns < 0) {
+		ns+= 1000000000;
+		--carry;
+	}
+	uint64_t ticks;
+	if (carry > 0 && sec > std::numeric_limits<int64_t>::max() - carry) {
+		ticks = std::numeric_limits<uint64_t>::max();
+	} else if (carry < 0 && sec < std::numeric_limits<int64_t>::min() - carry) {
+		ticks = 0;
+	} else {
+		sec+= carry;
+		const int64_t epoch = SECS_1601_TO_1970;
+		const uint64_t maximum = std::numeric_limits<uint64_t>::max();
+		if (sec < -epoch) {
+			ticks = 0;
+		} else if (sec > int64_t(maximum / TICKSPERSEC) - epoch) {
+			ticks = maximum;
+		} else {
+			ticks = uint64_t(sec + epoch) * TICKSPERSEC;
+			const uint64_t fraction = ns / 100;
+			ticks = fraction > maximum - ticks ? maximum : ticks + fraction;
+		}
+	}
+	lpFileTime->dwHighDateTime = ticks >> 32;
+	lpFileTime->dwLowDateTime = DWORD(ticks);
 }
 
 WINPORT_DECL(FileTime_Win32ToUnix, VOID, (const FILETIME *lpFileTime, struct timespec *ts))
 {
 	if (!lpFileTime || !ts) return;
 
-	SYSTEMTIME sys_time = {};
-	WINPORT(FileTimeToSystemTime)(lpFileTime, &sys_time);
-	struct tm tm = {};
-	Systemtime2TM(&sys_time, &tm);
-	ts->tv_sec = timegm(&tm);
-	ts->tv_nsec = sys_time.wMilliseconds;
-	ts->tv_nsec*= 1000000;
+	const uint64_t ticks = (uint64_t(lpFileTime->dwHighDateTime) << 32) | lpFileTime->dwLowDateTime;
+	const int64_t sec = int64_t(ticks / TICKSPERSEC) - int64_t(SECS_1601_TO_1970);
+	if (sec < std::numeric_limits<time_t>::min()) {
+		ts->tv_sec = std::numeric_limits<time_t>::min();
+		ts->tv_nsec = 0;
+	} else if (sec > std::numeric_limits<time_t>::max()) {
+		ts->tv_sec = std::numeric_limits<time_t>::max();
+		ts->tv_nsec = 999999900;
+	} else {
+		ts->tv_sec = time_t(sec);
+		ts->tv_nsec = (ticks % TICKSPERSEC) * 100;
+	}
 }
 
 WINPORT_DECL(SystemTimeToFileTime, BOOL, (const SYSTEMTIME *lpSystemTime, LPFILETIME lpFileTime))
