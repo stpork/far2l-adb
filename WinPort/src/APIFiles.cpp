@@ -1045,18 +1045,46 @@ extern "C"
 	WINPORT_DECL(GetFullPathName, DWORD,
 		(LPCTSTR lpFileName, DWORD nBufferLength, LPTSTR lpBuffer, LPTSTR *lpFilePart))
 	{
+		if (lpFilePart) *lpFilePart = nullptr;
+		if (!lpFileName || !*lpFileName || (!lpBuffer && nBufferLength)) {
+			errno = EINVAL;
+			return 0;
+		}
 		std::wstring full_name;
-		if (*lpFileName!=GOOD_SLASH) {
-			WCHAR cd[MAX_PATH+1] = {0};
-			WINPORT(GetCurrentDirectory)( MAX_PATH, cd);
-			full_name = cd;
-			if (*lpFileName!='.') {
-				full_name+=GOOD_SLASH;
-				full_name+= lpFileName;
-			} else
-				full_name+= lpFileName + 1;
-		} else
-			full_name = lpFileName;
+		if (*lpFileName != GOOD_SLASH) {
+			std::vector<WCHAR> cd(MAX_PATH + 1);
+			for (;;) {
+				DWORD length = WINPORT(GetCurrentDirectory)(DWORD(cd.size()), cd.data());
+				if (!length) return 0;
+				if (length < cd.size()) break;
+				cd.resize(length + 1);
+			}
+			full_name = cd.data();
+			if (full_name.empty() || full_name.back() != GOOD_SLASH) full_name+= GOOD_SLASH;
+		}
+		full_name+= lpFileName;
+
+		// Normalize lexically: the target need not exist, and symlinks are not resolved.
+		std::wstring normalized(1, GOOD_SLASH);
+		std::vector<size_t> components;
+		for (size_t begin = 0; begin < full_name.size();) {
+			size_t end = full_name.find(GOOD_SLASH, begin);
+			if (end == std::wstring::npos) end = full_name.size();
+			const size_t length = end - begin;
+			if (length == 2 && full_name.compare(begin, length, L"..") == 0) {
+				if (!components.empty()) {
+					normalized.resize(components.back());
+					components.pop_back();
+				}
+			} else if (length && !(length == 1 && full_name[begin] == L'.')) {
+				components.push_back(normalized.size());
+				if (normalized.size() > 1) normalized+= GOOD_SLASH;
+				normalized.append(full_name, begin, length);
+			}
+			begin = end + 1;
+		}
+		if (full_name.back() == GOOD_SLASH && normalized.size() > 1) normalized+= GOOD_SLASH;
+		full_name.swap(normalized);
 		if (nBufferLength<=full_name.size())
 			return full_name.size() + 1;
 
