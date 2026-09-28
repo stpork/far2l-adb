@@ -124,6 +124,7 @@ class ShellFileTransfer
 	File _SrcFile, _DestFile;
 	bool _LastWriteWasHole = false;
 	bool _Done             = false;
+	bool _UseCOW;
 	std::unique_ptr<ShellCopyFileExtendedAttributes> _XAttrCopyPtr;
 
 	void Undo();

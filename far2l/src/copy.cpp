@@ -2499,7 +2499,7 @@ static void ProgressUpdate(bool force, const FAR_FIND_DATA_EX &SrcData, const wc
 ShellFileTransfer::ShellFileTransfer(const wchar_t *SrcName, const FAR_FIND_DATA_EX &SrcData,
 		const FARString &strDestName, bool Append, bool Resume, ShellCopyBuffer &CopyBuffer, COPY_FLAGS &Flags)
 	:
-	_SrcName(SrcName), _strDestName(strDestName), _CopyBuffer(CopyBuffer), _Flags(Flags), _SrcData(SrcData)
+	_SrcName(SrcName), _strDestName(strDestName), _CopyBuffer(CopyBuffer), _Flags(Flags), _SrcData(SrcData), _UseCOW(Flags.USECOW)
 {
 	if (!_SrcFile.Open(SrcName, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
 				OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN))
@@ -2731,7 +2731,7 @@ static std::pair<DWORD, DWORD> LookupNextHole(const unsigned char *Data, DWORD S
 DWORD ShellFileTransfer::PieceCopy()
 {
 #if defined(COW_SUPPORTED) && defined(__linux__)
-	if (_Flags.USECOW)
+	if (_UseCOW)
 		for (;;) {
 			ssize_t sz = copy_file_range(_SrcFile.Descriptor(), nullptr, _DestFile.Descriptor(), nullptr,
 					_CopyBuffer.Size, 0);
@@ -2739,8 +2739,9 @@ DWORD ShellFileTransfer::PieceCopy()
 			if (sz >= 0)
 				return (DWORD)sz;
 
-			if (errno == EXDEV) {
-				fprintf(stderr, "copy_file_range returned EXDEV, fallback to usual copy\n");
+			if (errno == EXDEV || errno == EOPNOTSUPP || errno == ENOSYS) {
+				_UseCOW = false;
+				fprintf(stderr, "copy_file_range unsupported (%d), fallback to usual copy\n", errno);
 				break;
 			}
 
