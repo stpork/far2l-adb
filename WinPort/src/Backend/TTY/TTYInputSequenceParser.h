@@ -164,7 +164,7 @@ class TTYInputSequenceParser
 	void ParseDCS(const char *s, size_t l);
 	size_t TryParseAsWinTermEscapeSequence(const char *s, size_t l);
 	size_t TryUnwrappWinDoubleEscapeSequence(const char *s, size_t l);
-	size_t ReadUTF8InHex(const char *s, wchar_t *uni_char);
+	bool ReadUTF8InHex(const char *s, size_t length, wchar_t *uni_char);
 	size_t TryParseAsITerm2EscapeSequence(const char *s, size_t l);
 	size_t TryParseAsKittyEscapeSequence(const char *s, size_t l);
 	size_t ParseEscapeSequence(const char *s, size_t l);

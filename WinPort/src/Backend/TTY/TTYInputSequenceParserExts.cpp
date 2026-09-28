@@ -1,5 +1,9 @@
 #include <stdarg.h>
 #include <string>
+#include <array>
+#include <limits>
+#include <cerrno>
+#include <cstdlib>
 #include <base64.h>
 #include <utils.h>
 #include "TTYInputSequenceParser.h"
@@ -520,59 +524,82 @@ size_t TTYInputSequenceParser::TryUnwrappWinDoubleEscapeSequence(const char *s, 
 	return n;
 }
 
-size_t TTYInputSequenceParser::ReadUTF8InHex(const char *s, wchar_t *uni_char)
+bool TTYInputSequenceParser::ReadUTF8InHex(const char *s, size_t length, wchar_t *uni_char)
 {
-	unsigned char bytes[4] = {0};
-	int num_bytes = 0;
-	size_t i;
-	for (i = 0;; i += 2) {
-		if (!isdigit(s[i]) && (s[i] < 'a' || s[i] > 'f')) break;
-		if (!isdigit(s[i + 1]) && (s[i + 1] < 'a' || s[i + 1] > 'f')) break;
-		sscanf(s + i, "%2hhx", &bytes[num_bytes]);
-		num_bytes++;
+	*uni_char = 0;
+	// Non-text keys may carry an empty character field.
+	if (!length) return true;
+	if (length > 8 || (length & 1)) return false;
+	unsigned char bytes[4]{};
+	for (size_t i = 0; i < length; ++i) {
+		unsigned int digit;
+		if (s[i] >= '0' && s[i] <= '9') digit = s[i] - '0';
+		else if (s[i] >= 'a' && s[i] <= 'f') digit = s[i] - 'a' + 10;
+		else if (s[i] >= 'A' && s[i] <= 'F') digit = s[i] - 'A' + 10;
+		else return false;
+		bytes[i / 2] = (bytes[i / 2] << 4) | digit;
 	}
-
-	if (num_bytes == 1) {
-		*uni_char = bytes[0];
-	} else if (num_bytes == 2) {
-		*uni_char = ((bytes[0] & 0x1F) << 6) | (bytes[1] & 0x3F);
-	} else if (num_bytes == 3) {
-		*uni_char = ((bytes[0] & 0x0F) << 12) | ((bytes[1] & 0x3F) << 6) | (bytes[2] & 0x3F);
-	} else if (num_bytes == 4) {
-		*uni_char = ((bytes[0] & 0x07) << 18) | ((bytes[1] & 0x3F) << 12) | ((bytes[2] & 0x3F) << 6) | (bytes[3] & 0x3F);
+	const size_t count = length / 2;
+	uint32_t value;
+	if (count == 1 && bytes[0] < 0x80) value = bytes[0];
+	else if (count == 2 && bytes[0] >= 0xc2 && bytes[0] <= 0xdf) value = bytes[0] & 0x1f;
+	else if (count == 3 && bytes[0] >= 0xe0 && bytes[0] <= 0xef) value = bytes[0] & 0x0f;
+	else if (count == 4 && bytes[0] >= 0xf0 && bytes[0] <= 0xf4) value = bytes[0] & 0x07;
+	else return false;
+	for (size_t i = 1; i < count; ++i) {
+		if ((bytes[i] & 0xc0) != 0x80) return false;
+		value = (value << 6) | (bytes[i] & 0x3f);
 	}
-
-	return i;
+	if ((count == 3 && value < 0x800) || (count == 4 && value < 0x10000)
+			|| value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff)) return false;
+	*uni_char = wchar_t(value);
+	return true;
 }
 
 size_t TTYInputSequenceParser::TryParseAsITerm2EscapeSequence(const char *s, size_t l)
 {
-	/*
-	fprintf(stderr, "iTerm2 parsing: ");
-	for (size_t i = 0; i < l && s[i] != '\0'; i++) {
-		fprintf(stderr, "%c", s[i]);
+	// A key event contains at most four small fields. Bound incomplete frames too.
+	size_t end = 0;
+	while (end < l && end < 256 && s[end] != 7) ++end;
+	if (end == 256) return TTY_PARSED_BADSEQUENCE;
+	if (end == l) return TTY_PARSED_WANTMORE;
+	const size_t len = end + 1;
+	if (end < 9 || memcmp(s, "]1337;", 6) != 0 || s[7] != ';'
+			|| (s[6] != 'f' && s[6] != 'd' && s[6] != 'u')) return TTY_PARSED_BADSEQUENCE;
+
+	std::array<std::string, 4> fields;
+	size_t field_count = 0;
+	for (size_t start = 8;;) {
+		if (field_count == fields.size()) return TTY_PARSED_BADSEQUENCE;
+		size_t stop = start;
+		while (stop < end && s[stop] != ';') ++stop;
+		fields[field_count++].assign(s + start, stop - start);
+		if (stop == end) break;
+		start = stop + 1;
 	}
-	fprintf(stderr, "\n");
-	*/
-
-	// protocol spec:
-	// https://gitlab.com/gnachman/iterm2/-/issues/7440#note_129307021
-
-	size_t len = 0;
-	while (1) {
-		if (len >= l)
-			return TTY_PARSED_WANTMORE;
-		if (s[len] == 7)
-			break;
-		len++;
+	const auto ReadNumber = [](const std::string &field, unsigned int &value) {
+		if (field.empty() || field[0] < '0' || field[0] > '9') return false;
+		char *tail = nullptr;
+		errno = 0;
+		unsigned long parsed = strtoul(field.c_str(), &tail, 0);
+		if (errno == ERANGE || tail != field.c_str() + field.size()
+				|| parsed > std::numeric_limits<unsigned int>::max()) return false;
+		value = static_cast<unsigned int>(parsed);
+		return true;
+	};
+	unsigned int flags = 0, keycode = 0;
+	wchar_t uni_char = 0, unmodified_char = 0;
+	if (!ReadNumber(fields[0], flags) || !flags) return TTY_PARSED_BADSEQUENCE;
+	--flags;
+	if (s[6] == 'f') {
+		if (field_count != 1) return TTY_PARSED_BADSEQUENCE;
+	} else {
+		if (field_count < 3 || !ReadUTF8InHex(fields[1].data(), fields[1].size(), &uni_char)
+				|| !ReadNumber(fields[2], keycode)) return TTY_PARSED_BADSEQUENCE;
+		if (field_count == 4
+				&& !ReadUTF8InHex(fields[3].data(), fields[3].size(), &unmodified_char)) return TTY_PARSED_BADSEQUENCE;
+		if ((flags & 4) && field_count != 4) return TTY_PARSED_BADSEQUENCE;
 	}
-	len++;
-
-	unsigned int flags = 0;
-	unsigned int flags_length = 0;
-	sscanf(s + 8, "%i%n", &flags, &flags_length); // 8 is a fixed length of "]1337;d;"
-
-	flags -= 1;
 	unsigned int flags_win = 0;
 
 	// Flags changed event: esc ] 1337 ; f ; flags ^G
@@ -645,20 +672,13 @@ size_t TTYInputSequenceParser::TryParseAsITerm2EscapeSequence(const char *s, siz
 		return len;
 	}
 
-	wchar_t uni_char;
-	size_t i = ReadUTF8InHex(s + 8 + flags_length + 1, &uni_char); // 8 is a fixed length of "]1337;d;"
-
-	unsigned int keycode = 0;
-	unsigned int keycode_length = 0;
-	sscanf(s + 8 + flags_length + 1 + i + 1, "%i%n", &keycode, &keycode_length);
-
 	unsigned int vkc = 0;
 
 	// On MacOS, characters from the third level layout are entered while Option is pressed.
 	// So workaround needed for Alt+letters quick search to work
 	if (flags  & 4) { // Left Option is pressed? (right Option is mapped to right Control)
 		// read unicode char value from "ignoring-modifiers-except-shift"
-		ReadUTF8InHex(s + 8 + flags_length + 1 + i + 1 + keycode_length + 1, &uni_char);
+		uni_char = unmodified_char;
 		vkc = VK_UNASSIGNED;
 	}
 
