@@ -167,6 +167,8 @@ int FileList::FileNameToPluginItem(const wchar_t *Name, PluginPanelItem *pi)
 
 void FileList::FileListToPluginItem(FileListItem *fi, PluginPanelItem *pi)
 {
+	*pi = {};
+	pi->FindData.dwUnixMode = fi->FileMode;
 	pi->FindData.lpwszFileName = wcsdup(fi->strName);
 	pi->FindData.nFileSize = fi->FileSize;
 	pi->FindData.nPhysicalSize = fi->PhysicalSize;
