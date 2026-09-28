@@ -167,9 +167,20 @@ int FileList::FileNameToPluginItem(const wchar_t *Name, PluginPanelItem *pi)
 
 void FileList::FileListToPluginItem(FileListItem *fi, PluginPanelItem *pi)
 {
+	FileListToPluginItemView(fi, pi);
+	pi->FindData.lpwszFileName = wcsdup(fi->strName);
+	if (fi->UserData && (fi->UserFlags & PPIF_USERDATA)) {
+		DWORD Size = *(DWORD *)fi->UserData;
+		pi->UserData = (DWORD_PTR)malloc(Size);
+		memcpy((void *)pi->UserData, (void *)fi->UserData, Size);
+	}
+}
+
+void FileList::FileListToPluginItemView(FileListItem *fi, PluginPanelItem *pi)
+{
 	*pi = {};
 	pi->FindData.dwUnixMode = fi->FileMode;
-	pi->FindData.lpwszFileName = wcsdup(fi->strName);
+	pi->FindData.lpwszFileName = const_cast<wchar_t *>(fi->strName.CPtr());
 	pi->FindData.nFileSize = fi->FileSize;
 	pi->FindData.nPhysicalSize = fi->PhysicalSize;
 	pi->FindData.dwFileAttributes = fi->FileAttr;
@@ -186,12 +197,7 @@ void FileList::FileListToPluginItem(FileListItem *fi, PluginPanelItem *pi)
 	pi->CustomColumnNumber = fi->CustomColumnNumber;
 	pi->Description = fi->DizText;	// BUGBUG???
 
-	if (fi->UserData && (fi->UserFlags & PPIF_USERDATA)) {
-		DWORD Size = *(DWORD *)fi->UserData;
-		pi->UserData = (DWORD_PTR)malloc(Size);
-		memcpy((void *)pi->UserData, (void *)fi->UserData, Size);
-	} else
-		pi->UserData = fi->UserData;
+	pi->UserData = fi->UserData;
 
 	pi->CRC32 = fi->CRC32;
 	pi->Reserved[0] = pi->Reserved[1] = 0;

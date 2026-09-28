@@ -421,6 +421,8 @@ public:
 	static void ReadPanelModes(ConfigReader &cfg_reader);
 	static int FileNameToPluginItem(const wchar_t *Name, PluginPanelItem *pi);
 	static void FileListToPluginItem(FileListItem *fi, PluginPanelItem *pi);
+	// Borrowed fields: valid while fi is alive; never pass to FreePluginPanelItem.
+	static void FileListToPluginItemView(FileListItem *fi, PluginPanelItem *pi);
 	static void FreePluginPanelItem(PluginPanelItem *pi);
 	size_t FileListToPluginItem2(FileListItem *fi, PluginPanelItem *pi);
 	static void PluginToFileListItem(PluginPanelItem *pi, FileListItem *fi);

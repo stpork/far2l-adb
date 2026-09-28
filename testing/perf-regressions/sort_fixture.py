@@ -32,7 +32,7 @@ api=section('far2l/far2sdk/farplug-wide.h','struct FAR_FIND_DATA\n','enum PANELI
 glue=r'''
 FileListItem::FileListItem()=default;FileListItem::~FileListItem()=default;
 void apiFreeFindData(FAR_FIND_DATA *p) {++releases;free(p->lpwszFileName);}
-struct FileList {static void FileListToPluginItem(FileListItem*,PluginPanelItem*);static void FreePluginPanelItem(PluginPanelItem*);};
+struct FileList {static void FileListToPluginItemView(FileListItem*,PluginPanelItem*);static void FileListToPluginItem(FileListItem*,PluginPanelItem*);static void FreePluginPanelItem(PluginPanelItem*);};
 struct PluginStub {int Compare(void*,const PluginPanelItem *a,const PluginPanelItem *b,int) {
     ++comparisons;int r=wcscmp(a->FindData.lpwszFileName,b->FindData.lpwszFileName);return (r>0)-(r<0);
 }};

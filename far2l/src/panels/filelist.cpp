@@ -380,19 +380,14 @@ int _cdecl SortList(const void *el1, const void *el2)
 		return SPtr1->SortGroup < SPtr2->SortGroup ? -1 : 1;
 
 	if (hSortPlugin) {
-		DWORD SaveFlags1, SaveFlags2;
-		SaveFlags1 = SPtr1->UserFlags;
-		SaveFlags2 = SPtr2->UserFlags;
-		SPtr1->UserFlags = SPtr2->UserFlags = 0;
-		PluginPanelItem pi1, pi2;
-		FileList::FileListToPluginItem(SPtr1, &pi1);
-		FileList::FileListToPluginItem(SPtr2, &pi2);
-		SPtr1->UserFlags = SaveFlags1;
-		SPtr2->UserFlags = SaveFlags2;
+		PluginPanelItem pi1{}, pi2{};
+		FileList::FileListToPluginItemView(SPtr1, &pi1);
+		FileList::FileListToPluginItemView(SPtr2, &pi2);
+		// Compare historically sees only selection flags and borrowed user data.
+		pi1.Flags = SPtr1->Selected ? PPIF_SELECTED : 0;
+		pi2.Flags = SPtr2->Selected ? PPIF_SELECTED : 0;
 		int RetCode =
 				CtrlObject->Plugins.Compare(hSortPlugin, &pi1, &pi2, ListSortMode + (SM_UNSORTED - UNSORTED));
-		FileList::FreePluginPanelItem(&pi1);
-		FileList::FreePluginPanelItem(&pi2);
 
 		if (RetCode != -2)
 			return RetCode * ListSortOrder;
