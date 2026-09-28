@@ -2642,15 +2642,8 @@ void ShellFileTransfer::Do()
 
 		if (_Stopwatch != 0 && BytesWritten == _CopyBuffer.Size) {
 			_Stopwatch = GetProcessUptimeMSec() - _Stopwatch;
-			if (_Stopwatch < 100) {
-				if (_CopyBuffer.Size < _CopyBuffer.Capacity) {
-					_CopyBuffer.Size = std::min(_CopyBuffer.Size * 2, _CopyBuffer.Capacity);
-					fprintf(stderr, "CopyPieceSize increased to %d\n", _CopyBuffer.Size);
-				}
-			} else if (_Stopwatch >= 1000 && _CopyBuffer.Size > (int)COPY_PIECE_MINIMAL) {
-				_CopyBuffer.Size = std::max(_CopyBuffer.Size / 2, (DWORD)COPY_PIECE_MINIMAL);
-				fprintf(stderr, "CopyPieceSize decreased to %d\n", _CopyBuffer.Size);
-			}
+			_CopyBuffer.Size = _BufferSizer.Observe(_CopyBuffer.Size, _CopyBuffer.Capacity,
+					std::max<clock_t>(_Stopwatch, 1));
 		}
 
 		if (ShowTotalCopySize)

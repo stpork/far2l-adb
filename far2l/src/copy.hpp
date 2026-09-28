@@ -33,6 +33,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include "CopyBufferSizer.hpp"
 #include "dizlist.hpp"
 #include "udlist.hpp"
 #include "flink.hpp"
@@ -125,6 +126,7 @@ class ShellFileTransfer
 	bool _LastWriteWasHole = false;
 	bool _Done             = false;
 	bool _UseCOW;
+	CopyBufferSizer _BufferSizer;
 	std::unique_ptr<ShellCopyFileExtendedAttributes> _XAttrCopyPtr;
 
 	void Undo();
