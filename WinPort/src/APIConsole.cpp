@@ -587,6 +587,8 @@ extern "C" {
 		std::mutex mtx;
 		std::vector<WCHAR *> id2str;
 		std::map<const WCHAR *, COMP_CHAR, Cmp> str2id;
+		size_t payload_bytes = 0;
+		enum : size_t { MaxEntries = 65536, MaxPayloadBytes = 16 * 1024 * 1024, MaxSequenceLength = 1024 };
 	} s_composite_chars;
 
 	WINPORT_DECL(CompositeCharRegister,COMP_CHAR,(const WCHAR *lpSequence))
@@ -598,11 +600,20 @@ extern "C" {
 			return lpSequence[0];
 		}
 
+		// Keep existing IDs and lookup pointers valid for the entire process.
+		// On exhaustion display the base character instead of evicting live entries.
+		const COMP_CHAR fallback = static_cast<uint32_t>(lpSequence[0]);
+		size_t length = 0;
+		while (length <= s_composite_chars.MaxSequenceLength && lpSequence[length]) ++length;
+		if (length > s_composite_chars.MaxSequenceLength) return fallback;
+		const size_t bytes = (length + 1) * sizeof(WCHAR);
 		std::lock_guard<std::mutex> lock(s_composite_chars.mtx);
 		auto it = s_composite_chars.str2id.find(lpSequence);
 		if (it != s_composite_chars.str2id.end()) {
 			return it->second | COMPOSITE_CHAR_MARK;
 		}
+		if (s_composite_chars.id2str.size() >= s_composite_chars.MaxEntries
+				|| bytes > s_composite_chars.MaxPayloadBytes - s_composite_chars.payload_bytes) return fallback;
 		wchar_t *wd = wcsdup(lpSequence);
 		try {
 			if (!wd)
@@ -610,14 +621,20 @@ extern "C" {
 
 			const COMP_CHAR id = COMP_CHAR(s_composite_chars.id2str.size());
 			s_composite_chars.id2str.emplace_back(wd);
-			s_composite_chars.str2id.emplace(wd, id);
+			try {
+				s_composite_chars.str2id.emplace(wd, id);
+			} catch (...) {
+				s_composite_chars.id2str.pop_back();
+				throw;
+			}
+			s_composite_chars.payload_bytes+= bytes;
 			return id | COMPOSITE_CHAR_MARK;
 
 		} catch (std::exception &e) {
 			fprintf(stderr, "%s: %s for '%ls'\n", __FUNCTION__, e.what(), lpSequence);
 			free(wd);
 		}
-		return 0;
+		return fallback;
 	}
 
 	WINPORT_DECL(CompositeCharLookup,const WCHAR *,(COMP_CHAR CompositeChar))
