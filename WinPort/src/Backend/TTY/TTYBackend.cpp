@@ -438,7 +438,7 @@ void TTYBackend::WriterThread()
 			}
 
 			if (ae.output)
-				DispatchOutput(tty_out);
+				DispatchOutput(tty_out, ae);
 
 			if (ae.title_changed) {
 				tty_out.ChangeTitle(StrWide2MB(g_winport_con_out->GetTitle()));
@@ -572,14 +572,24 @@ void TTYBackend::DispatchTermResized(TTYOutput &tty_out)
 }
 
 //#define LOG_OUTPUT_COUNT
-void TTYBackend::DispatchOutput(TTYOutput &tty_out)
+void TTYBackend::DispatchOutput(TTYOutput &tty_out, const AsyncEvent &ae)
 {
+	const bool resized = _cur_width != _prev_width || _cur_height != _prev_height;
+	const bool full = resized || ae.full_output;
+	const int first_row = full ? 0 : std::max(0, std::min(int(_cur_height), ae.dirty_top));
+	const int end_row = full ? int(_cur_height)
+			: std::max(0, std::min(int(_cur_height), ae.dirty_bottom + 1));
 	_cur_output.resize(size_t(_cur_width) * _cur_height);
+	_prev_output.resize(_cur_output.size());
 
-	COORD data_size = {CheckedCast<SHORT>(_cur_width), CheckedCast<SHORT>(_cur_height) };
-	COORD data_pos = {0, 0};
-	SMALL_RECT screen_rect = {0, 0, CheckedCast<SHORT>(_cur_width - 1), CheckedCast<SHORT>(_cur_height - 1)};
-	g_winport_con_out->Read(&_cur_output[0], data_size, data_pos, screen_rect);
+	// Read whole dirty rows to retain wide/composite-cell context at rectangle edges.
+	if (_cur_width && first_row < end_row) {
+		COORD data_size = {CheckedCast<SHORT>(_cur_width), CheckedCast<SHORT>(_cur_height)};
+		COORD data_pos = {0, CheckedCast<SHORT>(first_row)};
+		SMALL_RECT screen_rect = {0, CheckedCast<SHORT>(first_row), CheckedCast<SHORT>(_cur_width - 1),
+				CheckedCast<SHORT>(end_row - 1)};
+		g_winport_con_out->Read(_cur_output.data(), data_size, data_pos, screen_rect);
+	}
 #ifdef LOG_OUTPUT_COUNT
 	unsigned long printed_count = 0, printed_skipable = 0;
 #endif
@@ -593,7 +603,7 @@ void TTYBackend::DispatchOutput(TTYOutput &tty_out)
 			tty_out.WriteLine(cur_line, _cur_width);
 		}
 
-	} else for (unsigned int y = 0; y < _cur_height; ++y) {
+	} else for (int y = first_row; y < end_row; ++y) {
 		const CHAR_INFO *cur_line = &_cur_output[size_t(y) * _cur_width];
 		const CHAR_INFO *prev_line = &_prev_output[size_t(y) * _prev_width];
 
@@ -628,19 +638,22 @@ void TTYBackend::DispatchOutput(TTYOutput &tty_out)
 				const int move_cursor_weight = tty_out.WeightOfHorizontalMoveCursor(y + 1, x + 1);
 				print_skipped = (move_cursor_weight >= 0 && skipped_weight <= (unsigned int)move_cursor_weight);
 			}
+			unsigned int span_end = x + 1;
+			while (span_end < _cur_width && Modified(span_end)) ++span_end;
 			if (print_skipped) {
-				tty_out.WriteLine(&cur_line[skipped_start], x + 1 - skipped_start);
+				tty_out.WriteLine(&cur_line[skipped_start], span_end - skipped_start);
 #ifdef LOG_OUTPUT_COUNT
 				printed_skipable+= x - skipped_start;
 #endif
 			} else {
 				tty_out.MoveCursorLazy(y + 1, x + 1);
-				tty_out.WriteLine(&cur_line[x], 1);
+				tty_out.WriteLine(&cur_line[x], span_end - x);
 			}
 #ifdef LOG_OUTPUT_COUNT
-			printed_count++;
+			printed_count+= span_end - x;
 #endif
-			skipped_start = x + 1;
+			skipped_start = span_end;
+			x = span_end - 1;
 			skipped_weight = 0;
 		}
 	}
@@ -652,7 +665,11 @@ void TTYBackend::DispatchOutput(TTYOutput &tty_out)
 #endif
 	_prev_width = _cur_width;
 	_prev_height = _cur_height;
-	_prev_output.swap(_cur_output);
+	if (_cur_width && first_row < end_row) {
+		std::copy(_cur_output.begin() + size_t(first_row) * _cur_width,
+				_cur_output.begin() + size_t(end_row) * _cur_width,
+				_prev_output.begin() + size_t(first_row) * _cur_width);
+	}
 
 	UCHAR cursor_height = 1;
 	bool cursor_visible = false;
@@ -728,6 +745,14 @@ void TTYBackend::OnConsoleOutputUpdated(const SMALL_RECT *areas, size_t count)
 {
 	std::unique_lock<std::mutex> lock(_async_mutex);
 	_ae.output = true;
+	if (!areas || !count) {
+		_ae.full_output = true;
+	} else for (size_t i = 0; i < count; ++i) {
+		if (areas[i].Top <= areas[i].Bottom && areas[i].Left <= areas[i].Right) {
+			_ae.dirty_top = std::min(_ae.dirty_top, int(areas[i].Top));
+			_ae.dirty_bottom = std::max(_ae.dirty_bottom, int(areas[i].Bottom));
+		}
+	}
 	_async_cond.notify_all();
 }
 

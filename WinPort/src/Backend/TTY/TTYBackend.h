@@ -108,6 +108,8 @@ class TTYBackend : IConsoleOutputBackend, ITTYInputSpecialSequenceHandler, IFar2
 	{
 		bool term_resized : 1;
 		bool output : 1;
+		bool full_output : 1;
+		int dirty_top = 32767, dirty_bottom = -1;
 		bool title_changed : 1;
 		bool far2l_interact : 1;
 		bool go_background : 1;
@@ -135,7 +137,7 @@ class TTYBackend : IConsoleOutputBackend, ITTYInputSpecialSequenceHandler, IFar2
 	void GetWinSize(struct winsize &w);
 	void ChooseSimpleClipboardBackend();
 	void DispatchTermResized(TTYOutput &tty_out);
-	void DispatchOutput(TTYOutput &tty_out);
+	void DispatchOutput(TTYOutput &tty_out, const AsyncEvent &ae);
 	void DispatchFar2lInteract(TTYOutput &tty_out);
 	void DispatchOSC52ClipSet(TTYOutput &tty_out);
 	void DispatchImagesProbe(TTYOutput &tty_out);
