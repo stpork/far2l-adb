@@ -227,6 +227,17 @@ bool CrossPlatformVideoDecoder::DecodeViaFFmpegCLI(const std::string& path, Imag
 
 	pid_t pid = 0;
 	int spawn_res = posix_spawnp(&pid, "ffmpeg", &actions, nullptr, const_cast<char* const*>(argv), environ);
+#ifdef __APPLE__
+    // Finder launches need not inherit the user's Homebrew PATH.
+    if (spawn_res == ENOENT) {
+        const char* paths[] = {"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"};
+        for (const char* executable : paths) {
+            spawn_res = posix_spawn(&pid, executable, &actions, nullptr,
+                                   const_cast<char* const*>(argv), environ);
+            if (spawn_res != ENOENT) break;
+        }
+    }
+#endif
 	posix_spawn_file_actions_destroy(&actions);
 	close(pipefd[1]);
 

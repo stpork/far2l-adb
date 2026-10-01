@@ -82,6 +82,15 @@ std::vector<std::shared_ptr<ImageDecoder>> DecoderFactory::CreateDecoders()
 	CreateTiffDecoder(backends);
 	CreateCrossPlatformVideoDecoders(backends);
 
+#if PREVIEW_HAS_NATIVE
+    // The setting chooses priority, not availability. Keep system codecs as a
+    // fallback when optional cross-platform codecs are absent or reject a file.
+    if (!g_settings.NativeImplementation()) {
+        CreateMacDecoders(backends);
+        CreateMacVideoDecoders(backends);
+    }
+#endif
+
 	decoders.push_back(std::make_shared<FallbackImageDecoder>(std::move(backends)));
 	return decoders;
 }

@@ -133,26 +133,15 @@ ninja
 ninja install
 
 FIXIN="$SD/packaging/osx/FixupBundle.cmake.in"
-ICU_LIB="$(brew --prefix icu4c 2>/dev/null)/lib"
-ICU_IGN="libicudata.78.dylib;libicuuc.78.dylib;libicui18n.78.dylib;libicuio.78.dylib;libicutu.78.dylib;libicutest.78.dylib"
 if [[ -f "$FIXIN" ]]; then
     sed -e 's/@APP_NAME@/far2l/g' \
-        -e 's|"" IGNORE_ITEM "python;python3;python3.8;Python;.Python")|"${DIRS}" IGNORE_ITEM "python;python3;python3.8;Python;.Python;'"$ICU_IGN"'")|' \
-        -e 's|^fixup_bundle|set(DIRS "/opt/homebrew/lib" "'"$ICU_LIB"'")\
-fixup_bundle|' \
         -e 's|/usr/bin/codesign -s |/usr/bin/codesign --force -s |' \
         "$FIXIN" > packaging/osx/FixupBundle.cmake
 fi
 
-# Pre-seed Frameworks/ with ICU dylibs, rewriting @loader_path → absolute paths
-FW="$PWD/install/far2l.app/Contents/Frameworks"
-mkdir -p "$FW"
-cp -n "$ICU_LIB"/libicu*.78.dylib "$FW/" 2>/dev/null || true
-for lib in "$FW"/libicu*.78.dylib; do
-    for dep in "$FW"/libicu*.78.dylib; do
-        install_name_tool -change "@loader_path/$(basename "$dep")" "$dep" "$lib" 2>/dev/null || true
-    done
-done
+# Dependencies are collected afresh by fixup_bundle; do not carry libraries
+# left by previous builds (in particular the old unconditional ICU copy).
+rm -rf "$PWD/install/far2l.app/Contents/Frameworks"
 
 find install/far2l.app -name CMakeFiles -type d -exec rm -rf {} + 2>/dev/null || true
 

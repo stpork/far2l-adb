@@ -254,3 +254,32 @@ The plugin automatically follows far2l's interface language setting.
 ## License
 
 Part of [far2l](https://github.com/elfmz/far2l). Licensed under the GNU General Public License v2 (GPLv2).
+
+### Compact builds and optional codecs
+
+`PREVIEW_FFMPEG` defaults to `OFF`: video uses AVFoundation first on macOS,
+then the optional `ffmpeg` executable. Linux uses the executable by default.
+Install it with `brew install ffmpeg` or `sudo apt install ffmpeg`. macOS also
+checks `/opt/homebrew/bin` and `/usr/local/bin` when Finder's PATH lacks Homebrew.
+Set `-DPREVIEW_FFMPEG=ON` to link the FFmpeg libraries instead (requires development
+packages when building and matching runtime libraries when running).
+
+`PREVIEW_HEIF` defaults to `ON`. If libheif headers are available at build time,
+the HEIC/HEIF/AVIF decoder loads libheif at runtime, without a mandatory library
+dependency. Install `brew install libheif`, or on Debian/Ubuntu install `libheif1`
+and the decoder plugins provided by your distribution. Failed loads are retried
+on the next decode. Building this backend requires `libheif-dev` on Debian/Ubuntu;
+installing libheif later cannot enable a backend compiled without its headers.
+On macOS, ImageIO/AVFoundation are tried first when “Use OS image codec” is
+enabled. When disabled, cross-platform decoders are tried first and the system
+decoders remain a fallback if an optional component is missing or decoding fails.
+
+`PREVIEW_WEBP` and `PREVIEW_TIFF` default to `ON` and link the corresponding
+libraries when detected. Disable them explicitly to build with fewer mandatory
+image dependencies. stb remains available for JPEG, PNG, BMP, GIF and its other
+supported formats. Missing optional video/HEIF support does not prevent Preview
+from loading or displaying these images.
+
+The macOS bundle includes only linked dependencies; it does not bundle FFmpeg or
+libheif in the default configuration. Debian packages derive mandatory shared
+library dependencies using `dpkg-shlibdeps` and suggest the optional tools.

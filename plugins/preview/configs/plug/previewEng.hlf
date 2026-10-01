@@ -185,7 +185,7 @@ $ #Configuration & Settings#
    #Auto-fit after rotate#   Recalculate fit after 90° rotation
    #Fast transforms#         Use fast integer scaling
    #Compact frame#           Minimal window frame border
-   #Use OS image codec#      Use hardware-accelerated system decoder
+   #Use OS image codec#      Prefer the system decoder on macOS
    #Default fit mode#        Auto, Fit Width, Fit Height, 100%
    #Image masks#             Space-separated wildcard extensions
 
@@ -243,7 +243,9 @@ $ #Troubleshooting & FAQ#
    extension is listed in "Image masks".
 
  #Large images take time to load#
-   Ensure "Use OS image codec" is enabled. On macOS, ImageIO
+   On macOS, "Use OS image codec" selects decoder priority. System
+   decoding remains a fallback when cross-platform codecs are missing
+   or fail. ImageIO
    automatically downsamples huge photos directly during decoding.
 
  #Selections lost#

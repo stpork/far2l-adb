@@ -35,7 +35,7 @@ bool MacOSImageDecoder::CanHandle(const char* ext) const
 	if (!ext || !*ext) return false;
 
 	const char* supported[] = {
-		"jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "tiff", "tif",
+		"jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "avif", "tiff", "tif",
 		"bmp", "ico", "cur", "xbm", "tga", "psd", "raw", "cr2", "nef", "dng",
 		nullptr
 	};
