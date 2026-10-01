@@ -44,6 +44,8 @@ and terminal graphics support for far2l.
    #Esc# / #F10#              Close viewer (selections kept on panel)
 
  #Window & System Actions#
+   #Cmd+C# / #Ctrl+C#        Copy displayed image to clipboard (macOS)
+                            Includes zoom, rotation and mirrors; copies the whole image.
    #F5# / #F#                 Toggle full-screen / compact frame
    #Enter# / #O#              Open file in default OS application
    #F9#                     Open Preview Configuration dialog

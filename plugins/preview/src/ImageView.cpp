@@ -3,6 +3,14 @@
 #include "Settings.h"
 #include "PreviewLog.h"
 #include "decoder/ImageDecoder.h"
+#ifdef __APPLE__
+#include "ImageClipboard.h"
+
+bool ImageView::CopyToClipboard() const
+{
+	return CopyImageToClipboard(ReadyImage());
+}
+#endif
 
 #define SETIMG_INITALLY_ASSUMED_SPEED    65536
 #define SETIMG_DELAY_BASELINE_MSEC       256

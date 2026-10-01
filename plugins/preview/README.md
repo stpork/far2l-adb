@@ -29,6 +29,7 @@ Supports macOS, Linux, and BSD operating systems.
   - **Pan**: Arrow keys, 1-pixel micro-step pan, and interactive mouse click-and-drag.
   - **Rotation & Mirror**: 90° clockwise/counter-clockwise, fine 1° rotation, horizontal flip, and vertical flip.
   - **EXIF Auto-Orientation**: Automatically normalizes image orientation based on camera orientation metadata tags.
+  - **Image clipboard on macOS**: In the image viewer, `Cmd+C`, `Ctrl+C`, or `Ctrl+Insert` copies the whole rendered image as PNG/TIFF, including its current zoom, rotation, and mirrors. Works with both native and cross-platform codecs; terminal emulators must forward the shortcut to far2l.
 - **Far2l Panel Selection & Batch Culling**:
   - Mark (`Space`), unmark (`Backspace`), or toggle (`Ins`) files directly while viewing.
   - Selections automatically synchronize back to the active panel upon exit (`Esc` or `F10`), allowing immediate batch copying (`F5`), moving (`F6`), or deleting (`F8`).

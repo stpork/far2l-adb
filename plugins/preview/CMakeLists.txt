@@ -34,7 +34,8 @@ set(PREVIEW_OPT_DEFS "")
 set(PREVIEW_OPT_INCDIRS "")
 
 if(APPLE)
-    list(APPEND SOURCES src/decoder/ImageDecoder_mac.cpp src/decoder/VideoDecoder_mac.mm)
+    list(APPEND SOURCES src/decoder/ImageDecoder_mac.cpp src/decoder/VideoDecoder_mac.mm src/ImageClipboard_mac.mm)
+    find_library(APPKIT AppKit REQUIRED)
     find_library(FOUNDATION Foundation REQUIRED)
     find_library(IMAGEIO ImageIO REQUIRED)
     find_library(COREGRAPHICS CoreGraphics REQUIRED)
@@ -42,7 +43,7 @@ if(APPLE)
     find_library(ACCELERATE Accelerate REQUIRED)
     find_library(AVFOUNDATION AVFoundation REQUIRED)
     find_library(COREMEDIA CoreMedia REQUIRED)
-    set(PREVIEW_NATIVE_LIBS ${FOUNDATION} ${IMAGEIO} ${COREGRAPHICS} ${COREFOUNDATION} ${ACCELERATE} ${AVFOUNDATION} ${COREMEDIA})
+    set(PREVIEW_NATIVE_LIBS ${APPKIT} ${FOUNDATION} ${IMAGEIO} ${COREGRAPHICS} ${COREFOUNDATION} ${ACCELERATE} ${AVFOUNDATION} ${COREMEDIA})
 endif()
 
 # Soft-detect optional FFmpeg libraries on Linux/BSD

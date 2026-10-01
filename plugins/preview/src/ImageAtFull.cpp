@@ -173,6 +173,22 @@ static LONG_PTR WINAPI ImageDlgProc(HANDLE hDlg, int Msg, int Param1, LONG_PTR P
 		case DN_KEY:
 		{
 			ImageViewAtFull *iv = (ImageViewAtFull *)g_far.SendDlgMessage(hDlg, DM_GETDLGDATA, 0, 0);
+
+#ifdef __APPLE__
+			// Test the complete key before stripping modifiers (Ctrl+Ins must not select a file).
+			const auto copy_key = (Param2 & KEY_RCTRL) ? ((Param2 & ~KEY_RCTRL) | KEY_CTRL) : Param2;
+			if (copy_key == KEY_CTRLC || copy_key == (KEY_CTRL | 'c')
+					|| copy_key == KEY_CTRLINS || copy_key == KEY_CTRLNUMPAD0) {
+				if (!iv->CopyToClipboard()) {
+					WINPORT(DeleteConsoleImage)(NULL, WINPORT_IMAGE_ID);
+					const wchar_t *items[] = {g_settings.Msg(M_TITLE),
+						g_settings.Msg(M_FAILED_COPY), g_settings.Msg(M_OK)};
+					g_far.Message(g_far.ModuleNumber, FMSG_WARNING, nullptr, items, ARRAYSIZE(items), 1);
+					iv->ForceShow();
+				}
+				return TRUE;
+			}
+#endif
 			const bool shift = (((int)Param2) & KEY_SHIFT) != 0;
 			const int delta = shift ? 1 : 10;
 			const int key = (int)(Param2 & ~(KEY_SHIFT | KEY_CTRL | KEY_ALT));

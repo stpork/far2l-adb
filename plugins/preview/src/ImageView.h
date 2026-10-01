@@ -132,6 +132,9 @@ public:
 	// Preload image for compact frame mode (returns false on error)
 	bool Preload();
 	bool Reload();
+#ifdef __APPLE__
+	bool CopyToClipboard() const;
+#endif
 
 	// Get preferred dialog rectangle (for compact frame mode)
 	SMALL_RECT GetPreferredRect(const SMALL_RECT &screen_rect) const;
