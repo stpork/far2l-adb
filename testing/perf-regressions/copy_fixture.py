@@ -11,7 +11,6 @@ enum { FILE_FLAG_NO_BUFFERING=1, FILE_CURRENT=1 };
 namespace Msg { const wchar_t *CopyReadError=L"read",*CopyWriteError=L"write"; }
 struct ErrnoSaver:std::runtime_error { ErrnoSaver():std::runtime_error("I/O"){} };
 template<class T> T AlignPageUp(T n) { return (n+4095)&~T(4095); }
-uint64_t CurCopiedSize=0;
 struct FakeFile {
     std::vector<unsigned char> bytes;
     int64_t pos=0; size_t write_limit=SIZE_MAX;
@@ -32,6 +31,7 @@ struct ShellFileTransfer {
     unsigned char storage[65536]={};
     struct {char *Ptr; DWORD Size;} _CopyBuffer{(char*)storage,65536};
     struct {bool SPARSEFILES=false,USECOW=false;} _Flags;
+    struct {uint64_t CurCopiedSize=0;} _ProgressState;
     DWORD _DstFlags=0;
     bool _LastWriteWasHole=false;
     const wchar_t *_SrcName=L"src",*_strDestName=L"dst";

@@ -23,13 +23,17 @@ errno=ENOTSUP;return -1;
 struct ErrnoSaver {int e=errno;int Get(){return e;}};
 struct Name:std::string {using std::string::string;const std::string &GetMB()const{return *this;}};
 std::string Wide2MB(const char *s){return s;}
-struct Progress {bool Cancelled(){return false;}} progress;auto *CP=&progress;
+struct Progress {bool Cancelled(){return false;}} progress;
+struct CopyState {
+unsigned CurCopiedSize=0,TotalCopiedSize=0;bool ShowTotalCopySize=false;
+struct Progress *Progress=&progress;
+};
 enum{COPY_SUCCESS=1,COPY_CANCEL=2};
 struct Data {unsigned nFileSize=4;};
-void ProgressUpdate(bool,const Data&,const Name&){}
+void ProgressUpdate(CopyState&,bool,const Data&,const Name&){}
 int copy(const char *SrcName,const Name &strDestName,bool Append,bool Resume){
 struct {bool USECOW=true;} Flags;Data SrcData;
-unsigned CurCopiedSize=0,TotalCopiedSize=0;bool ShowTotalCopySize=false;
+CopyState ProgressState;
 try {
 '''+block+r'''
 return 42;}catch(ErrnoSaver &e){return -e.Get();}}
