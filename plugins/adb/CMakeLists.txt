@@ -42,13 +42,10 @@ target_include_directories(adb PRIVATE ${CMAKE_SOURCE_DIR}/WinPort)
 
 # Release optimizations
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    target_compile_options(adb PRIVATE -Os -fomit-frame-pointer)
-    if(APPLE)
-        add_custom_command(TARGET adb POST_BUILD
-            COMMAND strip -x "$<TARGET_FILE:adb>"
-            COMMENT "Stripping debug symbols from adb plugin"
-        )
-    else()
+    target_compile_options(adb PRIVATE -Os)
+    # macOS packaging archives DWARF separately and preserves local names for dladdr().
+    if(NOT APPLE)
+        target_compile_options(adb PRIVATE -fomit-frame-pointer)
         add_custom_command(TARGET adb POST_BUILD
             COMMAND strip --strip-unneeded "$<TARGET_FILE:adb>"
             COMMENT "Stripping debug symbols from adb plugin"

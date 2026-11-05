@@ -11,7 +11,7 @@ Usage: $0 [debug|release] [full] [dmg] [clean|clear]
 Commands:
   debug|release  Build the specified configuration (default: debug)
   full           Enable AWS, SMB, and NFS netrocks plugins
-  dmg            Package macOS DragNDrop DMG bundle
+  dmg            Also package a macOS DragNDrop DMG (a standalone .app is always prepared)
   clean|clear    When used alone, remove all build artifacts, junk, and caches.
                  When used with debug/release, clean the build directory first.
 EOF
@@ -19,7 +19,7 @@ EOF
 }
 
 clean_all() {
-    echo "Cleaning all build artifacts, temporary files, and caches..."
+    echo "Cleaning build artifacts, temporary files, and caches (preserving .symbols)..."
     rm -rf "$SD"/_debug "$SD"/_release "$SD"/_build "$SD"/build "$SD"/cmake-build-*
     rm -rf "$SD"/_CPack_Packages "$SD"/install "$SD"/install_manifest.txt "$SD"/*.dmg
     rm -rf "$SD"/.cache
@@ -29,10 +29,10 @@ clean_all() {
     rm -f "$SD"/far2l/far2l_askpass "$SD"/far2l/far2l_sudoapp "$SD"/far2l_askpass "$SD"/far2l_sudoapp "$SD"/far2l/far2ledit
 
     if git -C "$SD" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        git -C "$SD" clean -fdx
+        git -C "$SD" clean -fdx -e /.symbols/
     else
         find "$SD" \
-            \( -path '*/.git' -o -path '*/.vscode' \) -prune -o \
+            \( -path '*/.git' -o -path '*/.vscode' -o -path "$SD/.symbols" \) -prune -o \
             \( \
                 -name 'CMakeCache.txt' -o \
                 -name 'CMakeFiles' -o \
@@ -125,24 +125,17 @@ cmake -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" \
     -DCMAKE_INSTALL_RPATH=/opt/homebrew/lib \
     -DCMAKE_BUILD_RPATH=/opt/homebrew/lib \
     -DCMAKE_INSTALL_PREFIX=install \
+    -DFAR2L_SYMBOLS_DIR="${FAR2L_SYMBOLS_DIR:-$SD/.symbols}" \
     $NR_FLAGS ..
 ninja
 
-(( DMG )) || exit 0
+# Package a copy: preserve the original debug map and object files for dSYM generation.
+rm -rf "$PWD/package"
+export FAR2L_CODESIGN_CERT="${FAR2L_CODESIGN_CERT:--}"
+cmake --install . --component app --prefix "$PWD/package" --config "$TYPE"
+echo "Application: $PWD/package/far2l.app"
+echo "Debug symbols: ${FAR2L_SYMBOLS_DIR:-$SD/.symbols}"
 
-ninja install
-
-FIXIN="$SD/packaging/osx/FixupBundle.cmake.in"
-if [[ -f "$FIXIN" ]]; then
-    sed -e 's/@APP_NAME@/far2l/g' \
-        -e 's|/usr/bin/codesign -s |/usr/bin/codesign --force -s |' \
-        "$FIXIN" > packaging/osx/FixupBundle.cmake
+if (( DMG )); then
+    cpack -G DragNDrop -C "$TYPE"
 fi
-
-# Dependencies are collected afresh by fixup_bundle; do not carry libraries
-# left by previous builds (in particular the old unconditional ICU copy).
-rm -rf "$PWD/install/far2l.app/Contents/Frameworks"
-
-find install/far2l.app -name CMakeFiles -type d -exec rm -rf {} + 2>/dev/null || true
-
-FAR2L_CODESIGN_CERT=- cpack -G DragNDrop 2> >(grep -v "warning: changes being made to the file will invalidate the code signature" >&2)

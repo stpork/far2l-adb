@@ -157,6 +157,11 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fPIC -Wno-unused-function -D_FILE
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -std=c99 -fPIC -Wno-unused-function -D_FILE_OFFSET_BITS=64") #  -fsanitize=address
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
 set(CMAKE_C_FLAGS_RELEASE "-O2")
+if(APPLE)
+    # Keep the debug map until the macOS packaging step archives matching dSYMs.
+    string(APPEND CMAKE_CXX_FLAGS_RELEASE " -g")
+    string(APPEND CMAKE_C_FLAGS_RELEASE " -g")
+endif()
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     set(APP_DIR ${CMAKE_BINARY_DIR}/install)
@@ -721,9 +726,14 @@ add_subdirectory(man)
 add_subdirectory(bash-completion)
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(FAR2L_SYMBOLS_DIR "${CMAKE_SOURCE_DIR}/.symbols" CACHE PATH "Archive macOS dSYMs outside the application")
     set(FIXUP_SCRIPT packaging/osx/FixupBundle.cmake)
     configure_file(${FIXUP_SCRIPT}.in ${PROJECT_BINARY_DIR}/${FIXUP_SCRIPT} @ONLY)
-    install(DIRECTORY ${APP_DIR}/${APP_NAME}.app DESTINATION . USE_SOURCE_PERMISSIONS COMPONENT app EXCLUDE_FROM_ALL)
+    install(DIRECTORY ${APP_DIR}/${APP_NAME}.app DESTINATION . USE_SOURCE_PERMISSIONS
+        COMPONENT app EXCLUDE_FROM_ALL
+        PATTERN "CMakeFiles" EXCLUDE PATTERN "*.dSYM" EXCLUDE
+        PATTERN "Frameworks" EXCLUDE PATTERN "__pycache__" EXCLUDE)
     install(SCRIPT ${PROJECT_BINARY_DIR}/${FIXUP_SCRIPT} COMPONENT app EXCLUDE_FROM_ALL)
 endif()
 

@@ -136,6 +136,10 @@ static bool init_python()
     //config.utf8_mode = 1;
     config.user_site_directory = 1;
     config.install_signal_handlers = 1;
+#ifdef __APPLE__
+    // The plugin lives in a signed .app; imports must not add __pycache__ files.
+    config.write_bytecode = 0;
+#endif
 
     /* Set the program name before reading the configuration
        (decode byte string from the locale encoding).

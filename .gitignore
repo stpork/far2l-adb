@@ -30,6 +30,7 @@ far2l_sudoapp
 _debug/
 _release/
 .cache
+.symbols/
 far2ledit
 far2l/far2ledit
 

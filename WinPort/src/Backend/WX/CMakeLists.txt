@@ -53,7 +53,10 @@ if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     endif()
 endif()
 
-if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+if (CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND NEW_MACOS)
+    # wxPrinterSupport.cpp uses Cocoa/WebKit printing on this path.
+    find_package(wxWidgets REQUIRED core base)
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     find_package(wxWidgets REQUIRED core base adv html richtext)
 else()
     find_package(wxWidgets REQUIRED core base html richtext)

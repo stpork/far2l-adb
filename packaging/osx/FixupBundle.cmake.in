@@ -7,6 +7,14 @@ include(BundleUtilities)
 # STEP 1: manually find and fixup plugins files
 set(BU_CHMOD_BUNDLE_ITEMS TRUE)
 set(APP_INSTALL_DIR "${CMAKE_INSTALL_PREFIX}/@APP_NAME@.app")
+get_filename_component(APP_INSTALL_REAL "${APP_INSTALL_DIR}" REALPATH)
+get_filename_component(APP_BUILD_REAL "@APP_DIR@/@APP_NAME@.app" REALPATH)
+if(APP_INSTALL_REAL STREQUAL APP_BUILD_REAL)
+    message(FATAL_ERROR "Install the app to a separate prefix, for example --prefix @CMAKE_BINARY_DIR@/package")
+endif()
+if(CMAKE_INSTALL_DO_STRIP OR CPACK_STRIP_FILES)
+    message(FATAL_ERROR "Do not use install --strip or CPACK_STRIP_FILES: far2l needs local symbols for crash logs")
+endif()
 file(GLOB_RECURSE PLUGINS "${APP_INSTALL_DIR}/**/*.far-plug*" "${APP_INSTALL_DIR}/**/*.so")
 fixup_bundle("${APP_INSTALL_DIR}" "${PLUGINS}" "" IGNORE_ITEM "python;python3;python3.8;Python;.Python")
 
@@ -17,8 +25,21 @@ fixup_bundle("${APP_INSTALL_DIR}" "${PLUGINS}" "" IGNORE_ITEM "python;python3;py
 # that relatively point to main bundle's Frameworks.
 file(GLOB PLUGINDIRS "${APP_INSTALL_DIR}/Contents/MacOS/Plugins/*")
 foreach(PLUGINDIR ${PLUGINDIRS})
-	execute_process(COMMAND ln -s ../../../Frameworks "${PLUGINDIR}/Frameworks")
+	execute_process(COMMAND ln -sfn ../../../Frameworks "${PLUGINDIR}/Frameworks"
+        RESULT_VARIABLE SYMLINK_RESULT)
+    if(NOT SYMLINK_RESULT EQUAL 0)
+        message(FATAL_ERROR "Cannot create plugin Frameworks symlink")
+    endif()
 endforeach()
+
+# Archive symbols before removing debug-map entries from the packaged copy.
+execute_process(COMMAND "@Python3_EXECUTABLE@" "@CMAKE_SOURCE_DIR@/packaging/osx/prepare_symbols.py"
+    --app "${APP_INSTALL_DIR}" --symbols "@FAR2L_SYMBOLS_DIR@"
+    --config "${CMAKE_INSTALL_CONFIG_NAME}" --source "@CMAKE_SOURCE_DIR@"
+    RESULT_VARIABLE SYMBOLS_RESULT)
+if(NOT SYMBOLS_RESULT EQUAL 0)
+    message(FATAL_ERROR "macOS symbol preparation failed")
+endif()
 
 set(CODESIGN_CERT "$ENV{FAR2L_CODESIGN_CERT}")
 
@@ -26,5 +47,14 @@ IF("${CODESIGN_CERT} " STREQUAL " ")
 	message(STATUS "Not signing as FAR2L_CODESIGN_CERT undefined")
 ELSE()
 	message(STATUS "Signing ${APP_INSTALL_DIR} as ${CODESIGN_CERT}")
-	execute_process(COMMAND /usr/bin/codesign -s "${CODESIGN_CERT}" --deep -v "${APP_INSTALL_DIR}")
+	execute_process(COMMAND /usr/bin/codesign --force -s "${CODESIGN_CERT}" --deep -v "${APP_INSTALL_DIR}"
+        RESULT_VARIABLE SIGN_RESULT)
+    if(NOT SIGN_RESULT EQUAL 0)
+        message(FATAL_ERROR "macOS bundle signing failed")
+    endif()
+    execute_process(COMMAND /usr/bin/codesign --verify --deep --strict "${APP_INSTALL_DIR}"
+        RESULT_VARIABLE VERIFY_RESULT)
+    if(NOT VERIFY_RESULT EQUAL 0)
+        message(FATAL_ERROR "macOS bundle signature verification failed")
+    endif()
 ENDIF()
