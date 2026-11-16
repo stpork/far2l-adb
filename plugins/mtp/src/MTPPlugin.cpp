@@ -2,6 +2,7 @@
 #include "MTPDialogs.h"
 #include "MTPLog.h"
 #include "ProgressBatch.h"
+#include "ObjectReplacement.h"
 #include "lng.h"
 
 #include <IntStrConv.h>
@@ -28,7 +29,8 @@ using proto::kRootParent;
 
 // Aside-rename suffix for atomic-overwrite — PID-scoped to avoid clashes across plugin instances.
 std::string AsideName(const std::string& base) {
-    return base + ".far2l-tmp." + std::to_string(getpid());
+    static std::atomic<uint64_t> sequence{0};
+    return base + ".far2l-tmp." + std::to_string(getpid()) + "." + std::to_string(++sequence);
 }
 
 // Symmetric with ParseObjectToken — single source of truth for the OBJ token form.
@@ -1240,33 +1242,27 @@ int MTPPlugin::PutFiles(PluginPanelItem* panel_item, int items_number, int move,
                      storage_id = _current_storage_id, parent = _current_parent,
                      cancel_tok, cs, ebn, p_lastErr]
                     (ProgressTracker& tr) -> int {
-            if (needOverwriteDelete) {
-                const proto::ObjectEntry* existing = FindExistingByName(
-                    *ebn, fileName, storage_id);
-                if (existing) {
-                    auto del = _backend->Delete(existing->handle, /*recursive=*/true);
-                    if (!del.ok) DBG("upload-overwrite delete failed: %s — duplicate '%s' may appear\n",
-                                     del.message.c_str(), fileName.c_str());
-                    ebn->erase(existing->name);
+            const auto* existing = needOverwriteDelete
+                ? FindExistingByName(*ebn, fileName, storage_id) : nullptr;
+            auto up = ReplaceMtpObject(*_backend, existing, AsideName(fileName), [&]() {
+                if (isDir) {
+                    return UploadRecursive(localPath, fileName, storage_id, parent,
+                                           cancel_tok, cs, &tr);
                 }
-            }
-            proto::Status up;
-            if (isDir) {
-                up = UploadRecursive(localPath, fileName, storage_id, parent,
-                                     cancel_tok, cs, &tr);
-            } else {
-                up = _backend->Upload(localPath, fileName, storage_id, parent,
+                auto status = _backend->Upload(localPath, fileName, storage_id, parent,
                     [&tr, cs, name = fileName](uint64_t sent, uint64_t total) {
                         if (tr.Aborted()) cs->Cancel();
                         tr.Tick(sent, total, name);
                     }, cancel_tok);
-                if (up.ok) tr.CompleteFile(fsize);
-            }
+                if (status.ok) tr.CompleteFile(fsize);
+                return status;
+            });
             if (!up.ok) {
                 if (up.code != proto::ErrorCode::Cancelled) *p_lastErr = MapErrorToErrno(up);
                 return up.code == proto::ErrorCode::Cancelled ? ECANCELED : MapErrorToErrno(up);
             }
-            if (move) (void)RemoveLocalPathRecursively(localPath);
+            if (needOverwriteDelete) ebn->erase(fileName);
+            if (move && !RemoveLocalPathRecursively(localPath)) return EIO;
             return 0;
         };
         units.push_back(std::move(u));
@@ -2426,12 +2422,6 @@ bool MTPPlugin::ShiftF5CopyInPlace() {
                 tr.PinNearDone(it.new_name);
                 auto cp = _backend->CopyObject(it.handle, ctx.dst_storage, ctx.dst_parent);
                 if (!cp.ok && cp.code == proto::ErrorCode::Unsupported) {
-                    if (it.overwrite) {
-                        auto del = _backend->Delete((*ctx.dst_existing)[it.new_name].handle, /*recursive=*/true);
-                        if (!del.ok) DBG("Unsupported-fallback dst-existing delete failed for '%s': %s\n",
-                                         it.new_name.c_str(), del.message.c_str());
-                        ctx.dst_existing->erase(it.new_name);
-                    }
                     ctx.fallback->push_back({it.handle, it.stat, ctx.dst_storage,
                                              ctx.dst_parent, it.new_name, stats.size,
                                              std::max<uint64_t>(stats.count, 1)});
@@ -3135,13 +3125,22 @@ proto::Status MTPPlugin::UploadRecursive(const std::string& local_dir,
             final_status = proto::Status::Failure(proto::ErrorCode::Cancelled, "Cancelled by user");
             break;
         }
+        errno = 0;
         dirent* ent = readdir(dir);
-        if (!ent) break;
+        if (!ent) {
+            if (errno) final_status = proto::Status::Failure(proto::ErrorCode::Io,
+                "readdir failed: " + local_dir);
+            break;
+        }
         if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
 
         std::string child_path = local_dir + "/" + ent->d_name;
         struct stat ss{};
-        if (lstat(child_path.c_str(), &ss) != 0) continue;
+        if (lstat(child_path.c_str(), &ss) != 0) {
+            final_status = proto::Status::Failure(proto::ErrorCode::Io,
+                "lstat failed: " + child_path);
+            break;
+        }
 
         if (S_ISDIR(ss.st_mode)) {
             auto st = UploadRecursive(child_path, ent->d_name, storage_id, newParent,
@@ -3156,10 +3155,14 @@ proto::Status MTPPlugin::UploadRecursive(const std::string& local_dir,
                 }, token);
             if (st.ok) {
                 if (tr) tr->CompleteFile(fsize);
-            } else if (st.code != proto::ErrorCode::Cancelled) {
+            } else {
                 final_status = st;
                 break;
             }
+        } else {
+            final_status = proto::Status::Failure(proto::ErrorCode::Unsupported,
+                "Unsupported local file type: " + child_path);
+            break;
         }
     }
     closedir(dir);
@@ -3192,34 +3195,42 @@ proto::Status MTPPlugin::ManualCopyViaHostInline(uint32_t src_handle,
         tmp_root.c_str(), src_stat.name.c_str(),
         src_stat.is_dir ? 1 : 0, new_name.c_str());
 
-    proto::Status status = proto::OkStatus();
-
-    if (src_stat.is_dir) {
-        // Pull phase display-only: bytes/count credited during push (each byte traverses USB twice); tracker still drives current_file + per-file bar so dialog isn't frozen during libmtp's download half.
-        const std::string staging = tmp_root + "/" + src_stat.name;
-        tr.SetDisplayOnly(true);
-        status = DownloadRecursive(src_stat.storage_id, src_handle, staging, token, &tr);
-        tr.SetDisplayOnly(false);
-        tr.Reset();
-        if (status.ok) {
-            status = UploadRecursive(staging, new_name, dst_storage_id, dst_parent,
-                                     token, cancel_src, &tr);
-        }
-    } else {
-        const std::string staged = tmp_root + "/" + src_stat.name;
-        status = _backend->Download(src_handle, staged,
-            [&tr, cancel_src, name = src_stat.name](uint64_t sent, uint64_t fileTotal) {
+    const std::string staging = tmp_root + "/" + src_stat.name;
+    tr.SetDisplayOnly(true);
+    auto status = src_stat.is_dir
+        ? DownloadRecursive(src_stat.storage_id, src_handle, staging, token, &tr)
+        : _backend->Download(src_handle, staging,
+            [&tr, cancel_src, name = src_stat.name](uint64_t sent, uint64_t total) {
                 if (tr.Aborted() && cancel_src) cancel_src->Cancel();
-                tr.TickDisplayOnly(sent, fileTotal, name);
+                tr.TickDisplayOnly(sent, total, name);
             }, token);
-        if (status.ok) {
+    tr.SetDisplayOnly(false);
+    if (status.ok) {
+        auto children = _backend->ListChildren(dst_storage_id, dst_parent);
+        if (!children.ok) {
+            status = proto::Status::Failure(children.code, children.message);
+        } else {
+            const proto::ObjectEntry* existing = nullptr;
+            for (const auto& child : children.value) {
+                if (_backend->NamesEqual(dst_storage_id, child.name, new_name)) {
+                    existing = &child;
+                    break;
+                }
+            }
             tr.Reset();
-            status = _backend->Upload(staged, new_name, dst_storage_id, dst_parent,
-                [&tr, cancel_src, name = new_name](uint64_t sent, uint64_t fileTotal) {
-                    if (tr.Aborted() && cancel_src) cancel_src->Cancel();
-                    tr.Tick(sent, fileTotal, name);
-                }, token);
-            if (status.ok) tr.CompleteFile(src_stat.size);
+            status = ReplaceMtpObject(*_backend, existing, AsideName(new_name), [&]() {
+                if (src_stat.is_dir) {
+                    return UploadRecursive(staging, new_name, dst_storage_id, dst_parent,
+                                           token, cancel_src, &tr);
+                }
+                auto up = _backend->Upload(staging, new_name, dst_storage_id, dst_parent,
+                    [&tr, cancel_src, name = new_name](uint64_t sent, uint64_t total) {
+                        if (tr.Aborted() && cancel_src) cancel_src->Cancel();
+                        tr.Tick(sent, total, name);
+                    }, token);
+                if (up.ok) tr.CompleteFile(src_stat.size);
+                return up;
+            });
         }
     }
 
@@ -3288,76 +3299,42 @@ WorkUnit MTPPlugin::MakeDeviceCopyMoveUnit(const DeviceCopyItem& it,
         // dst_name = target_name (Rename intent) or stat.name (default).
         const std::string dst_name = it.target_name.empty() ? it.stat.name : it.target_name;
         const bool renaming = !it.target_name.empty() && it.target_name != it.stat.name;
-        uint32_t aside_handle = 0;
+        const proto::ObjectEntry* existing = nullptr;
         if (it.overwrite) {
-            const std::string aside = AsideName(dst_name);
-            auto rn = ctx.dst->_backend->Rename((*ctx.dst_existing)[dst_name].handle, aside);
-            if (rn.ok) {
-                aside_handle = (*ctx.dst_existing)[dst_name].handle;
+            auto found = ctx.dst_existing->find(dst_name);
+            if (found != ctx.dst_existing->end()) existing = &found->second;
+        }
+        auto st = ReplaceMtpObject(*ctx.dst->_backend, existing, AsideName(dst_name), [&]() {
+            // Rename before MoveObject so it lands at the requested name even
+            // when replacing a differently named object in the destination.
+            const bool pre_rename = renaming && ctx.move;
+            if (pre_rename) {
+                auto renamed = _backend->Rename(it.handle, dst_name);
+                if (!renamed.ok) return renamed;
+            }
+            tr.PinNearDone(dst_name);
+            proto::Status status;
+            if (ctx.move) {
+                status = _backend->MoveObject(it.handle, ctx.dst_storage, ctx.dst_parent);
             } else {
-                DBG("aside-rename failed for '%s': %s — falling back to direct delete (no rollback)\n",
-                    dst_name.c_str(), rn.message.c_str());
-                auto del = ctx.dst->_backend->Delete((*ctx.dst_existing)[dst_name].handle, /*recursive=*/true);
-                if (!del.ok) DBG("fallback delete also failed: %s\n", del.message.c_str());
+                auto copied = _backend->CopyObject(it.handle, ctx.dst_storage, ctx.dst_parent);
+                status = copied.ok ? proto::OkStatus()
+                    : proto::Status::Failure(copied.code, copied.message, copied.retryable);
+                if (copied.ok && renaming) {
+                    status = _backend->Rename(copied.value, dst_name);
+                }
             }
-            ctx.dst_existing->erase(dst_name);
-        }
-        // For Rename (no overwrite): pre-rename src in its current parent so MoveObject lands as target_name in dst with no name collision (target_name is free, src.name may collide). For F5 Copy, post-rename works.
-        if (renaming && !it.overwrite && ctx.move) {
-            auto pre = _backend->Rename(it.handle, it.target_name);
-            if (!pre.ok) {
-                *ctx.hard_err = pre;
-                tr.HaltBatch();
-                return MapErrorToErrno(pre);
+            if (!status.ok && pre_rename) {
+                auto restored = _backend->Rename(it.handle, it.stat.name);
+                if (!restored.ok) return restored;
             }
-        }
-        // CopyObject/MoveObject opaque (no progressfunc) — pin file bar near 100% so modal stays alive during call.
-        tr.PinNearDone(dst_name);
-        proto::Status st;
-        uint32_t copy_handle = 0;
-        if (ctx.move) {
-            st = _backend->MoveObject(it.handle, ctx.dst_storage, ctx.dst_parent);
-        } else {
-            auto cp = _backend->CopyObject(it.handle, ctx.dst_storage, ctx.dst_parent);
-            st = cp.ok ? proto::OkStatus()
-                       : proto::Status::Failure(cp.code, cp.message, cp.retryable);
-            if (cp.ok) copy_handle = cp.value;
-        }
+            return status;
+        });
         if (st.ok) {
-            // F5 Rename: post-rename the new copy.
-            if (renaming && !ctx.move && copy_handle != 0) {
-                auto rn = _backend->Rename(copy_handle, it.target_name);
-                if (!rn.ok) DBG("post-copy rename to '%s' failed: %s — copy retains libmtp-assigned name\n",
-                                it.target_name.c_str(), rn.message.c_str());
-            }
-            if (aside_handle) {
-                auto del = ctx.dst->_backend->Delete(aside_handle, /*recursive=*/true);
-                if (!del.ok) DBG("aside cleanup after success failed: %s — stale '%s.far2l-tmp.%d' remains\n",
-                                 del.message.c_str(), dst_name.c_str(), getpid());
-            }
+            ctx.dst_existing->erase(dst_name);
             return 0;
         }
-        // F6 Rename rollback: undo the pre-rename if the move itself failed.
-        if (renaming && !it.overwrite && ctx.move) {
-            auto rev = _backend->Rename(it.handle, it.stat.name);
-            if (!rev.ok) DBG("pre-rename rollback failed: %s — src is now '%s'\n",
-                             rev.message.c_str(), it.target_name.c_str());
-        }
-        if (aside_handle) {
-            auto rn = ctx.dst->_backend->Rename(aside_handle, dst_name);
-            if (!rn.ok) DBG("CRITICAL aside-restore failed: %s — '%s' now named '%s.far2l-tmp.%d', manual recovery needed\n",
-                            rn.message.c_str(), dst_name.c_str(), dst_name.c_str(), getpid());
-        }
         if (st.code == proto::ErrorCode::Unsupported) {
-            if (it.overwrite) {
-                auto kids = ctx.dst->_backend->ListChildren(ctx.dst_storage, ctx.dst_parent);
-                if (kids.ok) for (const auto& k2 : kids.value)
-                    if (k2.name == dst_name) {
-                        auto del = ctx.dst->_backend->Delete(k2.handle, /*recursive=*/true);
-                        if (!del.ok) DBG("Unsupported-fallback duplicate-clear delete failed: %s\n", del.message.c_str());
-                        break;
-                    }
-            }
             ctx.fallback->push_back({it.handle, it.stat, ctx.dst_storage,
                                      ctx.dst_parent, dst_name, stats.size,
                                      std::max<uint64_t>(stats.count, 1)});
@@ -3415,8 +3392,8 @@ proto::Status MTPPlugin::RunHostFallbackBatch(const std::vector<HostFallbackItem
             if (move) {
                 auto del = _backend->Delete(it.src_handle, /*recursive=*/true);
                 if (!del.ok) {
-                    DBG("RunHostFallbackBatch: delete-after-copy failed handle=%u msg=%s\n",
-                        it.src_handle, del.message.c_str());
+                    *fs = del;
+                    return MapErrorToErrno(del);
                 }
             }
             return 0;
