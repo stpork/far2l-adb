@@ -71,6 +71,11 @@ OpXfer::OpXfer(int op_mode, std::shared_ptr<IHost> &base_host, const std::string
 		IHost::Identity src_identity, dst_identity;
 		_base_host->GetIdentity(src_identity);
 		_dst_host->GetIdentity(dst_identity);
+		const bool src_local = src_identity.protocol.empty() || strcasecmp(src_identity.protocol.c_str(), "file") == 0;
+		const bool dst_local = dst_identity.protocol.empty() || strcasecmp(dst_identity.protocol.c_str(), "file") == 0;
+		_same_host = (src_local && dst_local) || (!src_identity.host.empty()
+			&& src_identity.protocol == dst_identity.protocol && src_identity.host == dst_identity.host
+			&& src_identity.port == dst_identity.port && src_identity.username == dst_identity.username);
 		if ( (!src_identity.host.empty() || strcasecmp(src_identity.protocol.c_str(), "file") == 0)
 		 && src_identity.protocol == dst_identity.protocol && src_identity.host == dst_identity.host
 		 && src_identity.port == dst_identity.port && src_identity.username == dst_identity.username) {
@@ -307,6 +312,9 @@ void OpXfer::Transfer()
 			_state.stats.current_paused = std::chrono::milliseconds::zero();
 		}
 
+		if (S_ISDIR(e.second.mode) || S_ISLNK(e.second.mode))
+			CheckDistinctFiles(e.first, path_dst);
+
 		FileInformation existing_file_info;
 		bool existing = false;
 		try {
@@ -393,6 +401,8 @@ void OpXfer::Transfer()
 				}
 			}
 
+			// Conflict handling can change path_dst (create a different name).
+			CheckDistinctFiles(e.first, path_dst);
 			if (_on_site_move) try {
 				_base_host->Rename(e.first, path_dst);
 				std::lock_guard<std::mutex> lock(_state.mtx);
@@ -505,6 +515,12 @@ fprintf(stderr, "!!!! copy mode !!!\n");
 
 }
 
+void OpXfer::CheckDistinctFiles(const std::string &source, const std::string &destination)
+{
+	if (_same_host && _base_host->IsSameFile(source, destination))
+		throw ProtocolError("Source and destination are the same file");
+}
+
 void OpXfer::EnsureProgressConsistency()
 {
 	if (_state.stats.file_complete > _state.stats.file_total) {
@@ -524,6 +540,9 @@ bool OpXfer::FileCopyLoop(const std::string &path_src, const std::string &path_d
 			file_complete = _dst_host->GetSize(path_dst);
 
 			ProgressStateUpdate psu(_state);
+			const auto previous = _state.stats.file_complete;
+			if (file_complete >= previous) _state.stats.all_complete+= file_complete - previous;
+			else _state.stats.all_complete-= previous - file_complete;
 			_state.stats.file_complete = file_complete;
 			EnsureProgressConsistency();
 		} else {
@@ -592,7 +611,7 @@ bool OpXfer::FileCopyLoop(const std::string &path_src, const std::string &path_d
 				}
 
 				unsigned long prev_bufsize = _io_buf.Size();
-				_io_buf.Desire(bufsize_optimal);
+				_io_buf.Desire(bufsize_optimal, false);
 
 				if (g_netrocks_verbosity > 0 && _io_buf.Size() != prev_bufsize) {
 					fprintf(stderr, "NetRocks: IO buffer size changed to %lu\n", (unsigned long)_io_buf.Size());
@@ -683,12 +702,7 @@ bool OpXfer::SymlinkCopy(const std::string &path_src, const std::string &path_ds
 		// /base/dir/copied/sym/link
 		// /some/destination/path/copied/sym/link
 
-		symlink_target.erase(0, _base_dir.size());
-		for (size_t i = _base_dir.size(); i < path_dst.size(); ++i) {
-			if (path_dst[i] == '/') {
-				symlink_target.insert(0, "../");
-			}
-		}
+		symlink_target = RelativeTransferTarget(path_dst, _dst_dir + symlink_target.substr(_base_dir.size()));
 	} else {
 		// target is relative: check if it doesnt point outside of copied directories tree
 		// ../../../some/relaive/path
@@ -729,8 +743,8 @@ bool OpXfer::SymlinkCopy(const std::string &path_src, const std::string &path_ds
 		[&] () mutable
 		{
 			try {
-				created = true;
 				_dst_host->SymlinkCreate(path_dst, symlink_target);
+				created = true;
 			} catch (ProtocolUnsupportedError &) {}
 		}
 	);

@@ -34,6 +34,7 @@ class CONTAINER {						\
 public:									\
 	operator RESOURCE() { return _res; }				\
 	RESOURCE operator ->() { return _res; }				\
+	RESOURCE Release() { RESOURCE res = _res; _res = {}; return res; } \
 	CONTAINER() = default;					\
 	CONTAINER(RESOURCE res) : _res(res) {;}			\
 	CONTAINER &operator= (RESOURCE res) { DELETER(_res); _res = res; return *this; } 	\

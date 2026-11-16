@@ -31,6 +31,7 @@ enum IPCCommand
 	IPC_FILE_PUT,
 	IPC_EXECUTE_COMMAND,
 	IPC_GET_REAL_PATH,
+	IPC_IS_SAME_FILE,
 };
 
 typedef PipeIPCEndpoint<IPCCommand> IPCEndpoint;
@@ -44,4 +45,4 @@ enum IPCProtocolInitStatus
 	IPC_PI_GENERIC_ERROR
 };
 
-#define IPC_VERSION_MAGIC  0xbabe0001
+#define IPC_VERSION_MAGIC  0xbabe0002

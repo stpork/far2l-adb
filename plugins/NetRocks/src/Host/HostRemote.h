@@ -90,6 +90,8 @@ public:
 
 	virtual std::string RealPath(const std::string &path);
 
+	virtual bool IsSameFile(const std::string &first, const std::string &second);
+
 	virtual std::shared_ptr<IDirectoryEnumer> DirectoryEnum(const std::string &path);
 	virtual std::shared_ptr<IFileReader> FileGet(const std::string &path, unsigned long long resume_pos = 0);
 	virtual std::shared_ptr<IFileWriter> FilePut(const std::string &path, mode_t mode, unsigned long long size_hint, unsigned long long resume_pos = 0);

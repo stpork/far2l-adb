@@ -439,6 +439,27 @@ std::shared_ptr<IDirectoryEnumer> ProtocolSFTP::DirectoryEnum(const std::string 
 	return enumer;
 }
 
+bool ProtocolSFTP::IsSameFile(const std::string &first, const std::string &second)
+{
+	char *a = sftp_canonicalize_path(_conn->sftp, first.c_str());
+	if (!a) {
+		// A dangling symlink can still be copied as a link.
+		if (sftp_get_error(_conn->sftp) == SSH_FX_NO_SUCH_FILE)
+			return NormalizeTransferPath(RealPath(first)) == NormalizeTransferPath(RealPath(second));
+		throw ProtocolError("realpath source", ssh_get_error(_conn->ssh));
+	}
+	std::string source(a);
+	free(a);
+	char *b = sftp_canonicalize_path(_conn->sftp, second.c_str());
+	if (!b) {
+		if (sftp_get_error(_conn->sftp) == SSH_FX_NO_SUCH_FILE) return false;
+		throw ProtocolError("realpath destination", ssh_get_error(_conn->ssh));
+	}
+	bool same = source == b;
+	free(b);
+	return same;
+}
+
 class SFTPFileIO
 {
 protected:
@@ -700,7 +721,8 @@ public:
 		if ( (rand() % 100) + 1 <= SIMULATED_WRITE_COMPLETE_FAILS_RATE)
 			throw ProtocolError("Simulated write-complete file error");
 #endif
-		// what?
+		if (_file && sftp_close(_file.Release()) != SSH_OK)
+			throw ProtocolError("close failed", ssh_get_error(_conn->ssh));
 	}
 };
 

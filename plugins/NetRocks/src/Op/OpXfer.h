@@ -17,6 +17,7 @@ class OpXfer : protected OpBase, public IBackgroundTask
 	XferDirection _direction;
 	IOBuffer _io_buf;
 	bool _smart_symlinks_copy;
+	bool _same_host = false;
 	bool _on_site_move = false;
 	bool _on_site_copy = false;
 	int _use_of_chmod;
@@ -29,6 +30,7 @@ class OpXfer : protected OpBase, public IBackgroundTask
 
 	void Rename(const std::set<std::string> &items);
 	void EnsureDstDirExists();
+	void CheckDistinctFiles(const std::string &source, const std::string &destination);
 	void Transfer();
 	void FileDelete(const std::string &path);
 	void DirectoryCopy(const std::string &path_dst, const FileInformation &info);

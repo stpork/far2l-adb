@@ -269,6 +269,18 @@ public:
   	}
 };
 
+bool HostLocal::IsSameFile(const std::string &first, const std::string &second)
+{
+	struct stat a{}, b{};
+	if (API(stat)(first.c_str(), &a) != 0 && API(lstat)(first.c_str(), &a) != 0)
+		throw ProtocolError("stat source failed", errno);
+	if (API(stat)(second.c_str(), &b) != 0 && API(lstat)(second.c_str(), &b) != 0) {
+		if (errno == ENOENT || errno == ENOTDIR) return false;
+		throw ProtocolError("stat destination failed", errno);
+	}
+	return a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+}
+
 std::shared_ptr<IDirectoryEnumer> HostLocal::DirectoryEnum(const std::string &path)
 {
 	return std::make_shared<HostLocalDirectoryEnumer>(path);
@@ -324,7 +336,8 @@ public:
 	{
 		while (len) {
 			ssize_t rv = API(write)(_fd, buf, len);
-			if (rv < 0 || (size_t)rv > len) {
+			if (rv < 0 && errno == EINTR) continue;
+			if (rv <= 0 || (size_t)rv > len) {
 				throw ProtocolError("write failed", errno);
 			}
 			len-= (size_t)rv;
@@ -334,15 +347,10 @@ public:
 
 	virtual void WriteComplete()
 	{
-/*
-#ifdef __APPLE__
-		if (fcntl(_fd, F_FULLFSYNC) == -1) {
-#else
-		if (fdatasync(_fd) == -1) {
-#endif
-			throw ProtocolError("sync failed", errno);
-		}
-*/
+		if (_fd == -1) return;
+		const int fd = _fd;
+		_fd = -1; // close may fail after releasing the descriptor; never close it twice.
+		if (API(close)(fd) != 0) throw ProtocolError("close failed", errno);
 	}
 };
 

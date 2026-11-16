@@ -5,6 +5,7 @@
 #endif
 #include "Erroring.h"
 #include "FileInformation.h"
+#include "../TransferPath.h"
 
 struct ExecFIFO_CtlMsg
 {
@@ -101,6 +102,12 @@ struct IProtocol
 	virtual std::string RealPath(const std::string &path)
 	{
 		return path;
+	}
+
+	// Called on one endpoint for two paths known to belong to that endpoint.
+	virtual bool IsSameFile(const std::string &first, const std::string &second)
+	{
+		return NormalizeTransferPath(RealPath(first)) == NormalizeTransferPath(RealPath(second));
 	}
 
 	virtual std::shared_ptr<IDirectoryEnumer> DirectoryEnum(const std::string &path) = 0;

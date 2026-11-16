@@ -644,6 +644,18 @@ std::string HostRemote::RealPath(const std::string &path)
 	return out;
 }
 
+bool HostRemote::IsSameFile(const std::string &first, const std::string &second)
+{
+	CheckReady();
+	SendCommand(IPC_IS_SAME_FILE);
+	SendString(CodepageLocal2Remote(first));
+	SendString(CodepageLocal2Remote(second));
+	RecvReply(IPC_IS_SAME_FILE);
+	bool same = false;
+	RecvPOD(same);
+	return same;
+}
+
 ////////////////////////////////////////
 
 
