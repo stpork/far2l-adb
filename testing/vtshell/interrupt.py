@@ -48,11 +48,20 @@ def exercise(shell, argv, generator, directory):
     try:
         os.write(fd, b"printf '__READY_%s__\\n' 'PTY'\n")
         read_until(fd, b'__READY_PTY__')
-        for index, (command, interrupted, status) in enumerate([
+        cases = [
                 ('true', False, 0), ('false', False, 1),
+                ('(exit 42)', False, 42),
                 ("while sleep 1; do :; done", True, 130),
                 ('true', False, 0),
-                ('sleep 30', True, 130), ('false', False, 1)]):
+                ('sleep 30', True, 130), ('false', False, 1)]
+        if Path(shell).name == 'zsh':
+            cases += [
+                ('unsetopt promptpercent; while sleep 1; do :; done', True, 1),
+                ('setopt promptpercent; while sleep 1; do :; done', True, 1),
+                ('unsetopt promptpercent promptsubst; sleep 30', True, 1),
+                ('setopt promptpercent promptsubst; sleep 30', True, 1),
+                ('true', False, 0)]
+        for index, (command, interrupted, status) in enumerate(cases):
             marker = f'pty{index}:'
             commands = subprocess.check_output([str(generator), marker], text=True)
             script = directory / 'command.sh'
@@ -62,12 +71,13 @@ def exercise(shell, argv, generator, directory):
             line = (f" . '{script}'; printf '\\033_far2l_%s%s\\007' "
                     f"'p' 'ty{index}:'\"$FARVTRESULT\";PS1=''\n")
             os.write(fd, line.encode())
-            read_until(fd, b'__START_COMMAND__')
+            started = read_until(fd, b'__START_COMMAND__')
+            assert b'too many arguments' not in started, started
             if interrupted:
                 # Wait for the external command to enter the foreground pgrp.
                 time.sleep(.15)
                 os.write(fd, b'\x03')
-            result = b'[0-9]+' if interrupted else str(status).encode()
+            result = b'[1-9][0-9]*' if interrupted else str(status).encode()
             read_until(fd, re.escape(f'\x1b_far2l_{marker}'.encode()) + result + b'\x07')
         print(f'{Path(shell).name}: normal, failed, interrupted and repeated commands PASS')
     finally:
