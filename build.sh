@@ -28,10 +28,8 @@ clean_all() {
     rm -f "$SD"/packaging/osx/FixupBundle.cmake "$SD"/packaging/osx/Setup.scpt
     rm -f "$SD"/far2l/far2l_askpass "$SD"/far2l/far2l_sudoapp "$SD"/far2l_askpass "$SD"/far2l_sudoapp "$SD"/far2l/far2ledit
 
-    if git -C "$SD" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        git -C "$SD" clean -fdx -e /.symbols/
-    else
-        find "$SD" \
+    # Delete known generated files, rather than every untracked source or note.
+    find "$SD" \
             \( -path '*/.git' -o -path '*/.vscode' -o -path "$SD/.symbols" \) -prune -o \
             \( \
                 -name 'CMakeCache.txt' -o \
@@ -52,16 +50,10 @@ clean_all() {
                 -name '*.so' -o \
                 -name '.DS_Store' -o \
                 -name '._*' -o \
-                -name '*~' -o \
-                -name '*.swp' -o \
-                -name '*.swo' -o \
-                -name '*.orig' -o \
-                -name '*.bak' -o \
                 -name '__pycache__' -o \
                 -name '*.pyc' -o \
                 -name '*.pyo' \
             \) -exec rm -rf {} + 2>/dev/null || true
-    fi
     echo "Cleanup complete."
 }
 
@@ -106,7 +98,7 @@ if [[ -f "$SD/CMakeCache.txt" ]]; then
         | xargs -0 rm -rf) || true
 fi
 
-DIR="_$(echo "$TYPE" | tr A-Z a-z)"
+DIR="$SD/_$(echo "$TYPE" | tr A-Z a-z)"
 (( CLEAN )) && rm -rf "$DIR"
 
 # Drop dir if a prior run used a non-Ninja generator
@@ -126,7 +118,7 @@ cmake -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" \
     -DCMAKE_BUILD_RPATH=/opt/homebrew/lib \
     -DCMAKE_INSTALL_PREFIX=install \
     -DFAR2L_SYMBOLS_DIR="${FAR2L_SYMBOLS_DIR:-$SD/.symbols}" \
-    $NR_FLAGS ..
+    $NR_FLAGS "$SD"
 ninja
 
 # Package a copy: preserve the original debug map and object files for dSYM generation.
