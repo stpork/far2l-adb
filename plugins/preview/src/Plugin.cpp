@@ -100,7 +100,7 @@ static ssize_t GetPanelItemsForView(const std::string &name, std::vector<std::pa
 
 	bool has_real_selection = false;
 	ssize_t cur = -1;
-	const auto &cur_fn = GetCurrentPanelItem();
+	const auto &cur_fn = name.empty() ? GetCurrentPanelItem() : name;
 	for (int i = 0; i < pi.ItemsNumber; ++i) {
 		const auto &fn_sel = GetPanelItem(FCTL_GETPANELITEM, i);
 		if (!fn_sel.first.empty() && fn_sel.first != "." && fn_sel.first != "..") {
@@ -160,7 +160,7 @@ static EXITED_DUE OpenPluginAtCurrentPanel(const std::string &name)
 	PanelInfo pi{};
 	g_far.Control(PANEL_ACTIVE, FCTL_GETPANELINFO, 0, (LONG_PTR)&pi);
 	if (pi.ItemsNumber > 0) {
-		if (ed == EXITED_DUE_ENTER) {
+		if (ed == EXITED_DUE_ENTER || ed == EXITED_DUE_ESCAPE) {
 			std::vector<bool> selection_to_apply;
 			selection_to_apply.reserve(pi.ItemsNumber);
 			for (int i = 0; i < pi.ItemsNumber; ++i) {

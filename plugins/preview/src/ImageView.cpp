@@ -1166,6 +1166,7 @@ void ImageView::Select()
 		_all_files[_cur_file].second = true;
 		DenoteState();
 	}
+	Iterate(true);
 }
 
 void ImageView::Deselect()
@@ -1174,6 +1175,7 @@ void ImageView::Deselect()
 		_all_files[_cur_file].second = false;
 		DenoteState();
 	}
+	Iterate(false);
 }
 
 void ImageView::ToggleSelection()

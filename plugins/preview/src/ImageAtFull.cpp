@@ -383,7 +383,7 @@ static EXITED_DUE ShowImageAtFullInternal(size_t initial_file, std::vector<std::
 		}
 
 		if (exit_code != EXITED_DUE_RESIZE) {
-			if (exit_code == EXITED_DUE_ENTER) {
+			if (exit_code == EXITED_DUE_ENTER || exit_code == EXITED_DUE_ESCAPE) {
 				if (selection) {
 					*selection = iv.GetSelection();
 				}

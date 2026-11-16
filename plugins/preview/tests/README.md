@@ -1,5 +1,8 @@
 # macOS image clipboard regression
 
+Run `python3 -B plugins/preview/tests/panel.py` for requested-file lookup,
+panel selection propagation and select/deselect navigation checks.
+
 Run `python3 -B plugins/preview/tests/image-safety.py` for ASan/UBSan regressions
 covering allocation failures, image-size limits, decoder failure/recovery, RGB and
 RGBA mirroring/rotation, scaling, and PNG decoding through the installed native

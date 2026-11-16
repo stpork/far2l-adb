@@ -5,11 +5,16 @@
 #include <cstdlib>
 #include <dlfcn.h>
 #include <spawn.h>
+#include <thread>
+#include <atomic>
+#include <chrono>
 #include <libheif/heif.h>
 
 static bool hideHeif = false;
 static bool incompleteHeif = false;
 static bool hideFFmpeg = false;
+static int blockedFFmpeg = 0;
+static std::atomic<pid_t> blockedPid{0};
 static int openLibraries = 0;
 static int heifAttempts = 0;
 static int ffmpegAttempts = 0;
@@ -35,12 +40,22 @@ static int TestSpawn(pid_t* pid, const char* path, const posix_spawn_file_action
                      const posix_spawnattr_t* attrs, char* const argv[], char* const env[])
 {
     ++ffmpegAttempts;
+    if (blockedFFmpeg) {
+        char* sleepArgs[] = {const_cast<char*>("/bin/sleep"), const_cast<char*>("30"), nullptr};
+        char* shellArgs[] = {const_cast<char*>("/bin/sh"), const_cast<char*>("-c"),
+                            const_cast<char*>("exec 1>&-; exec /bin/sleep 30"), nullptr};
+        int result = posix_spawn(pid, blockedFFmpeg == 1 ? "/bin/sleep" : "/bin/sh",
+                                 actions, attrs, blockedFFmpeg == 1 ? sleepArgs : shellArgs, env);
+        if (result == 0) blockedPid.store(*pid);
+        return result;
+    }
     return hideFFmpeg ? ENOENT : posix_spawn(pid, path, actions, attrs, argv, env);
 }
 static int TestSpawnp(pid_t* pid, const char* path, const posix_spawn_file_actions_t* actions,
                       const posix_spawnattr_t* attrs, char* const argv[], char* const env[])
 {
     ++ffmpegAttempts;
+    if (blockedFFmpeg) return TestSpawn(pid, path, actions, attrs, argv, env);
     return hideFFmpeg ? ENOENT : posix_spawnp(pid, path, actions, attrs, argv, env);
 }
 #define dlopen TestDlopen
@@ -102,6 +117,35 @@ int main(int argc, char** argv)
 #endif
     assert(video.Decode(argv[3], image, info, 64, nullptr));
     assert(image.Width() > 0 && image.Height() > 0);
+    for (int mode : {1, 2}) {
+        blockedFFmpeg = mode;
+        blockedPid.store(0);
+        DecodeCancelFlag stop{false};
+        std::atomic<bool> finished{false};
+        bool decoded = true;
+        std::thread worker([&] {
+            Image pending;
+            ImageDecodeInfo pendingInfo;
+            decoded = video.Decode(argv[3], pending, pendingInfo, 64, &stop);
+            finished.store(true);
+        });
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!blockedPid.load() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        stop.store(true);
+        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (!finished.load() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        bool promptCancellation = finished.load();
+        pid_t child = blockedPid.load();
+        if (!promptCancellation && child > 0) kill(child, SIGKILL);
+        worker.join();
+        assert(child > 0 && promptCancellation && !decoded);
+        assert(waitpid(child, nullptr, WNOHANG) == -1 && errno == ECHILD);
+    }
+    blockedFFmpeg = 0;
+    puts("FFmpeg cancellation before output and after stdout closes: passed");
 #if PREVIEW_HAS_NATIVE
     hideHeif = hideFFmpeg = true;
     heifAttempts = ffmpegAttempts = 0;

@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <cerrno>
+#include <poll.h>
 
 extern char **environ;
 
@@ -245,17 +246,30 @@ bool CrossPlatformVideoDecoder::DecodeViaFFmpegCLI(const std::string& path, Imag
 		close(pipefd[0]);
 		return false;
 	}
+	struct ChildGuard {
+		pid_t pid;
+		int fd;
+		~ChildGuard() {
+			if (fd >= 0) close(fd);
+			if (pid <= 0) return;
+			int result;
+			do { result = waitpid(pid, nullptr, WNOHANG); } while (result < 0 && errno == EINTR);
+			if (result == 0) {
+				kill(pid, SIGKILL);
+				do { result = waitpid(pid, nullptr, 0); } while (result < 0 && errno == EINTR);
+			}
+		}
+	} child{pid, pipefd[0]};
 
 	std::vector<uint8_t> buffer;
 	buffer.reserve(256 * 1024);
 	std::array<uint8_t, 65536> chunk;
-	bool cancelled = false;
-
 	while (true) {
-		if (DecodeCancelled(cancel)) {
-			cancelled = true;
-			break;
-		}
+		if (DecodeCancelled(cancel)) return false;
+		struct pollfd ready{child.fd, POLLIN, 0};
+		int polled = poll(&ready, 1, 50);
+		if (polled == 0 || (polled < 0 && errno == EINTR)) continue;
+		if (polled < 0 || (ready.revents & (POLLERR | POLLNVAL))) return false;
 		ssize_t bytesRead = read(pipefd[0], chunk.data(), chunk.size());
 		if (bytesRead > 0) {
 			buffer.insert(buffer.end(), chunk.data(), chunk.data() + bytesRead);
@@ -263,19 +277,27 @@ bool CrossPlatformVideoDecoder::DecodeViaFFmpegCLI(const std::string& path, Imag
 			break; // EOF
 		} else {
 			if (errno == EINTR) continue;
-			break;
+			return false;
 		}
 	}
-	close(pipefd[0]);
-
-	if (cancelled) {
-		kill(pid, SIGKILL);
-		waitpid(pid, nullptr, 0);
-		return false;
-	}
+	close(child.fd);
+	child.fd = -1;
 
 	int status = 0;
-	waitpid(pid, &status, 0);
+	for (;;) {
+		if (DecodeCancelled(cancel)) return false;
+		pid_t result = waitpid(pid, &status, WNOHANG);
+		if (result == pid) {
+			child.pid = 0;
+			break;
+		}
+		if (result < 0) {
+			if (errno == EINTR) continue;
+			return false;
+		}
+		poll(nullptr, 0, 50);
+	}
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) return false;
 
 	if (buffer.empty()) return false;
 
