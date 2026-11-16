@@ -100,6 +100,9 @@ public:
 
     // File existence check
     bool FileExists(const std::string &devicePath);
+    int SaveRemoteBackup(const std::string& destination, const std::string& aside);
+    int RestoreRemoteBackup(const std::string& aside, const std::string& destination,
+                            bool remove_partial);
     bool IsDirectory(const std::string &devicePath);
     // Single-roundtrip name list for collision pre-scan (replaces N+1 FileExists).
     void ListDirNames(const std::string &devicePath, std::unordered_set<std::string>& out);

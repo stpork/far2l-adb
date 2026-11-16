@@ -797,6 +797,7 @@ std::string ADBShell::runAdbProcess(const std::vector<std::string>& args, int ti
 }
 
 std::string ADBShell::runAdbProcessWithPty(const std::vector<std::string>& args, const std::function<void(const std::string&)>& on_chunk, const std::function<bool()>& abort_check, int idle_timeout_ms) {
+    _last_pty_exit = kPtyExitFailed;
     std::string adbPath = findAdbExecutable();
     if (adbPath.empty()) return "";
 
@@ -880,17 +881,17 @@ std::string ADBShell::runAdbProcessWithPty(const std::vector<std::string>& args,
     }
 
     int status = 0;
-    waitpid(pid, &status, 0);
+    pid_t waited;
+    do { waited = waitpid(pid, &status, 0); } while (waited < 0 && errno == EINTR);
     // kPtyExitKilled when we did the killing (abort or idle bound): that is a definite failure,
     // whereas -1 ("died on a signal, cause unknown") is the only case with no evidence at all and
     // is allowed to fall back to sniffing adb's output trailer.
-    _last_pty_exit.store(WIFEXITED(status) ? WEXITSTATUS(status)
-                                           : ((aborted || stalled) ? kPtyExitKilled : -1));
+    _last_pty_exit = (aborted || stalled) ? kPtyExitKilled
+        : (waited != pid ? kPtyExitFailed : (WIFEXITED(status) ? WEXITSTATUS(status) : -1));
     ADBUtils::TrimTrailingNewlines(output);
     return output;
 }
 
-std::atomic<int> ADBShell::_last_pty_exit{-1};
 
 std::string ADBShell::adbExecWithProgress(const std::vector<std::string>& args, const std::function<void(const std::string&)>& on_chunk, const std::function<bool()>& abort_check, int idle_timeout_ms) {
     return runAdbProcessWithPty(args, on_chunk, abort_check, idle_timeout_ms);

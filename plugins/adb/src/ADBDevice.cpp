@@ -879,7 +879,7 @@ bool ADBDevice::TransferSucceeded(int pty_exit, const std::string& result, bool 
 {
     if (pty_exit == 0) return true;
     if (pty_exit > 0) return false;
-    if (pty_exit == ADBShell::kPtyExitKilled) return false;   // we killed it: definitely not done
+    if (pty_exit < -1) return false; // cancellation, launch or wait failure
     return IsSuccessResult(result, is_push);
 }
 
@@ -1089,6 +1089,31 @@ int ADBDevice::MoveRemote(const std::string &srcDevicePath, const std::string &d
     const std::string out = RunAdbCommandWithProgress({"shell", sh}, [](const std::string&){}, abort_check);
     if (abort_check()) return ECANCELED;
     return MutationResultToErrno(ADBShell::lastPtyExit(), out);
+}
+
+int ADBDevice::SaveRemoteBackup(const std::string& destination, const std::string& aside) {
+    EnsureConnection();
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+    const auto backup = ADBUtils::ShellQuote(aside);
+    // Stale backups can outlive a process/PID. Never overwrite one with mv.
+    const auto output = RunShellCommand("[ ! -e " + backup + " ] && [ ! -L " + backup
+        + " ] && mv -- " + ADBUtils::ShellQuote(destination) + " " + backup);
+    return MutationResultToErrno(LastShellExitCode(), output);
+}
+
+int ADBDevice::RestoreRemoteBackup(const std::string& aside, const std::string& destination,
+                                    bool remove_partial) {
+    EnsureConnection();
+    if (int err = ADBUtils::CheckConnection(_connected)) return err;
+    const auto dst = ADBUtils::ShellQuote(destination);
+    // mv alone would put the saved directory *inside* a partial destination.
+    // Only copies/uploads may discard a partial output; a move can contain
+    // the only remaining copy of some source files.
+    std::string command = remove_partial ? "rm -rf -- " + dst + " && " : "";
+    command += "[ ! -e " + dst + " ] && [ ! -L " + dst + " ] && mv -- "
+        + ADBUtils::ShellQuote(aside) + " " + dst;
+    const auto output = RunShellCommand(command);
+    return MutationResultToErrno(LastShellExitCode(), output);
 }
 
 bool ADBDevice::FileExists(const std::string &devicePath) {

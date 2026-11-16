@@ -41,11 +41,12 @@ public:
 
     // Exit code from most recent shellCommand's END marker; -1 if unparseable (timeout / broken session).
     int lastExitCode() const { return _last_exit_code.load(); }
-    // Exit code of the most recent adbExecWithProgress() child process. kPtyExitKilled when we
+    // Exit code of this thread's most recent adbExecWithProgress() child. kPtyExitKilled when we
     // killed it ourselves (Esc, or the idle bound); -1 when it died on a signal we did not send,
-    // which is the only case where no status could be collected.
+    // kPtyExitFailed if the executable, PTY or child status could not be obtained.
     static constexpr int kPtyExitKilled = -2;
-    static int lastPtyExit() { return _last_pty_exit.load(); }
+    static constexpr int kPtyExitFailed = -3;
+    static int lastPtyExit() { return _last_pty_exit; }
     static std::string findAdbExecutable();
 
 private:
@@ -56,7 +57,8 @@ private:
     bool _is_running;
     std::string _last_error;
     std::atomic<int> _last_exit_code{-1};
-    static std::atomic<int> _last_pty_exit;
+    // Each caller must observe its own child result, including parallel panels.
+    static inline thread_local int _last_pty_exit = kPtyExitFailed;
 
     // Serializes shellCommand: write+read is one transaction, else callers cross-corrupt the pipe pair.
     std::mutex _shell_mutex;

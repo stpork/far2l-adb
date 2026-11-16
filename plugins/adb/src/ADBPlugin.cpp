@@ -4,6 +4,7 @@
 #include "ADBDialogs.h"
 #include "ADBLog.h"
 #include "ProgressBatch.h"
+#include "ObjectReplacement.h"
 #include "lng.h"
 
 namespace {
@@ -179,7 +180,8 @@ static std::string NormalizePosixPath(const std::string& p) {
 
 // Aside-rename suffix for atomic-overwrite. PID-scoped to avoid clashes.
 static std::string AsideName(const std::string& base) {
-	return base + ".far2l-tmp." + std::to_string(getpid());
+	static std::atomic<uint64_t> sequence{0};
+	return base + ".far2l-tmp." + std::to_string(getpid()) + "." + std::to_string(++sequence);
 }
 
 // Routes input: "adb:/abs"→ADB-abs, "/abs"→LOCAL, "rel"→ADB-rel, ""→ADB-cwd; strips trailing ':' (far2l plugin-format suffix), keeps bare "adb:".
@@ -886,7 +888,7 @@ bool ADBPlugin::CrossPanelCopyMoveSameDevice(bool move)
 			u.is_directory = isDir;
 			u.total_bytes = ut.total_bytes;
 			u.total_files = ut.total_files;
-			u.execute = [srcAdb, dstAdb, srcPath, dstPath, dstDirCap, ow, isDir,
+			u.execute = [srcAdb, dstAdb, srcPath, dstPath, dstDirCap, ow,
 			             item_use_as, only_newer_cap, move_cap, idx = i,
 			             fallback_ptr, lastErr_ptr](ProgressTracker& tr) -> int {
 				if (only_newer_cap) {
@@ -897,35 +899,19 @@ bool ADBPlugin::CrossPanelCopyMoveSameDevice(bool move)
 						return 0;
 					}
 				}
-				std::string aside;
-				bool have_aside = false;
-				if (ow) {
-					aside = AsideName(dstPath);
-					if (dstAdb->MoveRemoteAs(dstPath, aside) == 0) {
-						have_aside = true;
-					} else {
-						if (isDir) dstAdb->DeleteDirectory(dstPath);
-						else       dstAdb->DeleteFile(dstPath);
-					}
-				}
+				bool may_retry = false;
 				tr.PinNearDone();
-				int rc;
 				auto onAbort = [&tr]{ return tr.Aborted(); };
-				if (item_use_as) {
-					rc = move_cap ? srcAdb->MoveRemoteAs(srcPath, dstPath, onAbort)
-					              : srcAdb->CopyRemoteAs(srcPath, dstPath, onAbort);
-				} else {
-					rc = move_cap ? srcAdb->MoveRemote(srcPath, dstDirCap, onAbort)
-					              : srcAdb->CopyRemote(srcPath, dstDirCap, onAbort);
-				}
-				if (rc == 0) {
-					if (have_aside) {
-						if (isDir) dstAdb->DeleteDirectory(aside);
-						else       dstAdb->DeleteFile(aside);
+				const int rc = ReplaceAdbObject(*dstAdb, dstPath, AsideName(dstPath), ow, [&]() {
+					if (item_use_as) {
+						return move_cap ? srcAdb->MoveRemoteAs(srcPath, dstPath, onAbort)
+										: srcAdb->CopyRemoteAs(srcPath, dstPath, onAbort);
 					}
-					return 0;
-				}
-				if (have_aside) dstAdb->MoveRemoteAs(aside, dstPath);
+					return move_cap ? srcAdb->MoveRemote(srcPath, dstDirCap, onAbort)
+					              : srcAdb->CopyRemote(srcPath, dstDirCap, onAbort);
+				}, &may_retry, move_cap);
+				if (rc == 0) return 0;
+				if (!may_retry || tr.Aborted()) { *lastErr_ptr = rc; return rc; }
 				*lastErr_ptr = rc;
 				fallback_ptr->push_back(idx);
 				tr.MarkSkipped();  // primary skipped; fallback retries below
@@ -989,10 +975,6 @@ bool ADBPlugin::CrossPanelCopyMoveSameDevice(bool move)
 			u.total_files = ut.total_files;
 			u.execute = [srcAdb, dstAdb, isDir, move, needOverwrite,
 			             srcPath, tmpPath, dstPath, idxMap = std::move(ut.idx)](ProgressTracker& tr) -> int {
-				if (needOverwrite) {
-					if (isDir) dstAdb->DeleteDirectory(dstPath);
-					else       dstAdb->DeleteFile(dstPath);
-				}
 				auto onAbort = [&]() { return tr.Aborted(); };
 				auto displayCb = [&](int pct, const std::string& path) {
 					tr.TickDisplayOnly(pct, path);
@@ -1006,9 +988,10 @@ bool ADBPlugin::CrossPanelCopyMoveSameDevice(bool move)
 				auto pushCb = [&](int pct, const std::string& path) {
 					tr.Tick(pct, path, isDir ? LookupSubitemSize(idxMap, path) : 0);
 				};
-				int pushRc = isDir
-					? dstAdb->PushDirectory(tmpPath, dstPath, pushCb, onAbort)
+				int pushRc = ReplaceAdbObject(*dstAdb, dstPath, AsideName(dstPath), needOverwrite, [&]() {
+					return isDir ? dstAdb->PushDirectory(tmpPath, dstPath, pushCb, onAbort)
 					: dstAdb->PushFile(tmpPath, dstPath, pushCb, onAbort);
+				});
 				(void)RemoveLocalPathRecursively(tmpPath);
 				if (pushRc != 0) return pushRc;
 
@@ -1319,18 +1302,15 @@ bool ADBPlugin::ShiftF5CopyInPlace() {
 				time_t d = GetAdbMtime(*adb, plan[i].dst_path);
 				if (s > 0 && d > 0 && s <= d) continue;  // not newer
 			}
-			std::string aside; bool have_aside = false;
-			if (plan[i].overwrite) {
-				aside = AsideName(plan[i].dst_path);
-				if (adb->MoveRemoteAs(plan[i].dst_path, aside) == 0) have_aside = true;
-				else adb->DeleteFile(plan[i].dst_path);
-			}
-			const int rc = adb->CopyRemoteAs(plan[i].src_path, plan[i].dst_path);
+			bool may_retry = false;
+			const int rc = ReplaceAdbObject(*adb, plan[i].dst_path, AsideName(plan[i].dst_path),
+				plan[i].overwrite, [&]() {
+					return adb->CopyRemoteAs(plan[i].src_path, plan[i].dst_path);
+				}, &may_retry);
 			if (rc == 0) {
 				++okCount;
-				if (have_aside) adb->DeleteFile(aside);
 			} else {
-				if (have_aside) adb->MoveRemoteAs(aside, plan[i].dst_path);
+				if (!may_retry) { lastErr = rc; continue; }
 				lastErr = rc;
 				needFallback.push_back(i);
 			}
@@ -1359,24 +1339,13 @@ bool ADBPlugin::ShiftF5CopyInPlace() {
 					time_t d = GetAdbMtime(*adb, p.dst_path);
 					if (s > 0 && d > 0 && s <= d) { tr.MarkSkipped(); return 0; }
 				}
-				std::string aside; bool have_aside = false;
-				if (p.overwrite) {
-					aside = AsideName(p.dst_path);
-					if (adb->MoveRemoteAs(p.dst_path, aside) == 0) have_aside = true;
-					else if (p.is_dir) adb->DeleteDirectory(p.dst_path);
-					else               adb->DeleteFile(p.dst_path);
-				}
+				bool may_retry = false;
 				tr.PinNearDone();
-				const int rc = adb->CopyRemoteAs(p.src_path, p.dst_path,
-				                                 [&tr]{ return tr.Aborted(); });
-				if (rc == 0) {
-					if (have_aside) {
-						if (p.is_dir) adb->DeleteDirectory(aside);
-						else          adb->DeleteFile(aside);
-					}
-					return 0;
-				}
-				if (have_aside) adb->MoveRemoteAs(aside, p.dst_path);
+				const int rc = ReplaceAdbObject(*adb, p.dst_path, AsideName(p.dst_path), p.overwrite, [&]() {
+					return adb->CopyRemoteAs(p.src_path, p.dst_path, [&tr]{ return tr.Aborted(); });
+				}, &may_retry);
+				if (rc == 0) return 0;
+				if (!may_retry || tr.Aborted()) { *lastErr_ptr = rc; return rc; }
 				*lastErr_ptr = rc;
 				fallback_ptr->push_back(idx);
 				tr.MarkSkipped();  // primary didn't credit; fallback will retry
@@ -1420,7 +1389,7 @@ bool ADBPlugin::ShiftF5CopyInPlace() {
 				u.is_directory = isDir;
 				u.total_bytes = ut.total_bytes;
 				u.total_files = ut.total_files;
-				u.execute = [adb, isDir, srcPathCap, staged, dstPathCap, idxMap = std::move(ut.idx)](ProgressTracker& tr) -> int {
+				u.execute = [adb, isDir, overwrite = p.overwrite, srcPathCap, staged, dstPathCap, idxMap = std::move(ut.idx)](ProgressTracker& tr) -> int {
 					auto onAbort = [&]() { return tr.Aborted(); };
 					auto displayCb = [&](int pct, const std::string& path) {
 						tr.TickDisplayOnly(pct, path);
@@ -1434,9 +1403,10 @@ bool ADBPlugin::ShiftF5CopyInPlace() {
 					auto pushCb = [&, isDir](int pct, const std::string& path) {
 						tr.Tick(pct, path, isDir ? LookupSubitemSize(idxMap, path) : 0);
 					};
-					int pushRc = isDir
-						? adb->PushDirectory(staged, dstPathCap, pushCb, onAbort)
+					int pushRc = ReplaceAdbObject(*adb, dstPathCap, AsideName(dstPathCap), overwrite, [&]() {
+						return isDir ? adb->PushDirectory(staged, dstPathCap, pushCb, onAbort)
 						: adb->PushFile(staged, dstPathCap, pushCb, onAbort);
+					});
 					(void)RemoveLocalPathRecursively(staged);
 					return pushRc;
 				};
@@ -1620,27 +1590,14 @@ bool ADBPlugin::ShiftF6Rename() {
 			if (s > 0 && d > 0 && s <= d) return true;  // not newer → skip
 			// Otherwise proceed as overwrite.
 		}
-		// Atomic overwrite: aside-rename → rename → drop aside on ok / restore on fail.
-		const std::string aside = AsideName(dstPath);
-		const int aside_rc = _adbDevice->MoveRemoteAs(dstPath, aside);
-		if (aside_rc != 0) {
-			ADBDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
-			                           Lng(MRenameFailed),
-			                           Lng(MErrCouldNotMoveAside));
-			return true;
-		}
-		const int rc = runMv(srcPath, dstPath);
+		const int rc = ReplaceAdbObject(*_adbDevice, dstPath, AsideName(dstPath), true,
+			[&]() { return runMv(srcPath, dstPath); }, nullptr, true);
 		if (rc != 0) {
-			// Restore so user doesn't lose data.
-			_adbDevice->MoveRemoteAs(aside, dstPath);
 			ADBDialogs::MessageWrapped(FMSG_WARNING | FMSG_MB_OK,
-			                           Lng(MRenameFailed),
-			                           StrMB2Wide(strerror(rc)));
+				Lng(MRenameFailed), StrMB2Wide(strerror(rc)));
 			WINPORT(SetLastError)(rc);
 			return true;
 		}
-		if (it.is_dir) _adbDevice->DeleteDirectory(aside);
-		else           _adbDevice->DeleteFile(aside);
 		RefreshBothPanels();
 		return true;
 	}
@@ -2494,8 +2451,10 @@ int ADBPlugin::RunTransfer(PluginPanelItem *items, int itemsCount, bool is_uploa
 
 				int result;
 				if (is_upload) {
-					result = isDir ? adb->PushDirectory(localPath, devicePath)
+					result = ReplaceAdbObject(*adb, devicePath, AsideName(devicePath), adb->FileExists(devicePath), [&]() {
+						return isDir ? adb->PushDirectory(localPath, devicePath)
 					               : adb->PushFile(localPath, devicePath);
+					});
 				} else {
 					result = isDir ? adb->PullDirectory(devicePath, localPath)
 					               : adb->PullFile(devicePath, localPath);
@@ -2612,29 +2571,10 @@ int ADBPlugin::RunTransfer(PluginPanelItem *items, int itemsCount, bool is_uploa
 
 				int rc;
 				if (is_upload) {
-					// Aside-rename for atomic overwrite (pre-delete loses data on push fail).
-					std::string aside;
-					bool have_aside = false;
-					if (dst_exists) {
-						aside = AsideName(activeDevice);
-						if (adb->MoveRemoteAs(activeDevice, aside) == 0) {
-							have_aside = true;
-						} else {
-							if (isDir) adb->DeleteDirectory(activeDevice);
-							else       adb->DeleteFile(activeDevice);
-						}
-					}
-					rc = isDir
-						? adb->PushDirectory(activeLocal, activeDevice, cb, onAbort)
+					rc = ReplaceAdbObject(*adb, activeDevice, AsideName(activeDevice), dst_exists, [&]() {
+						return isDir ? adb->PushDirectory(activeLocal, activeDevice, cb, onAbort)
 						: adb->PushFile(activeLocal, activeDevice, cb, onAbort);
-					if (rc == 0) {
-						if (have_aside) {
-							if (isDir) adb->DeleteDirectory(aside);
-							else       adb->DeleteFile(aside);
-						}
-					} else if (have_aside) {
-						adb->MoveRemoteAs(aside, activeDevice);
-					}
+					});
 				} else {
 					rc = isDir
 						? adb->PullDirectory(activeDevice, activeLocal, cb, onAbort)
