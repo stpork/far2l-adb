@@ -104,6 +104,7 @@ const wchar_t *Settings::Msg(int msgId)
 		L"Display failed",                   // M_ERR_TERM_SEND
 		L"Invalid file",                     // M_ERR_BAD_FILE
 		L"Bad screen layout",                // M_ERR_BAD_GRID
+		L"Failed to copy image",             // M_FAILED_COPY
 	};
 	if (msgId >= 0 && msgId < (int)(sizeof(default_msgs)/sizeof(default_msgs[0]))) {
 		return default_msgs[msgId];

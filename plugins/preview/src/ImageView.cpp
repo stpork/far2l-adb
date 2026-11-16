@@ -2,6 +2,8 @@
 #include "ImageView.h"
 #include "Settings.h"
 #include "PreviewLog.h"
+#include <stdexcept>
+#include <new>
 #include "decoder/ImageDecoder.h"
 #ifdef __APPLE__
 #include "ImageClipboard.h"
@@ -55,7 +57,7 @@ bool ImageView::ReadImage()
 }
 
 bool ImageView::ReadImageInternal(int maxPixelSize)
-{
+try {
 	const bool use_orientation = g_settings.UseOrientation();
 
 	// If maxPixelSize is 0, decode at viewport size for efficiency
@@ -163,6 +165,19 @@ bool ImageView::ReadImageInternal(int maxPixelSize)
 	return true;
 }
 
+catch (const std::bad_alloc&) {
+	_scaled_image_scale = -1;
+	_base_dirty = true;
+	_fine_dirty = true;
+	_force_send = true;
+	_err_str = "Out of memory";
+	return false;
+}
+catch (const std::length_error&) {
+	_err_str = "Image too large";
+	return false;
+}
+
 void ImageView::CancelPrefetch()
 {
 	if (_prefetch_thread.joinable()) {
@@ -209,6 +224,7 @@ void ImageView::StartPrefetch()
 
 	_prefetch_cancel.store(false, std::memory_order_relaxed);
 	_prefetch_thread = std::thread([this, next_file, prev_file, need_next, need_prev, max_pixel_size]() {
+		try {
 		auto try_prefetch = [this, max_pixel_size](const std::string &file, PrefetchedImage &target) {
 			if (DecodeCancelled(&_prefetch_cancel) || DecodeCancelled(_cancel)) return;
 			auto decoder = DecoderFactory::FindDecoder(file);
@@ -235,6 +251,7 @@ void ImageView::StartPrefetch()
 		if (need_prev && !DecodeCancelled(&_prefetch_cancel) && !DecodeCancelled(_cancel)) {
 			try_prefetch(prev_file, _prefetch_prev);
 		}
+		} catch (const std::exception&) { /* optional cache stays invalid */ }
 	});
 }
 
@@ -266,6 +283,7 @@ void ImageView::RequestResolution(double target_scale, int max_pixel_size)
 	if (!decoder) return;
 	if (!decoder->SupportsDecodeScaling(file)) max_pixel_size = 0;
 	_fullres_thread = std::thread([this, file, decoder, max_pixel_size]() {
+		try {
 		Image tmp;
 		ImageDecodeInfo info;
 		if (!DecodeCancelled(&_fullres_cancel) &&
@@ -276,6 +294,7 @@ void ImageView::RequestResolution(double target_scale, int max_pixel_size)
 			_fullres_file = file;
 			_fullres_ready.store(true, std::memory_order_release);
 		}
+		} catch (const std::exception&) { _fullres_ready.store(false, std::memory_order_relaxed); }
 		_fullres_done.store(true, std::memory_order_release);
 	});
 }
@@ -588,7 +607,7 @@ static int ShiftPercentsToPixels(int &percents, int width, int limit)
 }
 
 bool ImageView::RenderImage()
-{
+try {
 	if (_render_file.empty()) {
 		_err_str = Wide2MB(g_settings.Msg(M_ERR_BAD_FILE));
 		return false;
@@ -691,6 +710,19 @@ bool ImageView::RenderImage()
 	_sent_mirror_h = _mirror_h;
 	_sent_mirror_v = _mirror_v;
 	return true;
+}
+
+catch (const std::bad_alloc&) {
+	_scaled_image_scale = -1;
+	_base_dirty = true;
+	_fine_dirty = true;
+	_force_send = true;
+	_err_str = "Out of memory";
+	return false;
+}
+catch (const std::length_error&) {
+	_err_str = "Image too large";
+	return false;
 }
 
 void ImageView::DenoteState(const char *stage)

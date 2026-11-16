@@ -4,6 +4,8 @@
 #include <thread>
 #include <atomic>
 #include <cstdint>
+#include <limits>
+#include <stdexcept>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -45,11 +47,17 @@ static bool ResizeLinearParallel(const unsigned char* src, int src_w, int src_h,
 
 	std::atomic<bool> ok{true};
 	std::vector<std::thread> workers;
-	workers.reserve((size_t)splits - 1);
-	for (int split = 1; split < splits; ++split) {
-		workers.emplace_back([&resize, &ok, split]() {
-			if (!stbir_resize_extended_split(&resize, split, 1)) ok.store(false, std::memory_order_relaxed);
-		});
+	try {
+		workers.reserve((size_t)splits - 1);
+		for (int split = 1; split < splits; ++split) {
+			workers.emplace_back([&resize, &ok, split]() {
+				if (!stbir_resize_extended_split(&resize, split, 1)) ok.store(false, std::memory_order_relaxed);
+			});
+		}
+	} catch (...) {
+		for (auto& worker : workers) worker.join();
+		stbir_free_samplers(&resize);
+		throw;
 	}
 	if (!stbir_resize_extended_split(&resize, 0, 1)) ok.store(false, std::memory_order_relaxed);
 	for (auto& worker : workers) worker.join();
@@ -75,12 +83,11 @@ void Image::MirrorH()
 
 void Image::MirrorV()
 {
-	for (int x = 0; x < _width; ++x) {
-		for (int i = 0; i < _height - 1 - i; ++i) {
-			for (unsigned char ch = 0; ch < _bytes_per_pixel; ++ch) {
-				std::swap(*Ptr(x, i, ch), *Ptr(x, _height - 1 - i, ch));
-			}
-		}
+	const size_t stride = size_t(_width) * _bytes_per_pixel;
+	for (int y = 0; y < _height / 2; ++y) {
+		auto first = _data.begin() + size_t(y) * stride;
+		auto opposite = _data.begin() + size_t(_height - 1 - y) * stride;
+		std::swap_ranges(first, first + stride, opposite);
 	}
 }
 
@@ -94,43 +101,30 @@ void Image::Swap(Image &another)
 
 void Image::Assign(const void *data, size_t size)
 {
-	assert(size <= _data.size() && "Image::Assign: source larger than allocated buffer");
+	if (size > _data.size()) throw std::length_error("Image::Assign exceeds buffer");
 	memcpy(_data.data(), data, size);
 }
 
 void Image::Resize(int width, int height, unsigned char bytes_per_pixel)
 {
-	assert(bytes_per_pixel == 3 || bytes_per_pixel == 4);
+	if (bytes_per_pixel != 3 && bytes_per_pixel != 4)
+		throw std::invalid_argument("Invalid image pixel format");
 
 	if (width <= 0 || height <= 0) {
-		_data.clear();
-		_data.shrink_to_fit();
-		_scratch_argb_src.clear();
-		_scratch_argb_src.shrink_to_fit();
-		_scratch_argb_dst.clear();
-		_scratch_argb_dst.shrink_to_fit();
+		std::vector<unsigned char>().swap(_data);
+		std::vector<uint8_t>().swap(_scratch_argb_src);
+		std::vector<uint8_t>().swap(_scratch_argb_dst);
 		_width = 0;
 		_height = 0;
 		return;
 	}
 
-	const size_t bytes_size = size_t(width) * size_t(height) * size_t(bytes_per_pixel);
-	if (bytes_size < size_t(width)) { // overflow
-		_data.clear();
-		_data.shrink_to_fit();
-		_width = 0;
-		_height = 0;
-		return;
-	}
-
-	try {
-		_data.resize(bytes_size);
-	} catch (...) {
-		_data.clear();
-		_width = 0;
-		_height = 0;
-		return;
-	}
+	if (size_t(width) > _data.max_size() / bytes_per_pixel / size_t(height))
+		throw std::length_error("Image dimensions exceed buffer limit");
+	const size_t bytes_size = size_t(width) * size_t(height) * bytes_per_pixel;
+	// Keep the previous image intact on failure and stop callers before they
+	// write pixels into an empty buffer. Decoder and view boundaries handle it.
+	_data.resize(bytes_size);
 	_width = width;
 	_height = height;
 	_bytes_per_pixel = bytes_per_pixel;
@@ -239,10 +233,10 @@ void Image::Scale(Image &dst, double scale, bool native_acceleration) const
 
 	// Cross-platform: stb_image_resize2 (SSE2/NEON SIMD, compiled in ImageDecoder_stb.cpp)
 	const stbir_pixel_layout layout = (_bytes_per_pixel == 4) ? STBIR_RGBA : STBIR_RGB;
-	ResizeLinearParallel(
+	if (!ResizeLinearParallel(
 		_data.data(), _width, _height, 0,
 		dst._data.data(), out_w, out_h, 0,
-		layout);
+		layout)) throw std::bad_alloc();
 }
 
 
@@ -386,9 +380,15 @@ void Image::RotateArbitrary(Image &dst, double angle_degrees, bool high_quality,
 		std::vector<std::thread> threads;
 		int y_start = 0;
 		int chunk = new_height / use_cpu_count;
-		for (int i = 0; i < use_cpu_count - 1; ++i) {
-			threads.emplace_back(rotate_y_range, y_start, y_start + chunk);
-			y_start += chunk;
+		try {
+			threads.reserve(use_cpu_count - 1);
+			for (int i = 0; i < use_cpu_count - 1; ++i) {
+				threads.emplace_back(rotate_y_range, y_start, y_start + chunk);
+				y_start += chunk;
+			}
+		} catch (...) {
+			for (auto& thread : threads) thread.join();
+			throw;
 		}
 		rotate_y_range(y_start, new_height);
 		for (auto &t : threads) t.join();

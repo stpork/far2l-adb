@@ -149,6 +149,10 @@ bool MacVideoStoryboardDecoder::Decode(const std::string& path, Image& out, Imag
 			CGImageRef cgImage = [gen copyCGImageAtTime:reqTime actualTime:&actualTime error:&err];
 
 			if (cgImage) {
+				struct ImageRelease {
+					CGImageRef image;
+					~ImageRelease() { CGImageRelease(image); }
+				} release{cgImage};
 				Image frame;
 				if (ExtractRGBFromCGImage(cgImage, cellW, cellH, frame)) {
 					frames.push_back(std::move(frame));
@@ -156,7 +160,6 @@ bool MacVideoStoryboardDecoder::Decode(const std::string& path, Image& out, Imag
 					if (std::isnan(actualSec) || actualSec < 0.0) actualSec = targetSec;
 					timecodes.push_back(VideoHelpers::FormatTimecode(actualSec));
 				}
-				CGImageRelease(cgImage);
 			} else {
 				// Duplicate previous frame or empty if decoding failed
 				if (!frames.empty()) {

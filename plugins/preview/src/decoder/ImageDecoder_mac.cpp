@@ -179,12 +179,15 @@ bool MacOSImageDecoder::Decode(const std::string& path, Image& out, ImageDecodeI
 		DBG("Native ImageIO failed to load image: %s", path.c_str());
 		return false;
 	}
+	struct ImageRelease {
+		CGImageRef image;
+		~ImageRelease() { CGImageRelease(image); }
+	} release{image};
 
 	// Extract RGB data
 	bool success = !DecodeCancelled(cancel) && ExtractRGB(image, out) && !DecodeCancelled(cancel);
 	DBG("Native ImageIO extraction success=%d, size=%zux%zu", success, CGImageGetWidth(image), CGImageGetHeight(image));
 
-	CGImageRelease(image);
 	info.fullResolution = success && out.Width() == info.sourceWidth && out.Height() == info.sourceHeight;
 	return success;
 }

@@ -1,5 +1,10 @@
 # macOS image clipboard regression
 
+Run `python3 -B plugins/preview/tests/image-safety.py` for ASan/UBSan regressions
+covering allocation failures, image-size limits, decoder failure/recovery, RGB and
+RGBA mirroring/rotation, scaling, and PNG decoding through the installed native
+and cross-platform backends. Allocation failure leaves the previous image intact.
+
 From the repository root, compile and run with the macOS SDK:
 
 ```sh

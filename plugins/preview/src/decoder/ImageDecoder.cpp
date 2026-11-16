@@ -7,6 +7,8 @@
 #include <cstring>
 #include <mutex>
 #include <utility>
+#include <stdexcept>
+#include <new>
 
 // Platform-specific function declarations
 #if PREVIEW_HAS_NATIVE
@@ -25,7 +27,7 @@ public:
 
 	bool Decode(const std::string& path, Image& out, ImageDecodeInfo& info,
 	            int maxPixelSize, const DecodeCancelFlag* cancel) override
-	{
+	try {
 		const std::string ext = ExifHelpers::GetExtension(path);
 
 		// Fast path: try backends that declare support for this extension
@@ -44,6 +46,9 @@ public:
 
 		return false;
 	}
+	catch (const std::bad_alloc&) { return false; }
+	catch (const std::length_error&) { return false; }
+
 
 	bool CanHandle(const char* ext) const override
 	{

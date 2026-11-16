@@ -285,10 +285,10 @@ bool CrossPlatformVideoDecoder::DecodeViaFFmpegCLI(const std::string& path, Imag
 		if (rgb) stbi_image_free(rgb);
 		return false;
 	}
+	std::unique_ptr<stbi_uc, decltype(&stbi_image_free)> pixels(rgb, &stbi_image_free);
 
 	out.Resize(w, h, 3);
 	out.Assign(rgb, static_cast<size_t>(w) * h * 3);
-	stbi_image_free(rgb);
 
 	info.sourceWidth = w;
 	info.sourceHeight = h;
