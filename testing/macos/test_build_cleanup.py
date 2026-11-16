@@ -35,6 +35,21 @@ class BuildCleanupTests(unittest.TestCase):
         self.assertFalse((self.repo / '_debug').exists())
         self.assertFalse((self.repo / 'cache/__pycache__').exists())
 
+    def test_failed_build_directory_creation_stops_before_cmake(self):
+        (self.repo / '_release').write_text('a file blocks the build directory')
+        bins = self.directory / 'bin'
+        bins.mkdir()
+        trace = self.directory / 'cmake-called'
+        for name, content in [('brew', 'exit 0'), ('cmake', 'touch "$CHECK_CMAKE_TRACE"; exit 2')]:
+            executable = bins / name
+            executable.write_text('#!/bin/sh\n' + content + '\n')
+            executable.chmod(0o755)
+        env = dict(os.environ, PATH=str(bins) + ':/usr/bin:/bin', CHECK_CMAKE_TRACE=str(trace))
+        result = subprocess.run(['/bin/bash', str(self.repo / 'build.sh'), 'release'],
+                                cwd=self.caller, env=env, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(trace.exists())
+
     def test_release_clean_is_relative_to_script(self):
         for parent in [self.repo, self.caller]:
             (parent / '_release').mkdir()

@@ -107,7 +107,8 @@ if [[ -f "$DIR/CMakeCache.txt" ]] && ! grep -q "^CMAKE_GENERATOR:INTERNAL=Ninja$
     rm -rf "$DIR"
 fi
 
-mkdir -p "$DIR" && cd "$DIR"
+mkdir -p "$DIR"
+cd "$DIR"
 
 # Always configure: a failed CMake run leaves CMakeCache.txt behind, but no
 # usable build graph.  Reconfiguring is also how CMake picks up source edits.
