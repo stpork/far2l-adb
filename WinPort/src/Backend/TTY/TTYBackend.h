@@ -21,6 +21,7 @@
 #include <atomic>
 #include <memory>
 #include <vector>
+#include <bitset>
 
 class TTYBackend : IConsoleOutputBackend, ITTYInputSpecialSequenceHandler, IFar2lInteractor, IOSC52Interactor
 {
@@ -110,6 +111,7 @@ class TTYBackend : IConsoleOutputBackend, ITTYInputSpecialSequenceHandler, IFar2
 		bool output : 1;
 		bool full_output : 1;
 		int dirty_top = 32767, dirty_bottom = -1;
+		std::bitset<32768> dirty_rows;
 		bool title_changed : 1;
 		bool far2l_interact : 1;
 		bool go_background : 1;

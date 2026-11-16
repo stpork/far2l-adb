@@ -583,11 +583,14 @@ void TTYBackend::DispatchOutput(TTYOutput &tty_out, const AsyncEvent &ae)
 	_prev_output.resize(_cur_output.size());
 
 	// Read whole dirty rows to retain wide/composite-cell context at rectangle edges.
-	if (_cur_width && first_row < end_row) {
+	for (int row = first_row; _cur_width && row < end_row;) {
+		if (!full && !ae.dirty_rows[row]) { ++row; continue; }
+		const int start = row++;
+		while (row < end_row && (full || ae.dirty_rows[row])) ++row;
 		COORD data_size = {CheckedCast<SHORT>(_cur_width), CheckedCast<SHORT>(_cur_height)};
-		COORD data_pos = {0, CheckedCast<SHORT>(first_row)};
-		SMALL_RECT screen_rect = {0, CheckedCast<SHORT>(first_row), CheckedCast<SHORT>(_cur_width - 1),
-				CheckedCast<SHORT>(end_row - 1)};
+		COORD data_pos = {0, CheckedCast<SHORT>(start)};
+		SMALL_RECT screen_rect = {0, CheckedCast<SHORT>(start), CheckedCast<SHORT>(_cur_width - 1),
+				CheckedCast<SHORT>(row - 1)};
 		g_winport_con_out->Read(_cur_output.data(), data_size, data_pos, screen_rect);
 	}
 #ifdef LOG_OUTPUT_COUNT
@@ -604,6 +607,7 @@ void TTYBackend::DispatchOutput(TTYOutput &tty_out, const AsyncEvent &ae)
 		}
 
 	} else for (int y = first_row; y < end_row; ++y) {
+		if (!full && !ae.dirty_rows[y]) continue;
 		const CHAR_INFO *cur_line = &_cur_output[size_t(y) * _cur_width];
 		const CHAR_INFO *prev_line = &_prev_output[size_t(y) * _prev_width];
 
@@ -665,10 +669,10 @@ void TTYBackend::DispatchOutput(TTYOutput &tty_out, const AsyncEvent &ae)
 #endif
 	_prev_width = _cur_width;
 	_prev_height = _cur_height;
-	if (_cur_width && first_row < end_row) {
-		std::copy(_cur_output.begin() + size_t(first_row) * _cur_width,
-				_cur_output.begin() + size_t(end_row) * _cur_width,
-				_prev_output.begin() + size_t(first_row) * _cur_width);
+	for (int row = first_row; _cur_width && row < end_row; ++row) {
+		if (!full && !ae.dirty_rows[row]) continue;
+		std::copy_n(_cur_output.begin() + size_t(row) * _cur_width, _cur_width,
+				_prev_output.begin() + size_t(row) * _cur_width);
 	}
 
 	UCHAR cursor_height = 1;
@@ -751,6 +755,8 @@ void TTYBackend::OnConsoleOutputUpdated(const SMALL_RECT *areas, size_t count)
 		if (areas[i].Top <= areas[i].Bottom && areas[i].Left <= areas[i].Right) {
 			_ae.dirty_top = std::min(_ae.dirty_top, int(areas[i].Top));
 			_ae.dirty_bottom = std::max(_ae.dirty_bottom, int(areas[i].Bottom));
+			for (int row = std::max(0, int(areas[i].Top)); row <= areas[i].Bottom; ++row)
+				_ae.dirty_rows.set(row);
 		}
 	}
 	_async_cond.notify_all();

@@ -4,6 +4,7 @@ dispatch=section('WinPort/src/Backend/TTY/TTYBackend.cpp','void TTYBackend::Disp
 notify=section('WinPort/src/Backend/TTY/TTYBackend.cpp','void TTYBackend::OnConsoleOutputUpdated(','void TTYBackend::OnConsoleOutputResized(')
 check('TTY dirty rows and spans',r'''
 #include <vector>
+#include <bitset>
 #include <algorithm>
 #include <cassert>
 #include <mutex>
@@ -36,6 +37,10 @@ int main(){TTYBackend b;TTYOutput out;b.OnConsoleOutputUpdated(nullptr,0);b.draw
 console.cells_read=0;out.writes=0;SMALL_RECT r{10,3,11,3};console.cells[3*250+10].Char.UnicodeChar=L'B';console.cells[3*250+11].Char.UnicodeChar=L'C';
 b.OnConsoleOutputUpdated(&r,1);b.draw(out);equal(out);assert(console.cells_read==250 && out.writes==1);
 console.cells_read=0;b._ae.output=true;b.draw(out);assert(console.cells_read==0);equal(out);
+// Disjoint rows must not force a read of all rows between them.
+console.cells_read=0;SMALL_RECT disjoint[]={{0,0,0,0},{0,69,0,69}};
+console.cells[0].Char.UnicodeChar=L'D';console.cells[69*250].Char.UnicodeChar=L'E';
+b.OnConsoleOutputUpdated(disjoint,2);b.draw(out);equal(out);assert(console.cells_read==500);
 // A notification arriving during Read belongs to the next batch.
 console.during_read=[&]{console.cells[10*250].Char.UnicodeChar=L'Z';SMALL_RECT next{0,10,0,10};b.OnConsoleOutputUpdated(&next,1);};
 b.OnConsoleOutputUpdated(&r,1);b.draw(out);assert(b._ae.output);b.draw(out);equal(out);
