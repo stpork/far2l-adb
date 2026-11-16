@@ -18,6 +18,28 @@ endif()
 file(GLOB_RECURSE PLUGINS "${APP_INSTALL_DIR}/**/*.far-plug*" "${APP_INSTALL_DIR}/**/*.so")
 fixup_bundle("${APP_INSTALL_DIR}" "${PLUGINS}" "" IGNORE_ITEM "python;python3;python3.8;Python;.Python")
 
+# BundleUtilities ignores Python helpers together with the framework library.
+# Relocate the nested launcher too, so it cannot fall back to Homebrew's copy.
+file(GLOB PYTHON_HELPERS
+    "${APP_INSTALL_DIR}/Contents/Frameworks/Python.framework/Versions/*/Resources/Python.app/Contents/MacOS/Python")
+foreach(PYTHON_HELPER ${PYTHON_HELPERS})
+    execute_process(COMMAND /usr/bin/otool -L "${PYTHON_HELPER}"
+        OUTPUT_VARIABLE PYTHON_HELPER_DEPS RESULT_VARIABLE PYTHON_DEPS_RESULT)
+    if(NOT PYTHON_DEPS_RESULT EQUAL 0)
+        message(FATAL_ERROR "Cannot inspect bundled Python launcher")
+    endif()
+    string(REGEX MATCH "[\r\n][ \t]+(/[^ \t\r\n]+/Python\\.framework/Versions/[^/ \t\r\n]+/Python)"
+        PYTHON_FRAMEWORK_DEP "${PYTHON_HELPER_DEPS}")
+    if(PYTHON_FRAMEWORK_DEP)
+        execute_process(COMMAND /usr/bin/install_name_tool -change "${CMAKE_MATCH_1}"
+            "@loader_path/../../../../Python" "${PYTHON_HELPER}"
+            RESULT_VARIABLE PYTHON_RELOCATE_RESULT)
+        if(NOT PYTHON_RELOCATE_RESULT EQUAL 0)
+            message(FATAL_ERROR "Cannot relocate bundled Python launcher")
+        endif()
+    endif()
+endforeach()
+
 # STEP 2:
 # Unfortunately cmake's fixup_bundle doesnt know about @loader_path and previous solution
 # for plugins created incorrect dependencies in copied into Frameworks libraries.
