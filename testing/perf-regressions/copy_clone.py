@@ -32,9 +32,9 @@ enum{COPY_SUCCESS=1,COPY_CANCEL=2,COPY_FAILURE=3};
 struct Data {unsigned nFileSize=4;};
 void ProgressUpdate(CopyState&,bool,const Data&,const Name&){}
 int copy(const char *SrcName,const Name &strDestName,bool Append,bool Resume){
-struct {bool USECOW=true, COPYACCESSMODE=false;} Flags;Data SrcData;
+struct {bool USECOW=true, COPYACCESSMODE=false, COPYXATTR=false;} Flags;Data SrcData;
 const Name &writePath = strDestName;
-struct {bool Publish(const std::string&, bool){return true;}} destination;
+struct {bool PublishFile(const std::string&, bool, bool){return true;}} destination;
 CopyState ProgressState;
 try {
 '''+block+r'''

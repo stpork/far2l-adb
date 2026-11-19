@@ -7,6 +7,9 @@
 #include <unistd.h>
 
 #include "sudo.h"
+#include "ScopeHelpers.h"
+#include "CopyMetadata.hpp"
+#include <fcntl.h>
 
 // Keep an existing file in place until a complete replacement is available.
 class CopyDestination
@@ -64,7 +67,7 @@ public:
 	}
 
 	const std::string &StagingPath() const { return _write_path; }
-	bool Publish(const std::string &destination, bool copy_mode) const
+	bool Publish(const std::string &destination) const
 	{
 		if (_directory.empty()) return true;
 		struct stat current{};
@@ -73,8 +76,31 @@ public:
 			errno = EEXIST;
 			return false;
 		}
-		if (!copy_mode && S_ISREG(_original.st_mode)
-				&& sdc_chmod(_write_path.c_str(), _original.st_mode & 0777) != 0) return false;
 		return sdc_rename(_write_path.c_str(), destination.c_str()) == 0;
+	}
+
+	bool PublishFile(const std::string &destination, bool copy_mode, bool copy_xattrs) const
+	{
+		if (_directory.empty() || !S_ISREG(_original.st_mode)) return Publish(destination);
+		FDScope original(sdc_open(destination.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK));
+		struct stat current{}, staged{};
+		if (!original.Valid() || fstat(original, &current) != 0) return false;
+		if (current.st_dev != _original.st_dev || current.st_ino != _original.st_ino) {
+			errno = EEXIST;
+			return false;
+		}
+		if (sdc_lstat(_write_path.c_str(), &staged) != 0) return false;
+		// A cloned file or a completed transfer may already have its final read-only mode.
+		bool read_only = !(staged.st_mode & S_IWUSR);
+		if (read_only && sdc_chmod(_write_path.c_str(), (staged.st_mode & 0777) | S_IWUSR) != 0)
+			return false;
+		FDScope file(sdc_open(_write_path.c_str(), O_WRONLY | O_NOFOLLOW));
+		if (!file.Valid()) return false;
+		if ((current.st_uid != staged.st_uid || current.st_gid != staged.st_gid)
+				&& sdc_chown(_write_path.c_str(), current.st_uid, current.st_gid) != 0) return false;
+		if ((!copy_mode || read_only) && sdc_fchmod(file, (copy_mode ? staged : current).st_mode & 0777) != 0)
+			return false;
+		if (!PreserveCopyAttributes(original, file, !copy_mode, !copy_xattrs)) return false;
+		return Publish(destination);
 	}
 };

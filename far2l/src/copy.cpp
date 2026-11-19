@@ -1761,6 +1761,7 @@ void ShellCopy::Start(const std::shared_ptr<ShellCopy> &self, Panel *SrcPanel,
 	SrcPanel->SaveSelection();
 	OperationItems.clear();
 	SelectedPanelItems.clear();
+	TrackSelection = Background && !Flags.CURRENTONLY && SrcPanel->GetRealSelCount() > 0;
 	if (Background) {
 		SrcPanel->GetSelNameCompat(nullptr, CDP.FileAttr);
 		while (SrcPanel->GetSelNameCompat(&strSelName, CDP.FileAttr)) {
@@ -1819,6 +1820,7 @@ void ShellCopy::Start(const std::shared_ptr<ShellCopy> &self, Panel *SrcPanel,
 							CDP.FileAttr, strSelName, ShowCopyTime);
 				} catch (...) {
 					InterThreadCall<int>([self]() {
+						self->ApplyCompletedSelection();
 						self->ApplyTreeUpdates();
 						if (CtrlObject && CtrlObject->Cp()) {
 							CtrlObject->Cp()->LeftPanel->Update(UPDATE_KEEP_SELECTION);
@@ -1861,21 +1863,45 @@ void ShellCopy::Start(const std::shared_ptr<ShellCopy> &self, Panel *SrcPanel,
 		}
 
 		if (Background) {
-			if (!Flags.CURRENTONLY) {
-				DWORD fileAttributes = 0;
-				FARString selectedName;
-				SrcPanel->GetSelNameCompat(nullptr, fileAttributes);
-				while (SrcPanel->GetSelNameCompat(&selectedName, fileAttributes))
-					SrcPanel->ClearLastGetSelection();
-				SrcPanel->Redraw();
-			}
-			if (ShowBackgroundCopyDialog(self, progress, false) == BackgroundCopyDialogResult::Aborted)
+			auto result = ShowBackgroundCopyDialog(self, progress, false);
+			if (result == BackgroundCopyDialogResult::Aborted)
 				AbortAndWaitForBackgroundFileOperation(taskId);
+			if (result != BackgroundCopyDialogResult::Backgrounded)
+				CtrlObject->Cp()->Redraw();
 			return;
 		}
 	}
 
 	PerformCopy(Move, AddSlash, CDP.SelCount, CDP.FolderPresent, CDP.FileAttr, strSelName, ShowCopyTime);
+}
+
+void ShellCopy::CompleteSelection(const FARString &name)
+{
+	if (Flags.CURRENTONLY || !Flags.COPYLASTTIME) return;
+	if (!Background)
+		SrcPanel->ClearLastGetSelection();
+	else if (TrackSelection)
+		CompletedSelection.emplace(PointToName(name));
+}
+
+// Runs on the UI thread. A detached copy may outlive its panel or directory.
+void ShellCopy::ApplyCompletedSelection()
+{
+	if (CompletedSelection.empty() || !CtrlObject || !CtrlObject->Cp()) return;
+	auto *panels = CtrlObject->Cp();
+	if (SrcPanel != panels->LeftPanel && SrcPanel != panels->RightPanel) return;
+	FARString dir;
+	SrcPanel->GetCurDir(dir);
+	if (SrcPanel->GetMode() != NORMAL_PANEL || !CmpFullNames(dir, SourceDir)) return;
+
+	DWORD attributes = 0;
+	FARString name;
+	SrcPanel->GetSelNameCompat(nullptr, attributes);
+	while (SrcPanel->GetSelNameCompat(&name, attributes)) {
+		if (CompletedSelection.count(name.CPtr()))
+			SrcPanel->ClearLastGetSelection();
+	}
+	SrcPanel->Redraw();
 }
 
 void ShellCopy::PerformCopy(int Move, bool AddSlash, int SelCount, bool FolderPresent,
@@ -2035,6 +2061,7 @@ void ShellCopy::PerformCopy(int Move, bool AddSlash, int SelCount, bool FolderPr
 
 	auto finish = [this, CDP, NeedUpdateAPanel, strSelName]() {
 		if (Background) {
+			ApplyCompletedSelection();
 			ApplyTreeUpdates();
 			if (CtrlObject && CtrlObject->Cp()) {
 				CtrlObject->Cp()->LeftPanel->Update(UPDATE_KEEP_SELECTION);
@@ -2426,8 +2453,7 @@ COPY_CODES ShellCopy::CopyFileTree(const wchar_t *Dest)
 					case 1:
 
 						// Отметим (Ins) несколько каталогов, ALT-F6 Enter - выделение с папок не снялось.
-						if (!Background && !Flags.CURRENTONLY && Flags.COPYLASTTIME)
-							SrcPanel->ClearLastGetSelection();
+						CompleteSelection(strSelName);
 
 						continue;
 					case 0:
@@ -2487,6 +2513,7 @@ COPY_CODES ShellCopy::CopyFileTree(const wchar_t *Dest)
 							}
 						}
 
+						if (Background) CompleteSelection(strSelName);
 						continue;
 					}
 
@@ -2691,9 +2718,7 @@ COPY_CODES ShellCopy::CopyFileTree(const wchar_t *Dest)
 					DeleteDiz(strSelName);
 			}
 
-			if (!Background && !Flags.CURRENTONLY && Flags.COPYLASTTIME) {
-				SrcPanel->ClearLastGetSelection();
-			}
+			CompleteSelection(strSelName);
 		}
 	}
 
@@ -3681,7 +3706,7 @@ int ShellCopy::ShellCopyFile(const wchar_t *SrcName, const FAR_FIND_DATA_EX &Src
 			if (!destination.Prepare(Wide2MB(SrcName), strDestName.GetMB(), false)) return COPY_FAILURE;
 			const FARString path = destination.StagingPath().empty()
 				? strDestName : FARString(StrMB2Wide(destination.StagingPath()).c_str());
-			return MkHardLink(SrcName, path) && destination.Publish(strDestName.GetMB(), true)
+			return MkHardLink(SrcName, path) && destination.Publish(strDestName.GetMB())
 				? COPY_SUCCESS : COPY_FAILURE;
 		} else {
 			return (MkSymLink(SrcName, strDestName, RPT, true) ? COPY_SUCCESS : COPY_FAILURE);
@@ -3716,7 +3741,7 @@ int ShellCopy::ShellCopyFile(const wchar_t *SrcName, const FAR_FIND_DATA_EX &Src
 
 				ProgressUpdate(ProgressState, false, SrcData, strDestName);
 				if (ProgressState.Progress->Cancelled()) return COPY_CANCEL;
-				return destination.Publish(strDestName.GetMB(), Flags.COPYACCESSMODE) ? COPY_SUCCESS : COPY_FAILURE;
+				return destination.PublishFile(strDestName.GetMB(), Flags.COPYACCESSMODE, Flags.COPYXATTR) ? COPY_SUCCESS : COPY_FAILURE;
 			}
 
 			ErrnoSaver ErSr;
@@ -3731,7 +3756,7 @@ int ShellCopy::ShellCopyFile(const wchar_t *SrcName, const FAR_FIND_DATA_EX &Src
 		ShellFileTransfer(SrcName, SrcData, strDestName, writePath, destination.create_new,
 				Append != 0, Resume != 0, CopyBuffer, Flags, ProgressState).Do();
 		if (ProgressState.Progress->Cancelled()) return COPY_CANCEL;
-		return destination.Publish(strDestName.GetMB(), Flags.COPYACCESSMODE) ? COPY_SUCCESS : COPY_FAILURE;
+		return destination.PublishFile(strDestName.GetMB(), Flags.COPYACCESSMODE, Flags.COPYXATTR) ? COPY_SUCCESS : COPY_FAILURE;
 	} catch (ErrnoSaver &) {
 	}
 
@@ -3751,7 +3776,7 @@ void ShellCopy::SetDestDizPath(const wchar_t *DestPath)
 			strDestDizPath.Clear();
 
 		if (!strDestDizPath.IsEmpty())
-			DestDiz.Read(strDestDizPath, nullptr, Background);
+			InterThreadCall<bool>([&]() { return DestDiz.Read(strDestDizPath, nullptr, Background); });
 
 		Flags.DIZREAD = true;
 	}

@@ -34,6 +34,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "headers.hpp"
 
 #include "dizlist.hpp"
+#include "InterThreadCall.hpp"
 #include "lang.hpp"
 #include "savescr.hpp"
 #include "TPreRedrawFunc.hpp"
@@ -77,6 +78,7 @@ DizList::~DizList()
 
 void DizList::Reset()
 {
+	ChangedNames.clear();
 	if (DizData) {
 		for (int I = 0; I < DizCount; I++)
 			free(DizData[I].DizText);
@@ -101,7 +103,7 @@ void DizList::PR_ReadingMsg()
 	Message(0, 0, L"", Msg::ReadingDiz);
 }
 
-void DizList::Read(const wchar_t *Path, const wchar_t *DizName, bool silent)
+bool DizList::Read(const wchar_t *Path, const wchar_t *DizName, bool silent)
 {
 	Reset();
 	std::unique_ptr<TPreRedrawFuncGuard> preRedrawFuncGuard;
@@ -128,10 +130,13 @@ void DizList::Read(const wchar_t *Path, const wchar_t *DizName, bool silent)
 		}
 
 		File DizFile;
-        FAR_FIND_DATA_EX FindData;
-        if (apiGetFindDataEx(strDizFileName, FindData, FIND_FILE_FLAG_CASE_INSENSITIVE) &&
-            DizFile.Open(FindData.strFileName, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING)) {
-            strDizFileName=FindData.strFileName;
+		FAR_FIND_DATA_EX FindData;
+		if (apiGetFindDataEx(strDizFileName, FindData, FIND_FILE_FLAG_CASE_INSENSITIVE)) {
+			// FindFile reports the matched basename, including its on-disk case.
+			strDizFileName.Truncate(PointToName(strDizFileName) - strDizFileName.CPtr());
+			strDizFileName += PointToName(FindData.strFileName);
+			if (!DizFile.Open(strDizFileName, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING))
+				return false;
 			GetFileString GetStr(DizFile);
 			wchar_t *DizText;
 			int DizLength;
@@ -153,14 +158,13 @@ void DizList::Read(const wchar_t *Path, const wchar_t *DizName, bool silent)
 
 				RemoveTrailingSpaces(DizText);
 
-				if (*DizText)
-					AddRecord(DizText);
+				if (*DizText && !AddRecord(DizText)) return false;
 			}
 
 			OrigCodePage = CodePage;
 			Modified = false;
 			DizFile.Close();
-			return;
+			return true;
 		}
 
 		if (DizName)
@@ -169,6 +173,7 @@ void DizList::Read(const wchar_t *Path, const wchar_t *DizName, bool silent)
 
 	Modified = false;
 	strDizFileName.Clear();
+	return true;
 }
 
 bool DizList::AddRecord(const wchar_t *DizText)
@@ -395,6 +400,7 @@ bool DizList::DeleteDiz(const wchar_t *Name)
 	if (DizPos == -1)
 		return false;
 
+	ChangedNames.emplace_back(Name);
 	DizData[DizPos++].Deleted = true;
 
 	while (DizPos < DizCount) {
@@ -411,6 +417,31 @@ bool DizList::DeleteDiz(const wchar_t *Name)
 }
 
 bool DizList::Flush(const wchar_t *Path, const wchar_t *DizName)
+{
+	if (!Modified) return true;
+	// Plugin exports write a complete description list to a new temporary file.
+	if (DizName || !Path || !*Path) return Write(Path, DizName);
+
+	// Serialize the read/merge/write transaction with panel edits and other jobs.
+	// No worker holds a filesystem lock while Far is displaying an error dialog.
+	return InterThreadCall<bool>([&]() {
+		DizList latest;
+		if (!latest.Read(Path, nullptr, true)) return false;
+		for (const auto &name : ChangedNames) {
+			if (GetDizPosEx(name.c_str(), nullptr) < 0)
+				latest.DeleteDiz(name.c_str());
+			else if (!CopyDiz(name.c_str(), name.c_str(), &latest))
+				return false;
+		}
+		if (!latest.Write(Path, nullptr)) return false;
+		latest.GetDizName(strDizFileName);
+		Modified = false;
+		ChangedNames.clear();
+		return true;
+	});
+}
+
+bool DizList::Write(const wchar_t *Path, const wchar_t *DizName)
 {
 	if (!Modified)
 		return true;
@@ -453,9 +484,10 @@ bool DizList::Flush(const wchar_t *Path, const wchar_t *DizName)
 
 	bool EmptyDiz = true;
 	// Don't use CreationDisposition=CREATE_ALWAYS here - it's kills alternate streams
-	if (DizCount
-			&& DizFile.Open(strDizFileName, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
-					FileAttr == INVALID_FILE_ATTRIBUTES ? CREATE_NEW : TRUNCATE_EXISTING)) {
+	if (DizCount) {
+		if (!DizFile.Open(strDizFileName, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+				FileAttr == INVALID_FILE_ATTRIBUTES ? CREATE_NEW : TRUNCATE_EXISTING))
+			return false;
 		UINT CodePage = Opt.Diz.SaveInUTF ? CP_UTF8 : (Opt.Diz.AnsiByDefault ? CP_ACP : CP_OEMCP);
 
 		CachedWrite Cache(DizFile);
@@ -516,12 +548,13 @@ bool DizList::Flush(const wchar_t *Path, const wchar_t *DizName)
 	}
 
 	Modified = false;
+	ChangedNames.clear();
 	return true;
 }
 
 bool DizList::AddDizText(const wchar_t *Name, const wchar_t *DizText)
 {
-	DeleteDiz(Name);
+	if (!DeleteDiz(Name)) ChangedNames.emplace_back(Name);
 	FARString strQuotedName = Name;
 	QuoteSpaceOnly(strQuotedName);
 	FormatString FString;
@@ -541,13 +574,13 @@ bool DizList::CopyDiz(const wchar_t *Name, const wchar_t *DestName, DizList *Des
 	while (IsSpace(DizData[DizPos].DizText[TextPos]))
 		TextPos++;
 
-	DestDiz->AddDizText(DestName, &DizData[DizPos].DizText[TextPos]);
+	if (!DestDiz->AddDizText(DestName, &DizData[DizPos].DizText[TextPos])) return false;
 
 	while (++DizPos < DizCount) {
 		if (*DizData[DizPos].DizText && !IsSpace(DizData[DizPos].DizText[0]))
 			break;
 
-		DestDiz->AddRecord(DizData[DizPos].DizText);
+		if (!DestDiz->AddRecord(DizData[DizPos].DizText)) return false;
 	}
 
 	return true;

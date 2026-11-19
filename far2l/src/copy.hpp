@@ -1,4 +1,5 @@
 #pragma once
+#include <unordered_set>
 
 /*
 copy.hpp
@@ -207,6 +208,10 @@ class ShellCopy
 	bool UpdateDiz{false};
 	FARString SourceDir;
 	std::vector<FARString> OperationItems;
+	std::unordered_set<std::wstring> CompletedSelection;
+	bool TrackSelection = false;
+	void CompleteSelection(const FARString &name);
+	void ApplyCompletedSelection();
 	std::vector<FARString> OperationDestinations;
 	struct TreeUpdate
 	{

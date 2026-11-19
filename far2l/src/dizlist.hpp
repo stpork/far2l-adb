@@ -1,4 +1,6 @@
 #pragma once
+#include <string>
+#include <vector>
 
 /*
 dizlist.hpp
@@ -54,19 +56,21 @@ private:
 	bool NeedRebuild;
 	UINT OrigCodePage;
 	char *AnsiBuf;
+	std::vector<std::wstring> ChangedNames;
 
 private:
 	int GetDizPos(const wchar_t *Name, int *TextPos);
 	int GetDizPosEx(const wchar_t *Name, int *TextPos);
 	bool AddRecord(const wchar_t *DizText);
 	void BuildIndex();
+	bool Write(const wchar_t *Path, const wchar_t *DizName);
 
 public:
 	DizList();
 	~DizList();
 
 public:
-	void Read(const wchar_t *Path, const wchar_t *DizName = nullptr, bool silent = false);
+	bool Read(const wchar_t *Path, const wchar_t *DizName = nullptr, bool silent = false);
 	void Reset();
 	const wchar_t *GetDizTextAddr(const wchar_t *Name, const int64_t FileSize);
 	bool DeleteDiz(const wchar_t *Name);
