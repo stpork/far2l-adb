@@ -2122,7 +2122,7 @@ int MTPPlugin::InDeviceCopyMoveTo(PluginPanelItem* panel_item, int items_number,
                 overwrite_all, skip_all, newer_all, rename_all,
                 std::move(view_new), std::move(view_existing));
             if (d == OverwriteDialog::D_CANCEL) return -1;
-            if (d == OverwriteDialog::D_OVERWRITE) it.overwrite = true;
+            if (d == OverwriteDialog::D_OVERWRITE) it.overwrite = *existing;
             else if (d == OverwriteDialog::D_RENAME)
                 it.target_name = FindFreeName(dst_existing, stat.value.name, dst_storage);
             else it.skip = true;
@@ -2135,7 +2135,7 @@ int MTPPlugin::InDeviceCopyMoveTo(PluginPanelItem* panel_item, int items_number,
     size_t first_pass_ok = 0;
     proto::Status hard_err = proto::OkStatus();
     {
-        const DeviceCopyCtx ctx{this, &fallback, &hard_err, &dst_existing,
+        const DeviceCopyCtx ctx{this, &fallback, &hard_err,
                                 move, dst_storage, dst_parent};
 
         std::vector<WorkUnit> units;
@@ -2372,7 +2372,7 @@ bool MTPPlugin::ShiftF5CopyInPlace() {
         std::string new_name;
         RecursiveStats rstats;
         bool skip = false;
-        bool overwrite = false;
+        std::optional<proto::ObjectEntry> overwrite;
     };
     std::vector<Item> work;
     work.reserve(handles.size());
@@ -2413,7 +2413,7 @@ bool MTPPlugin::ShiftF5CopyInPlace() {
                     overwrite_all, skip_all, newer_all, rename_all,
                     std::move(view_new), std::move(view_existing));
                 if (d == OverwriteDialog::D_CANCEL) return true;
-                if (d == OverwriteDialog::D_OVERWRITE) it.overwrite = true;
+                if (d == OverwriteDialog::D_OVERWRITE) it.overwrite = *existing;
                 else if (d == OverwriteDialog::D_RENAME)
                     it.new_name = FindFreeName(dst_existing, new_name, dst_storage);
                 else it.skip = true;
@@ -2429,11 +2429,10 @@ bool MTPPlugin::ShiftF5CopyInPlace() {
         struct Ctx {
             std::vector<HostFallbackItem>* fallback;
             proto::Status* hard_err;
-            std::map<std::string, proto::ObjectEntry>* dst_existing;
             uint32_t dst_storage;
             uint32_t dst_parent;
         };
-        const Ctx ctx{&fallback, &hard_err, &dst_existing, dst_storage, dst_parent};
+        const Ctx ctx{&fallback, &hard_err, dst_storage, dst_parent};
 
         std::vector<WorkUnit> units;
         units.reserve(work.size());
@@ -2453,7 +2452,7 @@ bool MTPPlugin::ShiftF5CopyInPlace() {
                 if (!cp.ok && cp.code == proto::ErrorCode::Unsupported) {
                     ctx.fallback->push_back({it.handle, it.stat, ctx.dst_storage,
                                              ctx.dst_parent, it.new_name, stats.size,
-                                             std::max<uint64_t>(stats.count, 1)});
+                                             std::max<uint64_t>(stats.count, 1), it.overwrite ? it.overwrite->handle : 0});
                     tr.MarkSkipped();
                     return 0;
                 }
@@ -2463,7 +2462,7 @@ bool MTPPlugin::ShiftF5CopyInPlace() {
                     return MapErrorToErrno(cp.code);
                 }
                 if (it.overwrite) {
-                    auto& existing = (*ctx.dst_existing)[it.new_name];
+                    const auto& existing = *it.overwrite;
                     const std::string aside = AsideName(it.new_name);
                     auto aside_rn = _backend->Rename(existing.handle, aside);
                     if (!aside_rn.ok) {
@@ -2487,7 +2486,6 @@ bool MTPPlugin::ShiftF5CopyInPlace() {
                     auto del = _backend->Delete(existing.handle, /*recursive=*/true);
                     if (!del.ok) DBG("aside cleanup after success failed: %s — stale '%s.far2l-tmp.%d' remains\n",
                                      del.message.c_str(), it.new_name.c_str(), getpid());
-                    ctx.dst_existing->erase(it.new_name);
                 } else if (it.new_name != it.stat.name) {
                     auto rn = _backend->Rename(cp.value, it.new_name);
                     if (!rn.ok) {
@@ -2579,49 +2577,41 @@ bool MTPPlugin::RenameSelectedItem() {
         }
         // Quick collision check at destination.
         auto dst_kids = _backend->ListChildren(dst_storage, dst_parent);
-        if (dst_kids.ok) {
-            for (const auto& k : dst_kids.value) {
-                if (_backend->NamesEqual(_current_storage_id, k.name, new_name) && k.handle != handle) {
-                    uint64_t src_show = src_stat.value.is_dir
-                        ? ComputeRecursiveSize(src_stat.value.storage_id, src_stat.value.handle)
-                        : src_stat.value.size;
-                    uint64_t dst_show = k.is_dir
-                        ? ComputeRecursiveSize(k.storage_id, k.handle)
-                        : k.size;
-                    OverwriteDialog dlg(StrMB2Wide(new_name),
-                                        src_show,
-                                        static_cast<int64_t>(src_stat.value.mtime_epoch),
-                                        dst_show,
-                                        static_cast<int64_t>(k.mtime_epoch));
-                    auto choice = dlg.Ask();
-                    if (choice == OverwriteDialog::SKIP || choice == OverwriteDialog::SKIP_ALL
-                        || choice == OverwriteDialog::CANCEL) {
-                        return true;
-                    }
-                    auto del = _backend->Delete(k.handle, /*recursive=*/true);
-                    if (!del.ok) DBG("cross-folder overwrite delete failed for '%s': %s\n",
-                                     k.name.c_str(), del.message.c_str());
-                    break;
-                }
-            }
+        if (!dst_kids.ok) {
+            SetErrorFromStatus(proto::Status::Failure(dst_kids.code, dst_kids.message));
+            return false;
+        }
+        uint32_t approved_handle = 0;
+        std::map<std::string, proto::ObjectEntry> existing;
+        for (const auto& k : dst_kids.value) existing[k.name] = k;
+        const auto* target = FindExistingByName(existing, new_name, dst_storage);
+        if (target && target->handle != handle) {
+            bool overwrite_all = false, skip_all = false, newer_all = false, rename_all = false;
+            auto choice = OverwriteDialog::AskSticky(StrMB2Wide(new_name),
+                src_stat.value.is_dir ? ComputeRecursiveSize(src_stat.value.storage_id, handle) : src_stat.value.size,
+                src_stat.value.mtime_epoch,
+                target->is_dir ? ComputeRecursiveSize(dst_storage, target->handle) : target->size,
+                target->mtime_epoch, overwrite_all, skip_all, newer_all, rename_all);
+            if (choice == OverwriteDialog::D_RENAME)
+                new_name = FindFreeName(existing, new_name, dst_storage);
+            else if (choice == OverwriteDialog::D_OVERWRITE)
+                approved_handle = target->handle;
+            else
+                return true;
         }
 
-        auto mv = _backend->MoveObject(handle, dst_storage, dst_parent);
+        auto mv = ReplaceApprovedMtpObject(*_backend, dst_kids.value, dst_storage,
+                                           new_name, approved_handle, AsideName(new_name), [&]() {
+            return MoveMtpObjectAs(*_backend, src_stat.value, dst_storage, dst_parent, new_name);
+        });
         if (mv.ok) {
-            // Rename to new basename if it differs from source.
-            if (new_name != old_name) {
-                auto rn = _backend->Rename(handle, new_name);
-                if (!rn.ok) {
-                    DBG("Rename: cross-folder move ok but rename failed: %s\n", rn.message.c_str());
-                }
-            }
             RefreshPanel();
             return true;
         }
         if (mv.code == proto::ErrorCode::Unsupported) {
             DBG("Rename: MoveObject unsupported, falling back to host-mediated move\n");
             std::vector<HostFallbackItem> fb_items;
-            fb_items.push_back({handle, src_stat.value, dst_storage, dst_parent, new_name});
+            fb_items.push_back({handle, src_stat.value, dst_storage, dst_parent, new_name, 0, 0, approved_handle});
             size_t fb_ok = 0;
             auto fb = RunHostFallbackBatch(fb_items, /*move=*/true, &fb_ok);
             if (!fb.ok && fb_ok == 0) {
@@ -2903,7 +2893,7 @@ bool MTPPlugin::CrossPanelCopyMoveSameDevice(bool move) {
                     overwrite_all, skip_all, newer_all, rename_all,
                     std::move(view_new), std::move(view_existing));
                 if (d == OverwriteDialog::D_CANCEL) return true;
-                if (d == OverwriteDialog::D_OVERWRITE) it.overwrite = true;
+                if (d == OverwriteDialog::D_OVERWRITE) it.overwrite = *existing;
                 else if (d == OverwriteDialog::D_RENAME)
                     it.target_name = dst->FindFreeName(dst_existing, stat.value.name, dst_storage);
                 else it.skip = true;
@@ -2917,7 +2907,7 @@ bool MTPPlugin::CrossPanelCopyMoveSameDevice(bool move) {
     size_t first_pass_ok = 0;
     proto::Status hard_err = proto::OkStatus();
     {
-        const DeviceCopyCtx ctx{dst, &fallback, &hard_err, &dst_existing,
+        const DeviceCopyCtx ctx{dst, &fallback, &hard_err,
                                 move, dst_storage, dst_parent};
 
         std::vector<WorkUnit> units;
@@ -3207,7 +3197,7 @@ proto::Status MTPPlugin::ManualCopyViaHostInline(uint32_t src_handle,
                                                   const proto::ObjectEntry& src_stat,
                                                   uint32_t dst_storage_id,
                                                   uint32_t dst_parent,
-                                                  const std::string& new_name,
+                                                  const std::string& new_name, uint32_t approved_handle,
                                                   ProgressTracker& tr,
                                                   proto::CancellationToken token,
                                                   proto::CancellationSource* cancel_src) {
@@ -3236,15 +3226,9 @@ proto::Status MTPPlugin::ManualCopyViaHostInline(uint32_t src_handle,
         if (!children.ok) {
             status = proto::Status::Failure(children.code, children.message);
         } else {
-            const proto::ObjectEntry* existing = nullptr;
-            for (const auto& child : children.value) {
-                if (_backend->NamesEqual(dst_storage_id, child.name, new_name)) {
-                    existing = &child;
-                    break;
-                }
-            }
             tr.Reset();
-            status = ReplaceMtpObject(*_backend, existing, AsideName(new_name), [&]() {
+            status = ReplaceApprovedMtpObject(*_backend, children.value, dst_storage_id, new_name,
+                                              approved_handle, AsideName(new_name), [&]() {
                 if (src_stat.is_dir) {
                     return UploadRecursive(staging, new_name, dst_storage_id, dst_parent,
                                            token, cancel_src, &tr);
@@ -3291,7 +3275,7 @@ proto::Status MTPPlugin::ManualCopyViaHost(uint32_t src_handle,
     u.execute = [this, src_handle, src_stat, dst_storage_id, dst_parent, new_name,
                  cancel_tok, cs, fs](ProgressTracker& tr) -> int {
         auto step = ManualCopyViaHostInline(src_handle, src_stat,
-                                            dst_storage_id, dst_parent, new_name,
+                                            dst_storage_id, dst_parent, new_name, 0,
                                             tr, cancel_tok, cs);
         if (!step.ok) {
             *fs = step;
@@ -3324,45 +3308,22 @@ WorkUnit MTPPlugin::MakeDeviceCopyMoveUnit(const DeviceCopyItem& it,
         // dst_name = target_name (Rename intent) or stat.name (default).
         const std::string dst_name = it.target_name.empty() ? it.stat.name : it.target_name;
         const bool renaming = !it.target_name.empty() && it.target_name != it.stat.name;
-        const proto::ObjectEntry* existing = nullptr;
-        if (it.overwrite) {
-            auto found = ctx.dst_existing->find(dst_name);
-            if (found != ctx.dst_existing->end()) existing = &found->second;
-        }
-        auto st = ReplaceMtpObject(*ctx.dst->_backend, existing, AsideName(dst_name), [&]() {
-            // Rename before MoveObject so it lands at the requested name even
-            // when replacing a differently named object in the destination.
-            const bool pre_rename = renaming && ctx.move;
-            if (pre_rename) {
-                auto renamed = _backend->Rename(it.handle, dst_name);
-                if (!renamed.ok) return renamed;
-            }
+        auto st = ReplaceMtpObject(*ctx.dst->_backend, it.overwrite ? &*it.overwrite : nullptr, AsideName(dst_name), [&]() {
             tr.PinNearDone(dst_name);
-            proto::Status status;
-            if (ctx.move) {
-                status = _backend->MoveObject(it.handle, ctx.dst_storage, ctx.dst_parent);
-            } else {
-                auto copied = _backend->CopyObject(it.handle, ctx.dst_storage, ctx.dst_parent);
-                status = copied.ok ? proto::OkStatus()
-                    : proto::Status::Failure(copied.code, copied.message, copied.retryable);
-                if (copied.ok && renaming) {
-                    status = _backend->Rename(copied.value, dst_name);
-                }
-            }
-            if (!status.ok && pre_rename) {
-                auto restored = _backend->Rename(it.handle, it.stat.name);
-                if (!restored.ok) return restored;
-            }
-            return status;
+            if (ctx.move)
+                return MoveMtpObjectAs(*_backend, it.stat, ctx.dst_storage, ctx.dst_parent, dst_name);
+            auto copied = _backend->CopyObject(it.handle, ctx.dst_storage, ctx.dst_parent);
+            if (!copied.ok)
+                return proto::Status::Failure(copied.code, copied.message, copied.retryable);
+            return renaming ? _backend->Rename(copied.value, dst_name) : proto::OkStatus();
         });
         if (st.ok) {
-            ctx.dst_existing->erase(dst_name);
             return 0;
         }
         if (st.code == proto::ErrorCode::Unsupported) {
             ctx.fallback->push_back({it.handle, it.stat, ctx.dst_storage,
                                      ctx.dst_parent, dst_name, stats.size,
-                                     std::max<uint64_t>(stats.count, 1)});
+                                     std::max<uint64_t>(stats.count, 1), it.overwrite ? it.overwrite->handle : 0});
             tr.MarkSkipped();
             return 0;
         }
@@ -3409,7 +3370,7 @@ proto::Status MTPPlugin::RunHostFallbackBatch(const std::vector<HostFallbackItem
         u.execute = [this, it, move, cancel_tok, cs, fs](ProgressTracker& tr) -> int {
             auto step = ManualCopyViaHostInline(it.src_handle, it.src_stat,
                                                 it.dst_storage_id, it.dst_parent,
-                                                it.dst_name, tr, cancel_tok, cs);
+                                                it.dst_name, it.approved_handle, tr, cancel_tok, cs);
             if (!step.ok) {
                 *fs = step;
                 return MapErrorToErrno(step);

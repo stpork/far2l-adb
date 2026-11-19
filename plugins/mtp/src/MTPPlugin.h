@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 
 #include <map>
 #include <memory>
@@ -194,7 +195,7 @@ private:
                                           const proto::ObjectEntry& src_stat,
                                           uint32_t dst_storage_id,
                                           uint32_t dst_parent,
-                                          const std::string& new_name,
+                                          const std::string& new_name, uint32_t approved_handle,
                                           class ProgressTracker& tr,
                                           proto::CancellationToken token,
                                           proto::CancellationSource* cancel_src);
@@ -209,6 +210,7 @@ private:
         // Pre-computed recursive size + file count from caller's walk; 0/0 = "not computed yet", RunHostFallbackBatch fills on demand.
         uint64_t total_bytes = 0;
         uint64_t total_files = 0;
+        uint32_t approved_handle = 0; // Zero requires the destination name to be free.
     };
     proto::Status RunHostFallbackBatch(const std::vector<HostFallbackItem>& items,
                                        bool move,
@@ -221,14 +223,13 @@ private:
         RecursiveStats rstats;  // pre-computed
         std::string target_name;  // empty = use stat.name; populated when user picked Rename to disambiguate collision.
         bool skip = false;
-        bool overwrite = false;
+        std::optional<proto::ObjectEntry> overwrite;
     };
     // Cross-call mutable state captured by device-batch lambda — pointers only, no &local refs, so a future async RunBatch can't UAF.
     struct DeviceCopyCtx {
         MTPPlugin* dst;  // dst panel; equals this for in-device flow
         std::vector<HostFallbackItem>* fallback;
         proto::Status* hard_err;
-        std::map<std::string, proto::ObjectEntry>* dst_existing;
         bool move;
         uint32_t dst_storage;
         uint32_t dst_parent;

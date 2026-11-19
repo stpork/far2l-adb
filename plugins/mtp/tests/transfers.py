@@ -12,6 +12,8 @@ prefix = r'''
 #include <string>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <strings.h>
 #include <cstdio>
 #include <cassert>
 #include <cerrno>
@@ -36,10 +38,11 @@ struct WorkUnit {
  std::function<int(ProgressTracker&)> execute;
 };
 struct Backend {
- std::map<uint32_t,proto::ObjectEntry> objects;unsigned uploads=0; bool fail_rename=false, fail_delete=false, fail_upload=false;
+ bool NamesEqual(uint32_t,const std::string& a,const std::string& b){return !strcasecmp(a.c_str(),b.c_str());}
+ std::map<uint32_t,proto::ObjectEntry> objects;unsigned uploads=0; bool supports_move=false; bool fail_rename=false, fail_delete=false, fail_upload=false;
  proto::Status Rename(uint32_t h,const std::string& s){if(fail_rename)return proto::Status::Failure(proto::ErrorCode::Io,"rename failed");objects[h].name=s;return proto::OkStatus();}
  proto::Status Delete(uint32_t h,bool){if(fail_delete)return proto::Status::Failure(proto::ErrorCode::Io,"delete failed");objects.erase(h);return proto::OkStatus();}
- proto::Status MoveObject(uint32_t,uint32_t,uint32_t){return proto::Status::Failure(proto::ErrorCode::Unsupported,"no MoveObject");}
+ proto::Status MoveObject(uint32_t h,uint32_t,uint32_t parent){if(supports_move){objects[h].parent=parent;return proto::OkStatus();}return proto::Status::Failure(proto::ErrorCode::Unsupported,"no MoveObject");}
  proto::Result<uint32_t> CopyObject(uint32_t,uint32_t,uint32_t){return proto::Result<uint32_t>::Failure(proto::ErrorCode::Unsupported,"no CopyObject");}
  proto::Result<std::vector<proto::ObjectEntry>> ListChildren(uint32_t,uint32_t parent){std::vector<proto::ObjectEntry> v;for(auto& p:objects)if(p.second.parent==parent)v.push_back(p.second);return proto::Result<decltype(v)>::Success(v);}
  proto::Result<uint32_t> MakeDirectory(const std::string&,uint32_t,uint32_t){return proto::Result<uint32_t>::Success(42);}
@@ -48,9 +51,9 @@ struct Backend {
 struct MTPPlugin {
  std::shared_ptr<Backend> _backend=std::make_shared<Backend>();
  struct RecursiveStats{uint64_t size=0,count=0;};
- struct HostFallbackItem{uint32_t src_handle;proto::ObjectEntry src_stat;uint32_t dst_storage_id,dst_parent;std::string dst_name;uint64_t total_bytes=0,total_files=0;};
- struct DeviceCopyItem{uint32_t handle;proto::ObjectEntry stat;RecursiveStats rstats;std::string target_name;bool skip=false,overwrite=false;};
- struct DeviceCopyCtx{MTPPlugin* dst;std::vector<HostFallbackItem>* fallback;proto::Status* hard_err;std::map<std::string,proto::ObjectEntry>* dst_existing;bool move;uint32_t dst_storage,dst_parent;};
+ struct HostFallbackItem{uint32_t src_handle;proto::ObjectEntry src_stat;uint32_t dst_storage_id,dst_parent;std::string dst_name;uint64_t total_bytes=0,total_files=0;uint32_t approved_handle=0;};
+ struct DeviceCopyItem{uint32_t handle;proto::ObjectEntry stat;RecursiveStats rstats;std::string target_name;bool skip=false;std::optional<proto::ObjectEntry> overwrite;};
+ struct DeviceCopyCtx{MTPPlugin* dst;std::vector<HostFallbackItem>* fallback;proto::Status* hard_err;bool move;uint32_t dst_storage,dst_parent;};
  WorkUnit MakeDeviceCopyMoveUnit(const DeviceCopyItem&,const RecursiveStats&,const DeviceCopyCtx&);
  proto::Status UploadRecursive(const std::string&,const std::string&,uint32_t,uint32_t,proto::CancellationToken,proto::CancellationSource*,ProgressTracker*);
 };
@@ -63,11 +66,33 @@ int main(int argc,char** argv){
  p._backend->objects={{1,src},{2,dst}};
  std::map<std::string,proto::ObjectEntry> existing={{dst.name,dst}};
  std::vector<MTPPlugin::HostFallbackItem> fallback;auto err=proto::OkStatus();
- MTPPlugin::DeviceCopyCtx ctx{&p,&fallback,&err,&existing,false,1,0};
- MTPPlugin::DeviceCopyItem item{1,src,{3,1},"",false,true};
+ MTPPlugin::DeviceCopyCtx ctx{&p,&fallback,&err,false,1,0};
+ MTPPlugin::DeviceCopyItem item{1,src,{3,1},"",false,dst};
  auto unit=p.MakeDeviceCopyMoveUnit(item,{3,1},ctx);int rc=unit.execute(tr);
  printf("MTP Unsupported CopyObject: rc=%d fallback=%zu original_destination_exists=%d\n",rc,fallback.size(),int(p._backend->objects.count(2)));
  assert(rc==0 && fallback.size()==1 && p._backend->objects.count(2) && p._backend->objects.at(2).name==dst.name);
+ assert(fallback.front().approved_handle==2);
+ auto intruder=dst;intruder.handle=3;intruder.name="SAME.TXT";
+ p._backend->objects[3]=intruder;
+ auto replace=[&](uint32_t approved,std::vector<proto::ObjectEntry> children){
+   return ReplaceApprovedMtpObject(*p._backend,children,1,dst.name,approved,"backup",[&](){
+     ++p._backend->uploads;return proto::OkStatus();
+   });
+ };
+ assert(!replace(0,{intruder}).ok && !replace(2,{intruder}).ok);
+ assert(!replace(2,{}).ok && !replace(2,{dst,intruder}).ok);
+ assert(!p._backend->uploads && p._backend->objects.count(2) && p._backend->objects.count(3));
+ assert(replace(0,{}).ok && replace(2,{dst}).ok);
+ assert(!p._backend->objects.count(2) && p._backend->objects.count(3));
+ p._backend->objects[2]=dst;
+ assert(!MoveMtpObjectAs(*p._backend,src,1,0,"new").ok && p._backend->objects.at(1).name==src.name);
+ auto sibling=src;sibling.handle=4;sibling.name="NEW";p._backend->objects[4]=sibling;
+ p._backend->supports_move=true;
+ assert(!MoveMtpObjectAs(*p._backend,src,1,0,"new").ok && p._backend->objects.at(1).name==src.name);
+ p._backend->objects.erase(4);
+ assert(MoveMtpObjectAs(*p._backend,src,1,0,"new").ok);
+ assert(p._backend->objects.at(1).name=="new" && p._backend->objects.at(1).parent==0);
+ p._backend->objects.at(1)=src;
  proto::CancellationSource cs;
  auto status=p.UploadRecursive(argv[1],"folder",1,0,cs.Token(),&cs,&tr);
  printf("MTP directory with regular file+symlink: success=%d uploaded_entries=%u (expected 2 or explicit rejection)\n",status.ok,p._backend->uploads);
