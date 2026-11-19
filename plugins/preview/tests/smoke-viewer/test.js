@@ -1,0 +1,22 @@
+// Run with far2l-smoke against a TESTING build with the Preview plugin installed.
+var root = WorkDir();
+var profile = root + "/profile";
+var left = root + "/left";
+MkdirsAll([left, profile + "/.config/settings", profile + "/.config/plugins/preview"], 0700);
+SaveTextFile(left + "/broken.png", ["F3_STANDARD_TEXT_PAYLOAD"]);
+SaveTextFile(profile + "/.config/settings/config.ini", ["[Descriptions]", "UpdateMode=2"]);
+SaveTextFile(profile + "/.config/plugins/preview/config.ini", ["[Settings]", "Enabled=1", "OpenInFV=1"]);
+StartApp(["--tty", "--nodetect", "--mortal", "-u", profile, "-cd", left, "-cd", left]);
+ExpectString("RenMov");
+TypeDown();
+TypeFKey(3);
+ExpectString("Failed to load image");
+TypeEnter();
+ExpectString("F3_STANDARD_TEXT_PAYLOAD");
+TypeEscape();
+ExpectString("RenMov");
+TypeFKey(10);
+ExpectString("Do you want to quit FAR?");
+TypeEnter();
+ExpectAppExit(0);
+0;

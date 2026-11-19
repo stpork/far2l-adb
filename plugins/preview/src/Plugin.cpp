@@ -267,7 +267,8 @@ SHAREDSYMBOL void WINAPI ExitFARW(void)
 SHAREDSYMBOL void WINAPI ClosePluginW(HANDLE hPlugin) {}
 SHAREDSYMBOL int WINAPI ProcessEventW(HANDLE hPlugin, int Event, void *Param) { return FALSE; }
 
-static std::string g_last_intercepted_file;  // Prevent re-intercepting same file
+// VE_READ runs before Far inserts the viewer frame. Close only that frame once it is active.
+static std::unordered_set<int> previewed_viewers;
 
 SHAREDSYMBOL int WINAPI ProcessViewerEventW(int Event,void *Param)
 {
@@ -275,6 +276,13 @@ SHAREDSYMBOL int WINAPI ProcessViewerEventW(int Event,void *Param)
 		return FALSE;
 	}
 	DBG("ProcessViewerEventW Event=%d", Event);
+	if (Param && (Event == VE_GOTFOCUS || Event == VE_REDRAW || Event == VE_CLOSE)) {
+		int id = *static_cast<int *>(Param);
+		if (previewed_viewers.erase(id) && Event != VE_CLOSE) {
+			if (g_far.ViewerControl(VCTL_QUIT, nullptr)) return TRUE;
+			previewed_viewers.insert(id);
+		}
+	}
 	if (Event == VE_READ || Event == VE_CLOSE) {
 		// Get viewer info to check file name
 		ViewerInfo vi{sizeof(ViewerInfo), 0};
@@ -319,24 +327,9 @@ SHAREDSYMBOL int WINAPI ProcessViewerEventW(int Event,void *Param)
 			const wchar_t *slash = wcsrchr(vi.FileName, L'/');
 			std::string filename_mb = Wide2MB(slash ? slash + 1 : vi.FileName);
 			if (g_settings.MatchFile(filename_mb.c_str())) {
-				// Prevent re-intercepting the same file
-				if (g_last_intercepted_file != viewer_file) {
-					g_last_intercepted_file = viewer_file;
-					DBG("F3 viewer intercept: showing image '%s'", viewer_file.c_str());
-					// Close internal viewer
-					g_far.ViewerControl(VCTL_QUIT, nullptr);
-					// Show our image viewer
-					ShowImageAtFull(viewer_file, false);
-					// After our viewer closes, post ESC to close any remaining internal viewer
-					DWORD esc_key = KEY_ESC;
-					KeySequence ks = {0, 1, &esc_key};
-					g_far.AdvControl(g_far.ModuleNumber, ACTL_POSTKEYSEQUENCE, &ks, 0);
-					DBG("F3 viewer: done, posted ESC");
-					return TRUE;
-				} else {
-					DBG("F3 viewer: already intercepted this file, closing internal viewer");
-					g_far.ViewerControl(VCTL_QUIT, nullptr);
-					g_last_intercepted_file.clear(); // allow future opens after VCTL_QUIT
+				auto result = ShowImageAtFull(viewer_file, false);
+				if (result != EXITED_DUE_ERROR) {
+					previewed_viewers.insert(vi.ViewerID);
 					return TRUE;
 				}
 			}
@@ -346,10 +339,6 @@ SHAREDSYMBOL int WINAPI ProcessViewerEventW(int Event,void *Param)
 			DBG("calling DismissImageAtQV");
 			DismissImageAtQV();
 		}
-	}
-	// Clear intercepted file on close
-	if (Event == VE_CLOSE) {
-		g_last_intercepted_file.clear();
 	}
 	return FALSE;
 }
