@@ -20,20 +20,34 @@ class BuildCleanupTests(unittest.TestCase):
         self.caller.mkdir()
         shutil.copy2(ROOT / 'build.sh', self.repo / 'build.sh')
 
+    def mark_build(self, directory):
+        (directory / 'CMakeFiles').mkdir(parents=True)
+        (directory / 'CMakeCache.txt').write_text(
+            f'CMAKE_HOME_DIRECTORY:INTERNAL={self.repo}\n'
+            f'CMAKE_CACHEFILE_DIR:INTERNAL={directory}\n')
+
     def test_clear_preserves_sources_backups_and_symbols(self):
         subprocess.run(['git', 'init', '-q', str(self.repo)], check=True)
         subprocess.run(['git', '-C', str(self.repo), 'add', 'build.sh'], check=True)
+        self.mark_build(self.repo / '_debug')
+        self.mark_build(self.repo / '_build')
+        (self.repo / '_build' / 'CMakeCache.txt').write_text('belongs to another project')
+        (self.repo / '_release').symlink_to(self.caller, target_is_directory=True)
         for name in ['new-source.cpp', 'photo.png', 'work.bak', 'work.orig',
-                     '.symbols/saved.dSYM', 'cache/__pycache__/test.pyc', '_debug/file.o']:
+                     '.symbols/saved.dSYM', 'cache/__pycache__/test.pyc', '_debug/file.o',
+                     'assets/reference.a', 'tools/import.so', 'python/staging/data', 'old-release.dmg',
+                     '_build/unrelated.o', 'build/notes.txt']:
             path = self.repo / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('keep user files; remove generated files')
         subprocess.run(['/bin/bash', str(self.repo / 'build.sh'), 'clear'],
                        cwd=self.caller, check=True, capture_output=True)
-        for name in ['new-source.cpp', 'photo.png', 'work.bak', 'work.orig', '.symbols/saved.dSYM']:
+        for name in ['new-source.cpp', 'photo.png', 'work.bak', 'work.orig', '.symbols/saved.dSYM', 'cache/__pycache__/test.pyc',
+                     'assets/reference.a', 'tools/import.so', 'python/staging/data', 'old-release.dmg',
+                     '_build/unrelated.o', 'build/notes.txt']:
             self.assertTrue((self.repo / name).is_file(), name)
         self.assertFalse((self.repo / '_debug').exists())
-        self.assertFalse((self.repo / 'cache/__pycache__').exists())
+        self.assertTrue((self.repo / '_release').is_symlink())
 
     def test_failed_build_directory_creation_stops_before_cmake(self):
         (self.repo / '_release').write_text('a file blocks the build directory')
@@ -54,6 +68,7 @@ class BuildCleanupTests(unittest.TestCase):
         for parent in [self.repo, self.caller]:
             (parent / '_release').mkdir()
             (parent / '_release/valuable').write_text('data')
+        self.mark_build(self.repo / '_release')
         bins = self.directory / 'bin'
         bins.mkdir()
         for name, content in [

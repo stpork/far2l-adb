@@ -12,49 +12,25 @@ Commands:
   debug|release  Build the specified configuration (default: debug)
   full           Enable AWS, SMB, and NFS netrocks plugins
   dmg            Also package a macOS DragNDrop DMG (a standalone .app is always prepared)
-  clean|clear    When used alone, remove all build artifacts, junk, and caches.
+  clean|clear    When used alone, remove recognized out-of-source build trees.
                  When used with debug/release, clean the build directory first.
 EOF
     exit 1
 }
 
-clean_all() {
-    echo "Cleaning build artifacts, temporary files, and caches (preserving .symbols)..."
-    rm -rf "$SD"/_debug "$SD"/_release "$SD"/_build "$SD"/build "$SD"/cmake-build-*
-    rm -rf "$SD"/_CPack_Packages "$SD"/install "$SD"/install_manifest.txt "$SD"/*.dmg
-    rm -rf "$SD"/.cache
-    rm -rf "$SD"/python/staging "$SD"/python/python "$SD"/python/incpy "$SD"/tools
-    rm -f "$SD"/CPackConfig.cmake "$SD"/CPackSourceConfig.cmake
-    rm -f "$SD"/packaging/osx/FixupBundle.cmake "$SD"/packaging/osx/Setup.scpt
-    rm -f "$SD"/far2l/far2l_askpass "$SD"/far2l/far2l_sudoapp "$SD"/far2l_askpass "$SD"/far2l_sudoapp "$SD"/far2l/far2ledit
+is_build_tree() {
+    [[ -d "$1" && ! -L "$1" && -d "$1/CMakeFiles" && -f "$1/CMakeCache.txt" ]] &&
+        grep -Fxq "CMAKE_HOME_DIRECTORY:INTERNAL=$SD" "$1/CMakeCache.txt" &&
+        grep -Fxq "CMAKE_CACHEFILE_DIR:INTERNAL=$1" "$1/CMakeCache.txt"
+}
 
-    # Delete known generated files, rather than every untracked source or note.
-    find "$SD" \
-            \( -path '*/.git' -o -path '*/.vscode' -o -path "$SD/.symbols" \) -prune -o \
-            \( \
-                -name 'CMakeCache.txt' -o \
-                -name 'CMakeFiles' -o \
-                -name 'CMakeScripts' -o \
-                -name 'CMakeLists.txt.user' -o \
-                -name 'cmake_install.cmake' -o \
-                -name 'CTestTestfile.cmake' -o \
-                -name 'compile_commands.json' -o \
-                -name 'CPackConfig.cmake' -o \
-                -name 'CPackSourceConfig.cmake' -o \
-                -name 'Testing' -o \
-                -name '.ninja_*' -o \
-                -name '*.ninja*' -o \
-                -name '*.a' -o \
-                -name '*.o' -o \
-                -name '*.dylib' -o \
-                -name '*.so' -o \
-                -name '.DS_Store' -o \
-                -name '._*' -o \
-                -name '__pycache__' -o \
-                -name '*.pyc' -o \
-                -name '*.pyo' \
-            \) -exec rm -rf {} + 2>/dev/null || true
-    echo "Cleanup complete."
+clean_all() {
+    for dir in "$SD"/_debug "$SD"/_release "$SD"/_build "$SD"/build "$SD"/cmake-build-*; do
+        if is_build_tree "$dir"; then
+            echo "Removing build tree $dir"
+            rm -rf -- "$dir"
+        fi
+    done
 }
 
 TYPE=""; DMG=0; CLEAN=0; FULL=0
@@ -89,22 +65,22 @@ if ! brew bundle check --file="$SD/Brewfile" >/dev/null 2>&1; then
     brew link libarchive --force >/dev/null 2>&1 || true
 fi
 
-# Wipe stale in-source CMake state (from accidental `cmake .` at repo root)
+# In-source files can belong to a different build. Leave them in place.
 if [[ -f "$SD/CMakeCache.txt" ]]; then
-    echo "Cleaning stale in-source CMake state at repo root..."
-    (cd "$SD" && find . \
-        \( -path ./_debug -o -path ./_release -o -path ./.git -o -path ./.cache \) -prune -o \
-        \( -name CMakeCache.txt -o -name CMakeFiles -o -name cmake_install.cmake -o -name CTestTestfile.cmake \) -print0 \
-        | xargs -0 rm -rf) || true
+    echo "In-source CMake cache found at $SD/CMakeCache.txt." >&2
+    exit 1
 fi
 
 DIR="$SD/_$(echo "$TYPE" | tr A-Z a-z)"
-(( CLEAN )) && rm -rf "$DIR"
+if (( CLEAN )) && [[ -e "$DIR" || -L "$DIR" ]]; then
+    is_build_tree "$DIR" || { echo "Unrecognized build directory: $DIR" >&2; exit 1; }
+    rm -rf -- "$DIR"
+fi
 
-# Drop dir if a prior run used a non-Ninja generator
-if [[ -f "$DIR/CMakeCache.txt" ]] && ! grep -q "^CMAKE_GENERATOR:INTERNAL=Ninja$" "$DIR/CMakeCache.txt"; then
+if [[ -f "$DIR/CMakeCache.txt" ]] && ! grep -q '^CMAKE_GENERATOR:INTERNAL=Ninja$' "$DIR/CMakeCache.txt"; then
+    is_build_tree "$DIR" || { echo "Unrecognized build directory: $DIR" >&2; exit 1; }
     echo "Generator changed, recreating $DIR..."
-    rm -rf "$DIR"
+    rm -rf -- "$DIR"
 fi
 
 mkdir -p "$DIR"

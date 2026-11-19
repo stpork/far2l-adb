@@ -3,10 +3,11 @@ name: check build
 on:
   # allow manually running workflow, useful for testing branches
   workflow_dispatch:
-  # run on push in master
+  # run on push to maintained branches
   push:
     branches:
       - master
+      - develop
     paths-ignore:
       - '.vscode/**'
       - '.cirrus.yml'
@@ -26,34 +27,17 @@ on:
       - 'LICENSE.txt'
       - 'packaging/**'
       - 'README.md'
-  # run on pull request to master
+  # run on pull requests to maintained branches
   pull_request:
     branches:
       - master
+      - develop
   
 env:
   # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
   BUILD_TYPE: Release
 
 jobs:
-  different-compiler:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository != 'elfmz/far2l') }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        compiler: [ gcc7, clang7, gcc15 ]
-
-    name: ${{ matrix.compiler }}
-
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v7
-
-      - name: 'Build in docker'
-        run: |
-          docker build -f _ci/Dockerfile.${{ matrix.compiler }} -t tempx:latest .
-
   ubuntu-medium-compiler:
     if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository != 'elfmz/far2l') }}
     runs-on: ubuntu-22.04
@@ -85,7 +69,7 @@ jobs:
           libuchardet-dev libxml2-dev libwxgtk3.0-gtk3-dev
           libx11-dev libxi-dev
           libssl-dev libsmbclient-dev libnfs-dev libneon27-dev libssh-dev
-          libarchive-dev
+          libarchive-dev libusb-1.0-0-dev
           python3-dev python3-cffi
           golang-go
 
@@ -113,6 +97,16 @@ jobs:
         # Execute the test.
         run: |
           cd testing && ./far2l-smoke-run.sh ../_build/install/far2l
+
+      - name: Transfer and data loss regression tests
+        if: matrix.compiler == 'clang'
+        env:
+          CXX: ${{ matrix.cxx }}
+        run: |
+          python3 -B testing/perf-regressions/run.py
+          for test in plugins/adb/tests/*.py plugins/mtp/tests/*.py plugins/memo/tests/*.py plugins/preview/tests/*.py; do
+            python3 -B "$test"
+          done
 
   ubuntu-high-compiler:
     if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository != 'elfmz/far2l') }}
@@ -145,7 +139,7 @@ jobs:
           libuchardet-dev libxml2-dev libwxgtk3.2-dev
           libx11-dev libxi-dev
           libssl-dev libsmbclient-dev libnfs-dev libneon27-dev libssh-dev
-          libarchive-dev
+          libarchive-dev libusb-1.0-0-dev
           python3-dev python3-cffi
           python3-markdown appstream
   
@@ -199,7 +193,7 @@ jobs:
           libuchardet-dev libxml2-dev libwxgtk3.2-dev
           libx11-dev libxi-dev
           libssl-dev libsmbclient-dev libnfs-dev libneon27-dev libssh-dev
-          libarchive-dev
+          libarchive-dev libusb-1.0-0-dev
           python3-dev python3-cffi
           python3-markdown appstream
 
