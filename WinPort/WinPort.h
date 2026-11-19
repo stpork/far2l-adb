@@ -163,8 +163,8 @@ template <class CHAR_T>
 	std::pair<const CHAR_T*, size_t> ClipboardCharsAndCountWithoutNUL(const void *data, size_t len)
 {
 	const CHAR_T *chars = (const CHAR_T *)data;
-	size_t cnt = len / sizeof(CHAR_T); 
-	if (cnt && !chars[cnt]) {
+	size_t cnt = len / sizeof(CHAR_T);
+	if (cnt && !chars[cnt - 1]) {
 		cnt--;
 	}
 	return std::make_pair(chars, cnt);

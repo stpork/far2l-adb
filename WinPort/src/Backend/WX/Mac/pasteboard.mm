@@ -1,22 +1,59 @@
-#import <wchar.h>
-#import <AppKit/NSPasteboard.h>
+#import <AppKit/AppKit.h>
 #import "pasteboard.h"
 
-static NSString *stringFromWchar(const wchar_t *charText, size_t cnt) {
-	return [[NSString alloc] initWithBytes:charText length:cnt*sizeof(*charText) encoding:NSUTF32LittleEndianStringEncoding];
-}
+// Clipboard backend calls are serialized on the wx main thread.
+static NSPasteboardItem *pending;
 
-static NSString *stringFromChar(const char *charText, size_t cnt)
+static NSPasteboardItem *PendingItem()
 {
-	return [NSString stringWithBytes:charText length:cnt encoding:NSUTF8StringEncoding];
+	if (!pending) pending = [[NSPasteboardItem alloc] init];
+	return pending;
 }
 
-void CopyToPasteboard(const char* szText, size_t cnt) {
-	[[NSPasteboard generalPasteboard] clearContents];
-	[[NSPasteboard generalPasteboard] setString:stringFromChar(szText, cnt) forType:NSPasteboardTypeString];
+static bool StageText(const void *bytes, size_t length, NSStringEncoding encoding)
+{
+	NSString *text = [[NSString alloc] initWithBytes:bytes length:length encoding:encoding];
+	bool ok = text && [PendingItem() setString:text forType:NSPasteboardTypeString];
+#if !__has_feature(objc_arc)
+	[text release];
+#endif
+	return ok;
 }
 
-void CopyToPasteboard(const wchar_t* wszText, size_t cnt) {
-	[[NSPasteboard generalPasteboard] clearContents];
-	[[NSPasteboard generalPasteboard] setString:stringFromWchar(wszText, cnt) forType:NSPasteboardTypeString];
+bool StagePasteboardText(const char *text, size_t count)
+{
+	return StageText(text, count, NSUTF8StringEncoding);
+}
+
+bool StagePasteboardText(const wchar_t *text, size_t count)
+{
+	return StageText(text, count * sizeof(*text), NSUTF32LittleEndianStringEncoding);
+}
+
+bool StagePasteboardData(CFStringRef type, const void *data, size_t size)
+{
+	NSData *bytes = [NSData dataWithBytes:data length:size];
+	return type && [PendingItem() setData:bytes forType:(__bridge NSString *)type];
+}
+
+void DiscardPasteboardData()
+{
+#if !__has_feature(objc_arc)
+	[pending release];
+#endif
+	pending = nil;
+}
+
+static bool PublishTo(NSPasteboard *board)
+{
+	if (!pending) return true;
+	[board clearContents];
+	bool ok = [board writeObjects:@[pending]];
+	DiscardPasteboardData();
+	return ok;
+}
+
+bool PublishPasteboardData()
+{
+	return PublishTo([NSPasteboard generalPasteboard]);
 }

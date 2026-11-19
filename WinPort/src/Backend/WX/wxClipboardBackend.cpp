@@ -59,7 +59,9 @@ public:
 
 } g_wx_custom_formats;
 
+#if !MAC_CLIPBOARD_HACK
 static wxDataObjectComposite *g_wx_data_to_clipboard = nullptr;
+#endif
 
 wxClipboardBackend::wxClipboardBackend()
 {
@@ -99,6 +101,9 @@ void wxClipboardBackend::OnClipboardClose()
 		return;
 	}
 
+#if MAC_CLIPBOARD_HACK
+	if (!PublishPasteboardData()) fprintf(stderr, "Writing pasteboard failed\n");
+#else
 	if (g_wx_data_to_clipboard) {
 		if (wxTheClipboard->SetData( g_wx_data_to_clipboard) ) {
 			fprintf(stderr, "wxTheClipboard->SetData - OK\n");
@@ -112,7 +117,9 @@ void wxClipboardBackend::OnClipboardClose()
 		fprintf(stderr, "CloseClipboard without data\n");
 	}
 
-#if !defined(__WXGTK__) && (MAC_CLIPBOARD_HACK != 2)
+#endif
+
+#if !defined(__WXGTK__) && !MAC_CLIPBOARD_HACK
 	// it never did what supposed to, and under Ubuntu 22.04/Wayland it started to kill gnome-shell
 	wxTheClipboard->Flush();
 #endif
@@ -150,8 +157,12 @@ void wxClipboardBackend::OnClipboardEmpty()
 	}
 
 	fprintf(stderr, "EmptyClipboard\n");
+#if MAC_CLIPBOARD_HACK
+	DiscardPasteboardData();
+#else
 	delete g_wx_data_to_clipboard;
 	g_wx_data_to_clipboard = nullptr;
+#endif
 	wxTheClipboard->Clear();
 }
 
@@ -209,16 +220,26 @@ void *wxClipboardBackend::OnClipboardSetData(UINT format, void *data)
 
 	size_t len = WINPORT(ClipboardSize)(data);
 	fprintf(stderr, "SetClipboardData: format=%u len=%lu\n", format, (unsigned long)len);
+#if MAC_CLIPBOARD_HACK
+	if (format == CF_UNICODETEXT) {
+		auto cc = ClipboardCharsAndCountWithoutNUL<wchar_t>(data, len);
+		return StagePasteboardText(cc.first, cc.second) ? data : nullptr;
+	}
+	if (format == CF_TEXT || format == CF_HTML) {
+		auto cc = ClipboardCharsAndCountWithoutNUL<char>(data, len);
+		bool ok = format == CF_TEXT ? StagePasteboardText(cc.first, cc.second)
+			: StagePasteboardData(CFSTR("public.html"), cc.first, cc.second);
+		return ok ? data : nullptr;
+	}
+	const auto *custom = g_wx_custom_formats.Lookup(format);
+	return custom && StagePasteboardData(custom->GetFormatId(), data, len) ? data : nullptr;
+#else
 	if (!g_wx_data_to_clipboard) {
 		g_wx_data_to_clipboard = new wxDataObjectComposite;
 	}
 
 	if (format == CF_UNICODETEXT) {
 		const auto &cc = ClipboardCharsAndCountWithoutNUL<wchar_t>(data, len);
-#if (MAC_CLIPBOARD_HACK == 2)
-		CopyToPasteboard(cc.first, cc.second);
-		return data;
-#endif
 		wxString wx_str(cc.first, cc.second);
 		g_wx_data_to_clipboard->Add(new wxTextDataObjectTweaked(wx_str));
 		wxCustomDataObject *cdo = new wxCustomDataObject(wxT("text/plain;charset=utf-8"));
@@ -226,16 +247,9 @@ void *wxClipboardBackend::OnClipboardSetData(UINT format, void *data)
 		cdo->SetData(tmp.size(), tmp.c_str()); // not including ending NUL char
 		g_wx_data_to_clipboard->Add(cdo);
 
-#if (MAC_CLIPBOARD_HACK == 1)
-		CopyToPasteboard(cc.first, cc.second);
-#endif
 
 	} else if (format == CF_TEXT) {
 		const auto &cc = ClipboardCharsAndCountWithoutNUL<char>(data, len);
-#if (MAC_CLIPBOARD_HACK == 2)
-		CopyToPasteboard(cc.first, cc.second);
-		return data;
-#endif
 
 		g_wx_data_to_clipboard->Add(new wxTextDataObjectTweaked(wxString::FromUTF8(cc.first, cc.second)));
 
@@ -243,9 +257,6 @@ void *wxClipboardBackend::OnClipboardSetData(UINT format, void *data)
 		cdo->SetData(cc.second, cc.first); // not including ending NUL char
 		g_wx_data_to_clipboard->Add(cdo);
 
-#if (MAC_CLIPBOARD_HACK == 1)
-		CopyToPasteboard(cc.first, cc.second);
-#endif
 
 	} else if (format == CF_HTML) {
 		const auto &cc = ClipboardCharsAndCountWithoutNUL<char>(data, len);
@@ -266,6 +277,7 @@ void *wxClipboardBackend::OnClipboardSetData(UINT format, void *data)
 	}
 
 	return data;
+#endif
 }
 
 void *wxClipboardBackend::OnClipboardGetData(UINT format)

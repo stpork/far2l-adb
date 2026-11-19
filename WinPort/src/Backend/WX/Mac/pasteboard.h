@@ -1,4 +1,9 @@
 #pragma once
+#include <CoreFoundation/CoreFoundation.h>
+#include <cstddef>
 
-void CopyToPasteboard(const char* szText, size_t cnt);
-void CopyToPasteboard(const wchar_t* wszText, size_t cnt);
+bool StagePasteboardText(const char *text, size_t count);
+bool StagePasteboardText(const wchar_t *text, size_t count);
+bool StagePasteboardData(CFStringRef type, const void *data, size_t size);
+void DiscardPasteboardData();
+bool PublishPasteboardData();
