@@ -37,7 +37,12 @@ elif command -v gvfs-trash >/dev/null 2>&1; then
 	gvfs-trash -f -- "$1" 2>"$2"
 
 elif command -v osascript >/dev/null 2>&1; then
-	osascript -e "tell application \"Finder\" to delete POSIX file \"$1\"" 2>"$2"
+	osascript - "$1" 2>"$2" <<'APPLESCRIPT'
+on run argv
+	set itemPath to item 1 of argv
+	tell application "Finder" to delete POSIX file itemPath
+end run
+APPLESCRIPT
 
 else
 	echo 'No command-line trash tool available (see supported tools in the $FARHOME/trash.sh)' >"$2"

@@ -34,6 +34,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "headers.hpp"
 
 #include "copy.hpp"
+#include "CopyDestination.hpp"
 #include "lang.hpp"
 #include "keys.hpp"
 #include "colors.hpp"
@@ -3335,11 +3336,12 @@ static void ProgressUpdate(ShellCopyProgressState &state, bool force,
 /////////////////////////////////////////////////////////// BEGIN OF ShellFileTransfer
 
 ShellFileTransfer::ShellFileTransfer(const wchar_t *SrcName, const FAR_FIND_DATA_EX &SrcData,
-		const FARString &strDestName, bool Append, bool Resume, ShellCopyBuffer &CopyBuffer,
-		COPY_FLAGS &Flags, ShellCopyProgressState &ProgressState)
+		const FARString &strDestName, const FARString &writePath, bool createNew,
+		bool Append, bool Resume, ShellCopyBuffer &CopyBuffer, COPY_FLAGS &Flags,
+		ShellCopyProgressState &ProgressState)
 	:
-	_SrcName(SrcName), _strDestName(strDestName), _CopyBuffer(CopyBuffer), _Flags(Flags),
-	_ProgressState(ProgressState), _SrcData(SrcData), _UseCOW(Flags.USECOW)
+	_SrcName(SrcName), _strDestName(strDestName), _writePath(writePath), _CopyBuffer(CopyBuffer), _Flags(Flags),
+	_ProgressState(ProgressState), _SrcData(SrcData), _UseCOW(Flags.USECOW), _DiscardOnFailure(createNew)
 {
 	if (!_SrcFile.Open(SrcName, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
 				OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN))
@@ -3353,26 +3355,6 @@ ShellFileTransfer::ShellFileTransfer(const wchar_t *SrcName, const FAR_FIND_DATA
 		_ModeToCreateWith = _SrcData.dwUnixMode | S_IWUSR;
 	}
 
-	FAR_FIND_DATA_EX DstData;
-	if (Resume) {
-		DstData.Clear();
-		_AppendPos = 0;
-		Append = false;
-
-		do {
-			if (!apiGetFindDataForExactPathName(strDestName, DstData)) {
-				Resume = false;
-				break;
-			}
-			INT64 nPos = (INT64)DstData.nFileSize;
-			if (!_SrcFile.SetPointer(nPos,nullptr,  FILE_BEGIN)) {
-				_SrcFile.SetPointer(0, &_AppendPos, FILE_BEGIN);
-				Resume = false;
-				break;
-			}
-		} while (false);
-	}
-
 	_DstFlags = FILE_FLAG_SEQUENTIAL_SCAN;
 	if (Flags.WRITETHROUGH) {
 		_DstFlags|= FILE_FLAG_WRITE_THROUGH;
@@ -3384,16 +3366,17 @@ ShellFileTransfer::ShellFileTransfer(const wchar_t *SrcName, const FAR_FIND_DATA
 #endif
 	}
 
-	bool DstOpened = _DestFile.Open(_strDestName, GENERIC_WRITE, FILE_SHARE_READ,
-			_Flags.COPYACCESSMODE ? &_ModeToCreateWith : nullptr, ((Append || Resume) ? OPEN_EXISTING : CREATE_ALWAYS),
+	const DWORD disposition = Append || Resume ? OPEN_EXISTING : createNew ? CREATE_NEW : CREATE_ALWAYS;
+	bool DstOpened = _DestFile.Open(_writePath, GENERIC_WRITE, FILE_SHARE_READ,
+			_Flags.COPYACCESSMODE ? &_ModeToCreateWith : nullptr, disposition,
 			_DstFlags);
 
 	if ((_DstFlags & (FILE_FLAG_WRITE_THROUGH | FILE_FLAG_NO_BUFFERING)) != 0) {
 		if (!DstOpened) {
 			_DstFlags&= ~(FILE_FLAG_WRITE_THROUGH | FILE_FLAG_NO_BUFFERING);
-			DstOpened = _DestFile.Open(_strDestName, GENERIC_WRITE, FILE_SHARE_READ,
+			DstOpened = _DestFile.Open(_writePath, GENERIC_WRITE, FILE_SHARE_READ,
 					_Flags.COPYACCESSMODE ? &_ModeToCreateWith : nullptr,
-					((Append || Resume) ? OPEN_EXISTING : CREATE_ALWAYS), _DstFlags);
+					disposition, _DstFlags);
 			if (DstOpened) {
 				Flags.WRITETHROUGH = false;
 				fprintf(stderr, "COPY: unbuffered FAILED: 0x%x\n",
@@ -3412,13 +3395,26 @@ ShellFileTransfer::ShellFileTransfer(const wchar_t *SrcName, const FAR_FIND_DATA
 	}
 
 	if (Append || Resume) {
+		struct stat src{}, dst{};
+		if (sdc_fstat(_SrcFile.Descriptor(), &src) != 0 || sdc_fstat(_DestFile.Descriptor(), &dst) != 0)
+			throw ErrnoSaver();
+		if (src.st_dev == dst.st_dev && src.st_ino == dst.st_ino) {
+			errno = EINVAL;
+			throw ErrnoSaver();
+		}
 		_AppendPos = 0;
 		if (!_DestFile.SetPointer(0, &_AppendPos, FILE_END)) {
 			ErrnoSaver ErSr;
 			_SrcFile.Close();
-			_DestFile.SetEnd();
 			_DestFile.Close();
 			throw ErSr;
+		}
+		if (Resume) {
+			if (_AppendPos > src.st_size) {
+				errno = EINVAL;
+				throw ErrnoSaver();
+			}
+			if (!_SrcFile.SetPointer(_AppendPos, nullptr, FILE_BEGIN)) throw ErrnoSaver();
 		}
 	} else if (SrcData.nFileSize > (uint64_t)_CopyBuffer.Size && !_Flags.SPARSEFILES && !_Flags.USECOW) {
 		_DestFile.AllocationHint(SrcData.nFileSize);
@@ -3443,15 +3439,13 @@ ShellFileTransfer::~ShellFileTransfer()
 			_ProgressState.CurCopiedSize = 0;	// Сбросить текущий прогресс
 
 			if (_AppendPos != -1) {
-				_DestFile.SetPointer(_AppendPos, nullptr, FILE_BEGIN);
+				if (_DestFile.SetPointer(_AppendPos, nullptr, FILE_BEGIN)) _DestFile.SetEnd();
 			}
-
-			_DestFile.SetEnd();
 			_DestFile.Close();
 
-			if (_AppendPos == -1) {
-				TemporaryMakeWritable tmw(_strDestName);
-				apiDeleteFile(_strDestName);
+			if (_DiscardOnFailure) {
+				TemporaryMakeWritable tmw(_writePath);
+				apiDeleteFile(_writePath);
 			}
 
 			ProgressUpdate(_ProgressState, true, _SrcData, _strDestName);
@@ -3683,8 +3677,12 @@ int ShellCopy::ShellCopyFile(const wchar_t *SrcName, const FAR_FIND_DATA_EX &Src
 
 	if (Flags.LINK) {
 		if (RPT == RP_HARDLINK) {
-			apiDeleteFile(strDestName);		// BUGBUG
-			return (MkHardLink(SrcName, strDestName) ? COPY_SUCCESS : COPY_FAILURE);
+			CopyDestination destination;
+			if (!destination.Prepare(Wide2MB(SrcName), strDestName.GetMB(), false)) return COPY_FAILURE;
+			const FARString path = destination.StagingPath().empty()
+				? strDestName : FARString(StrMB2Wide(destination.StagingPath()).c_str());
+			return MkHardLink(SrcName, path) && destination.Publish(strDestName.GetMB(), true)
+				? COPY_SUCCESS : COPY_FAILURE;
 		} else {
 			return (MkSymLink(SrcName, strDestName, RPT, true) ? COPY_SUCCESS : COPY_FAILURE);
 		}
@@ -3700,10 +3698,15 @@ int ShellCopy::ShellCopyFile(const wchar_t *SrcName, const FAR_FIND_DATA_EX &Src
     }
 
 	try {
+		CopyDestination destination;
+		if (!apiIsDevNull(strDestName) && !destination.Prepare(Wide2MB(SrcName), strDestName.GetMB(), Append || Resume))
+			return COPY_FAILURE;
+		const FARString writePath = destination.StagingPath().empty()
+			? strDestName : FARString(StrMB2Wide(destination.StagingPath()).c_str());
 #if defined(COW_SUPPORTED) && defined(__APPLE__)
 		if (Flags.USECOW && !Append && !Resume) {
 			const std::string mbSrc = Wide2MB(SrcName);
-			const std::string &mbDest = strDestName.GetMB();
+			const std::string &mbDest = writePath.GetMB();
 			int r = clonefile(mbSrc.c_str(), mbDest.c_str(), 0);
 			if (r == 0) {
 				// fprintf(stderr, "CoW succeeded for '%s' -> '%s'\n", mbSrc.c_str(), mbDest.c_str());
@@ -3712,7 +3715,8 @@ int ShellCopy::ShellCopyFile(const wchar_t *SrcName, const FAR_FIND_DATA_EX &Src
 					ProgressState.TotalCopiedSize+= SrcData.nFileSize;
 
 				ProgressUpdate(ProgressState, false, SrcData, strDestName);
-				return ProgressState.Progress->Cancelled() ? COPY_CANCEL : COPY_SUCCESS;
+				if (ProgressState.Progress->Cancelled()) return COPY_CANCEL;
+				return destination.Publish(strDestName.GetMB(), Flags.COPYACCESSMODE) ? COPY_SUCCESS : COPY_FAILURE;
 			}
 
 			ErrnoSaver ErSr;
@@ -3724,9 +3728,10 @@ int ShellCopy::ShellCopyFile(const wchar_t *SrcName, const FAR_FIND_DATA_EX &Src
 		}
 #endif
 
-		ShellFileTransfer(SrcName, SrcData, strDestName, Append != 0, Resume != 0,
-				CopyBuffer, Flags, ProgressState).Do();
-		return ProgressState.Progress->Cancelled() ? COPY_CANCEL : COPY_SUCCESS;
+		ShellFileTransfer(SrcName, SrcData, strDestName, writePath, destination.create_new,
+				Append != 0, Resume != 0, CopyBuffer, Flags, ProgressState).Do();
+		if (ProgressState.Progress->Cancelled()) return COPY_CANCEL;
+		return destination.Publish(strDestName.GetMB(), Flags.COPYACCESSMODE) ? COPY_SUCCESS : COPY_FAILURE;
 	} catch (ErrnoSaver &) {
 	}
 

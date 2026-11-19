@@ -140,6 +140,7 @@ class ShellFileTransfer
 {
 	const wchar_t *_SrcName;
 	const FARString &_strDestName;
+	const FARString &_writePath;
 	ShellCopyBuffer &_CopyBuffer;
 	COPY_FLAGS &_Flags;
 	ShellCopyProgressState &_ProgressState;
@@ -155,6 +156,7 @@ class ShellFileTransfer
 	bool _LastWriteWasHole = false;
 	bool _Done             = false;
 	bool _UseCOW;
+	bool _DiscardOnFailure;
 	CopyBufferSizer _BufferSizer;
 	std::unique_ptr<ShellCopyFileExtendedAttributes> _XAttrCopyPtr;
 
@@ -166,8 +168,8 @@ class ShellFileTransfer
 
 public:
 	ShellFileTransfer(const wchar_t *SrcName, const FAR_FIND_DATA_EX &SrcData, const FARString &strDestName,
-			bool Append, bool Resume, ShellCopyBuffer &CopyBuffer, COPY_FLAGS &Flags,
-			ShellCopyProgressState &ProgressState);
+			const FARString &writePath, bool createNew, bool Append, bool Resume,
+			ShellCopyBuffer &CopyBuffer, COPY_FLAGS &Flags, ShellCopyProgressState &ProgressState);
 	~ShellFileTransfer();
 
 	void Do();

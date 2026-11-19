@@ -1,5 +1,5 @@
 from common import section, check
-block=section('far2l/src/copy.cpp','\t_DstFlags = FILE_FLAG_SEQUENTIAL_SCAN;','\n\tbool DstOpened =')
+block=section('far2l/src/copy.cpp','\t_DstFlags = FILE_FLAG_SEQUENTIAL_SCAN;','\n\tconst DWORD disposition =')
 check('Buffered append and resume',r'''
 #include <cassert>
 #include <initializer_list>
