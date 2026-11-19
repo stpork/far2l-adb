@@ -69,6 +69,7 @@ set(SOURCES
     src/VT256ColorTable.cpp
     src/ReadWholeFile.cpp
     src/WriteWholeFile.cpp
+    src/StagedFile.cpp
     src/ThrowPrintf.cpp
     src/FcntlHelpers.cpp
     src/Panic.cpp
