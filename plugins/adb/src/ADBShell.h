@@ -42,8 +42,7 @@ public:
     // Exit code from most recent shellCommand's END marker; -1 if unparseable (timeout / broken session).
     int lastExitCode() const { return _last_exit_code.load(); }
     // Exit code of this thread's most recent adbExecWithProgress() child. kPtyExitKilled when we
-    // killed it ourselves (Esc, or the idle bound); -1 when it died on a signal we did not send,
-    // kPtyExitFailed if the executable, PTY or child status could not be obtained.
+    // killed it ourselves (Esc or the idle bound); kPtyExitFailed for signals, launch or wait failures.
     static constexpr int kPtyExitKilled = -2;
     static constexpr int kPtyExitFailed = -3;
     static int lastPtyExit() { return _last_pty_exit; }

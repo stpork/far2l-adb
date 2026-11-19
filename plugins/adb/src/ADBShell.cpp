@@ -11,6 +11,7 @@
 #include <fstream>
 #include <vector>
 #include <mutex>
+#include <string_view>
 
 // System includes
 #include <unistd.h>
@@ -31,6 +32,8 @@
 
 
 #include "ADBDevice.h"
+
+extern char** environ;
 
 static std::string _adbPath;
 static std::mutex _adbPathMutex;
@@ -59,7 +62,10 @@ ADBShell::~ADBShell() {
 
 // Helper function to test if a path is a working ADB executable
 static bool tryAdbPath(const std::string& path, int budget_ms) {
-    if (path.empty()) return false;
+    if (path.empty() || budget_ms <= 0 || access(path.c_str(), X_OK) != 0) return false;
+    char program[] = "adb";
+    char version[] = "version";
+    char* argv[] = {program, version, nullptr};
     DBG("Trying ADB path: %s\n", path.c_str());
 
     // Create temporary pipe for testing
@@ -83,7 +89,7 @@ static bool tryAdbPath(const std::string& path, int budget_ms) {
         dup2(pipefd[1], STDOUT_FILENO);
         dup2(pipefd[1], STDERR_FILENO);
         close(pipefd[1]);
-        execlp(path.c_str(), "adb", "version", (char*)nullptr);
+        execve(path.c_str(), argv, environ);
         _exit(127);
     }
 
@@ -168,9 +174,23 @@ std::string ADBShell::findAdbExecutable() {
 
     std::string found;
 
-    // Standard paths (includes macOS Homebrew + Linux system paths)
+    // Resolve PATH before forking, so no PATH lookup is needed in the child.
+    if (const char* path = getenv("PATH")) {
+        std::string_view paths(path);
+        while (budget_left()) {
+            auto separator = paths.find(':');
+            std::string candidate(paths.substr(0, separator));
+            candidate += candidate.empty() ? "./adb" : "/adb";
+            if (tryAdbPath(candidate, budget_ms_left())) {
+                found = std::move(candidate);
+                break;
+            }
+            if (separator == std::string_view::npos) break;
+            paths.remove_prefix(separator + 1);
+        }
+    }
+
     const char* adb_paths[] = {
-        "adb",
         "/opt/homebrew/bin/adb",
         "/usr/local/bin/adb",
         "/usr/bin/adb",
@@ -178,7 +198,7 @@ std::string ADBShell::findAdbExecutable() {
     };
 
     for (const char* path : adb_paths) {
-        if (!budget_left()) break;
+        if (!found.empty() || !budget_left()) break;
         if (path && path[0] && tryAdbPath(path, budget_ms_left())) {
             found = path;
             break;
@@ -260,13 +280,24 @@ static std::vector<char*> PrepareArgv(const std::string& adbPath, const std::str
     return argv;
 }
 
-static void SetupChildEnv() {
-    setenv("TERM", "xterm-256color", 1);
-    setenv("TERM_PROGRAM", "far2l", 1);
-    setenv("LANG", "en_US.UTF-8", 1);
-    setenv("LC_ALL", "en_US.UTF-8", 1);
-    // Defense-in-depth alongside winsize=4096; harmless if adb ignores it.
-    setenv("COLUMNS", "4096", 1);
+static std::vector<char*> PrepareEnv(std::vector<std::string>& storage) {
+    static constexpr std::string_view overrides[] = {
+        "TERM=xterm-256color", "TERM_PROGRAM=far2l", "LANG=en_US.UTF-8",
+        "LC_ALL=en_US.UTF-8", "COLUMNS=4096",
+    };
+    for (auto entry = environ; entry && *entry; ++entry) {
+        std::string_view inherited(*entry);
+        const auto key = inherited.substr(0, inherited.find('='));
+        if (std::none_of(std::begin(overrides), std::end(overrides), [&](std::string_view value) {
+                return key == value.substr(0, value.find('='));
+            })) storage.emplace_back(inherited);
+    }
+    for (auto value : overrides) storage.emplace_back(value);
+    std::vector<char*> env;
+    env.reserve(storage.size() + 1);
+    for (auto& entry : storage) env.push_back(entry.data());
+    env.push_back(nullptr);
+    return env;
 }
 
 bool ADBShell::start() {
@@ -294,6 +325,10 @@ bool ADBShell::start() {
         return false;
     }
 
+    // -T prevents the device-side terminal from echoing our shell completion marker.
+    std::vector<std::string> args_storage, env_storage;
+    auto argv = PrepareArgv(adbPath, _device_serial, {"shell", "-T"}, args_storage);
+    auto env = PrepareEnv(env_storage);
     pid_t pid = fork();
     if (pid == 0) {
         // --- Child ---
@@ -310,11 +345,7 @@ bool ADBShell::start() {
         close(pipe_stdin[0]);
         close(pipe_stdout[1]);
 
-        SetupChildEnv();
-        std::vector<std::string> storage;
-        // `-T` disables device-side PTY; without it adb echoes stdin into stdout and the marker matches its own echo (prev P3).
-        std::vector<char*> argv = PrepareArgv(adbPath, _device_serial, {"shell", "-T"}, storage);
-        execvp(adbPath.c_str(), argv.data());
+        execve(adbPath.c_str(), argv.data(), env.data());
         _exit(127);
     }
     else if (pid > 0) {
@@ -725,6 +756,9 @@ std::string ADBShell::runAdbProcess(const std::vector<std::string>& args, int ti
         return "";
     }
 
+    std::vector<std::string> args_storage, env_storage;
+    auto argv = PrepareArgv(adbPath, "", args, args_storage);
+    auto env = PrepareEnv(env_storage);
     pid_t pid = fork();
     if (pid < 0) {
         DBG("runAdbProcess: Failed to fork, errno=%d\n", errno);
@@ -738,10 +772,7 @@ std::string ADBShell::runAdbProcess(const std::vector<std::string>& args, int ti
         dup2(pipefd[1], STDERR_FILENO);
         close(pipefd[1]);
 
-        SetupChildEnv();
-        std::vector<std::string> storage;
-        std::vector<char*> argv = PrepareArgv(adbPath, "", args, storage);
-        execvp(adbPath.c_str(), argv.data());
+        execve(adbPath.c_str(), argv.data(), env.data());
         _exit(127);
     }
 
@@ -806,14 +837,14 @@ std::string ADBShell::runAdbProcessWithPty(const std::vector<std::string>& args,
     win.ws_col = 4096; win.ws_row = 24;
 
     int master_fd = -1;
+    std::vector<std::string> args_storage, env_storage;
+    auto argv = PrepareArgv(adbPath, "", args, args_storage);
+    auto env = PrepareEnv(env_storage);
     pid_t pid = forkpty(&master_fd, nullptr, nullptr, &win);
     if (pid < 0) return "";
 
     if (pid == 0) {
-        SetupChildEnv();
-        std::vector<std::string> storage;
-        std::vector<char*> argv = PrepareArgv(adbPath, "", args, storage);
-        execvp(adbPath.c_str(), argv.data());
+        execve(adbPath.c_str(), argv.data(), env.data());
         _exit(127);
     }
 
@@ -861,7 +892,11 @@ std::string ADBShell::runAdbProcessWithPty(const std::vector<std::string>& args,
             if (n > 0) {
                 last_output = std::chrono::steady_clock::now();
                 output.append(buffer, static_cast<size_t>(n));
-                on_chunk(std::string(buffer, static_cast<size_t>(n)));
+                // Transfers stream progress separately. Keep only the recent diagnostics.
+                constexpr size_t diagnostic_limit = 64 * 1024;
+                if (idle_timeout_ms > 0 && output.size() > 2 * diagnostic_limit)
+                    output.erase(0, output.size() - diagnostic_limit);
+                if (on_chunk) on_chunk(std::string(buffer, static_cast<size_t>(n)));
             } else if (n == 0) {
                 break;
             } else if (errno != EINTR && errno != EAGAIN) {
@@ -874,20 +909,27 @@ std::string ADBShell::runAdbProcessWithPty(const std::vector<std::string>& args,
     }
 
     close(master_fd);
-    if (aborted || stalled) {
-        kill(pid, SIGTERM);
-        usleep(100000);
-        kill(pid, SIGKILL);
-    }
-
     int status = 0;
-    pid_t waited;
-    do { waited = waitpid(pid, &status, 0); } while (waited < 0 && errno == EINTR);
-    // kPtyExitKilled when we did the killing (abort or idle bound): that is a definite failure,
-    // whereas -1 ("died on a signal, cause unknown") is the only case with no evidence at all and
-    // is allowed to fall back to sniffing adb's output trailer.
+    pid_t waited = 0;
+    if (!aborted && !stalled && (abort_check || idle_timeout_ms > 0)) {
+        // The PTY can close before the process exits. Keep cancellation and the
+        // inactivity deadline active while waiting for the child's final status.
+        do {
+            waited = waitpid(pid, &status, WNOHANG);
+            if (waited < 0 && errno == EINTR) continue;
+            if (waited != 0) break;
+            aborted = abort_check && abort_check();
+            stalled = idle_timeout_ms > 0 && std::chrono::steady_clock::now() - last_output
+                >= std::chrono::milliseconds(idle_timeout_ms);
+            if (!aborted && !stalled) poll(nullptr, 0, 50);
+        } while (!aborted && !stalled);
+    }
+    if (waited == 0 || (waited < 0 && errno == EINTR)) {
+        if (aborted || stalled) kill(pid, SIGKILL);
+        do { waited = waitpid(pid, &status, 0); } while (waited < 0 && errno == EINTR);
+    }
     _last_pty_exit = (aborted || stalled) ? kPtyExitKilled
-        : (waited != pid ? kPtyExitFailed : (WIFEXITED(status) ? WEXITSTATUS(status) : -1));
+        : (waited == pid && WIFEXITED(status) ? WEXITSTATUS(status) : kPtyExitFailed);
     ADBUtils::TrimTrailingNewlines(output);
     return output;
 }

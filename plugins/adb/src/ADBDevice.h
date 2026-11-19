@@ -42,8 +42,8 @@ private:
     std::vector<std::string> BuildArgs(const std::vector<std::string>& args) const;
 
     // Helper to check if result indicates success
-    bool IsSuccessResult(const std::string& result, bool is_push = false) const;
-    bool TransferSucceeded(int pty_exit, const std::string& result, bool is_push) const;
+    int PullItem(const std::string& devicePath, const std::string& localPath, bool recursive,
+                 const AdbProgressFn& on_progress, const std::function<bool()>& abort_check, bool replace);
 
     // Unified transfer helper (DRY)
     int TransferItem(const std::string& src, const std::string& dst, bool is_push, bool recursive,
@@ -68,12 +68,14 @@ public:
     bool SetDirectory(const std::string &path);
 
     // File transfer operations
-    int PullFile(const std::string &devicePath, const std::string &localPath);
-    int PullFile(const std::string &devicePath, const std::string &localPath, const AdbProgressFn &on_progress, const std::function<bool()> &abort_check = {});
+    int PullFile(const std::string& devicePath, const std::string& localPath,
+                      const AdbProgressFn& on_progress = {}, const std::function<bool()>& abort_check = {},
+                      bool replace = false);
     int PushFile(const std::string &localPath, const std::string &devicePath);
     int PushFile(const std::string &localPath, const std::string &devicePath, const AdbProgressFn &on_progress, const std::function<bool()> &abort_check = {});
-    int PullDirectory(const std::string &devicePath, const std::string &localPath);
-    int PullDirectory(const std::string &devicePath, const std::string &localPath, const AdbProgressFn &on_progress, const std::function<bool()> &abort_check = {});
+    int PullDirectory(const std::string& devicePath, const std::string& localPath,
+                      const AdbProgressFn& on_progress = {}, const std::function<bool()>& abort_check = {},
+                      bool replace = false);
     int PushDirectory(const std::string &localPath, const std::string &devicePath);
     int PushDirectory(const std::string &localPath, const std::string &devicePath, const AdbProgressFn &on_progress, const std::function<bool()> &abort_check = {});
 

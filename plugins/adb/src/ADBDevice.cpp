@@ -1,3 +1,7 @@
+#include <StagedFile.h>
+#include <string_view>
+#include <charconv>
+#include <sys/stat.h>
 #include "ADBDevice.h"
 #include "ADBShell.h"
 #include "ADBLog.h"
@@ -37,8 +41,8 @@ std::string JoinPath(const std::string& base, const std::string& component)
     if (base.empty()) return component;
     if (component.empty()) return base;
 
-    bool baseEndsSep = (!base.empty() && (base.back() == '/' || base.back() == '\\'));
-    bool compStartsSep = (!component.empty() && (component.front() == '/' || component.front() == '\\'));
+    bool baseEndsSep = (!base.empty() && (base.back() == '/'));
+    bool compStartsSep = (!component.empty() && (component.front() == '/'));
 
     if (baseEndsSep && compStartsSep) {
         return base + component.substr(1);
@@ -340,19 +344,6 @@ std::string ADBDevice::RunAdbCommandWithProgress(const std::vector<std::string> 
     return ADBShell::adbExecWithProgress(BuildArgs(args), on_chunk, abort_check, idle_timeout_ms);
 }
 
-bool ADBDevice::IsSuccessResult(const std::string& result, bool is_push) const
-{
-    // Trailer "(<N> bytes in <T>s)" — only on success, never truncated by adb's path abbreviation.
-    if (result.find("bytes in ") != std::string::npos) return true;
-    if (result.find("skipped") != std::string::npos) return true;
-    if (is_push) {
-        return result.find("file pushed") != std::string::npos ||
-               result.find("files pushed") != std::string::npos;
-    }
-    return result.find("file pulled") != std::string::npos ||
-           result.find("files pulled") != std::string::npos;
-}
-
 std::string ADBDevice::RunShellCommand(const std::string &command)
 {
     EnsureConnection();
@@ -432,6 +423,11 @@ bool ADBDevice::HaveFindPrintf()
     return _find_printf == 1;
 }
 
+static constexpr const char* kDirectoryGlob =
+    "for f in ./* ./.[!.]* ./..?*; do "
+    "case \"$f\" in './*'|'./.[!.]*'|'./..?*') "
+    "[ -e \"$f\" ] || [ -L \"$f\" ] || continue;; esac; ";
+
 std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<PluginPanelItem> &files)
 {
 
@@ -439,112 +435,61 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
         throw std::runtime_error("ADB shell not connected");
     }
 
-    // Validate path doesn't contain problematic characters that could break bulk command parsing
-    if (path.find('\0') != std::string::npos || path.find('\n') != std::string::npos) {
-        throw std::runtime_error("Invalid path: contains null or newline characters");
-    }
+    if (path.find('\0') != std::string::npos) throw std::runtime_error("Invalid path");
 
-    // One roundtrip. `ls -la` stays the authoritative enumerator and cannot be replaced: it is
-    // the only listing that never drops an entry. SELinux denies getattr on some paths to the
-    // shell user - 97 of the 401 entries under /system/bin on a stock Android 14 - and stat,
-    // find and `adb ls` all skip those silently, while ls still prints the name and recovers
-    // the type from d_type.
-    //
-    // Where `find -printf` exists it is layered on top, because it supplies what parsing
-    // human-formatted ls cannot:
-    //   * records are NUL-framed, so names and symlink targets survive spaces, quotes, " -> "
-    //     and even an embedded newline;
-    //   * %T@ is epoch seconds, so there is no date format and no timezone to get wrong. ls
-    //     prints the device's local wall time, which the host would otherwise convert with its
-    //     own mktime() - two hours out when the device is +0400 and the host +0200;
-    //   * %l gives the symlink target and `find -L`'s %M gives the *target's* mode, which is how
-    //     a symlink to a directory becomes enterable. The legacy branch instead forks
-    //     [ -L ]/[ -d ]/[ -f ] per entry: measured 2.03 s versus 0.22 s on /system/bin, which
-    //     holds 188 symlinks.
+    // Use the shell's directory entries for the names. Some Android paths deny getattr,
+    // which means find can omit entries. The ls pass supplies metadata for older devices.
     const bool fast = HaveFindPrintf();
-
-    const std::string separator = "<<<!>>>";
-    const std::string arrow = ":->";
-
     std::ostringstream bulk_cmd;
-    // `if cd` rather than `cd; ...`: on a chdir failure this yields no output at all, instead of
-    // silently listing whichever directory we were in before under the new directory's name.
-    bulk_cmd << "if cd " << ADBUtils::ShellQuote(path) << " 2>/dev/null; then pwd; ls -la; ";
-    if (fast) {
-        // A single NUL ends the ls section. It has to be a NUL and nothing else: ls output can
-        // never contain one, whereas it CAN contain any other byte verbatim - toybox 0.8.9 prints
-        // control characters raw, so a file named "bell\001" makes ls emit "\001\n" and a marker
-        // built from printable/control bytes would be forged by the listing it is meant to
-        // delimit, truncating the panel.
-        //
-        // After that boundary everything is NUL-framed "field\0name\0" pairs, tagged by the first
-        // byte of the field so both find passes can share one stream and no second marker is
-        // needed: 'B' carries the metadata, 'D' the dereferenced mode. %l and %M sit at the end
-        // of their field, so a target containing a tab cannot shift anything.
-        bulk_cmd << "printf '\\000'; "
-                 << "find . -mindepth 1 -maxdepth 1 -printf 'B%s\\t%T@\\t%u\\t%g\\t%l\\0%f\\0' 2>/dev/null; "
-                 << "find -L . -mindepth 1 -maxdepth 1 -printf 'D%M\\0%f\\0' 2>/dev/null; ";
-    } else {
-        bulk_cmd << "echo \"" << separator << "\"; "
-                 << "for f in *; do "
-                 << "[ -L \"$f\" ] && ([ -d \"$f\" ] && echo \"$f" << arrow << "D\" "
-                 << "|| ([ -f \"$f\" ] && echo \"$f" << arrow << "F\" || echo \"$f" << arrow << "B\")); "
-                 << "done; ";
+    bulk_cmd << "if cd " << ADBUtils::ShellQuote(path) << " 2>/dev/null; then "
+             << "printf '%s\\000' \"$PWD\"; ls -la; printf '\\000'; "
+             << kDirectoryGlob
+             << "printf 'N\\000%s\\000' \"${f#./}\"; ";
+    if (!fast) {
+        bulk_cmd << "if [ -L \"$f\" ] && [ -d \"$f\" ]; then printf 'Dd\\000%s\\000' \"${f#./}\"; fi; ";
     }
-    bulk_cmd << "fi";
+    bulk_cmd << "done; ";
+    if (fast) {
+        bulk_cmd << "find . -mindepth 1 -maxdepth 1 -printf 'B%M\\t%s\\t%T@\\t%u\\t%g\\t%l\\0%f\\0' 2>/dev/null; "
+                 << "find -L . -mindepth 1 -maxdepth 1 -printf 'D%M\\0%f\\0' 2>/dev/null; ";
+    }
+    bulk_cmd << "printf 'E\\000\\000'; fi";
 
     const std::string bulk_output = RunShellCommand(bulk_cmd.str());
+    const size_t path_end = bulk_output.find('\0');
+    const size_t ls_end = path_end == std::string::npos ? path_end : bulk_output.find('\0', path_end + 1);
+    if (ls_end == std::string::npos || bulk_output.empty() || bulk_output.front() != '/'
+            || bulk_output.size() < 3 || bulk_output.compare(bulk_output.size() - 3, 3, "E\0\0", 3) != 0)
+        throw std::runtime_error("Incomplete ADB directory listing");
 
-    // Split off the ls text before any line splitting: what follows is NUL-framed binary and
-    // must never go through getline(). If the boundary is absent - find missing, killed, or the
-    // whole command failed - fall back to ls-only rather than feeding binary to the line parser.
-    std::string sec_names = bulk_output, sec_records;
-    bool have_records = false;
-    if (fast) {
-        const size_t nul = bulk_output.find('\0');
-        if (nul != std::string::npos) {
-            sec_names = bulk_output.substr(0, nul);
-            sec_records = bulk_output.substr(nul + 1);
-            have_records = true;
-        } else {
-            DBG("DirectoryEnum: no record boundary in output, using ls only\n");
+    const std::string current_path = bulk_output.substr(0, path_end);
+    const std::string_view records(bulk_output.data() + ls_end + 1, bulk_output.size() - ls_end - 1);
+    auto for_each_record = [&](auto visit) {
+        for (size_t pos = 0; pos < records.size();) {
+            const size_t field_end = records.find('\0', pos);
+            if (field_end == std::string_view::npos) break;
+            const size_t name_end = records.find('\0', field_end + 1);
+            if (name_end == std::string_view::npos) break;
+            visit(records.substr(pos, field_end - pos), records.substr(field_end + 1, name_end - field_end - 1));
+            pos = name_end + 1;
         }
-    }
+    };
 
-    std::vector<std::string> ls_lines;
-    std::vector<std::string> symlink_info;
-    std::string current_path;
-    bool after_separator = false;
+    std::vector<std::string> names;
+    std::unordered_map<std::string_view, size_t> index;
+    for_each_record([&](std::string_view field, std::string_view name) {
+        if (field == "N" && IsLocalFileName(name) && index.emplace(name, names.size()).second)
+            names.emplace_back(name);
+    });
 
-    // Split lines once
-    std::istringstream output_stream(sec_names);
-    std::string line;
-    while (std::getline(output_stream, line)) {
-        if (line.empty()) continue;
-        if (line == separator) { after_separator = true; continue; }
-
-        if (!after_separator) {
-            if (current_path.empty()) {
-                current_path = ExtractPathFromPwd(line);
-                // Only publish a path that actually parsed: assigning the empty rejection value
-                // would leave GetCurrentDevicePath() returning "", and every path joined from it
-                // relative - which delete and copy then act on.
-                if (!current_path.empty()) {
-                    _current_path = current_path;
-                }
-            } else {
-                ls_lines.push_back(line);
-            }
-        } else {
-            symlink_info.push_back(line);
-        }
-    }
-
-    // Add hardcoded ".." entry
     files.clear();
-
-    // Parse ls -la lines
-    for (const auto& ls_line : ls_lines) {
+    files.resize(names.size());
+    std::istringstream ls_text(bulk_output.substr(path_end + 1, ls_end - path_end - 1));
+    std::string ls_line;
+    // Keep token views into this line. Large directories reuse the same small buffer.
+    std::vector<std::pair<size_t, std::string_view>> tok;
+    tok.reserve(12);
+    while (std::getline(ls_text, ls_line)) {
         if (ls_line.find("Permission denied") != std::string::npos || ls_line.find("total") == 0)
             continue;
         if (ls_line.size() > 0 && ls_line[0] == '?')
@@ -552,13 +497,14 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
 
         // Tokenize remembering each token's offset: the name is taken verbatim from the
         // original line afterwards, so filenames containing runs of spaces survive.
-        std::vector<std::pair<size_t, std::string>> tok;
+        tok.clear();
+        const std::string_view row(ls_line);
         for (size_t i = 0; i < ls_line.size(); ) {
             while (i < ls_line.size() && ls_line[i] == ' ') ++i;
             if (i >= ls_line.size()) break;
             const size_t b = i;
             while (i < ls_line.size() && ls_line[i] != ' ') ++i;
-            tok.emplace_back(b, ls_line.substr(b, i - b));
+            tok.emplace_back(b, row.substr(b, i - b));
         }
         if (tok.size() < 3)
             continue;
@@ -568,8 +514,9 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
         //   un-stattable entries have every field replaced by '?' and no date/time at all -
         //     "l?????????   ? ?      ?      ?      ? cache -> ?"
         // A blind 7-token split shifts the fields and yields filenames like "18:56 CAM" or "-> ?".
-        const std::string &perms = tok[0].second;
-        std::string links = "1", owner = "?", group = "?", size = "0", date, time_str;
+        const auto perms = tok[0].second;
+        std::string_view links = "1", owner = "?", group = "?", size = "0";
+        std::string date, time_str;
         size_t f = 1;
         if (perms.find('?') != std::string::npos) {
             // ls emits exactly five placeholders (nlink, owner, group, size, and a single '?'
@@ -593,7 +540,7 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
             // 4-digit year, so scan forward to that and treat everything before it as the date.
             size_t stamp = std::string::npos;
             for (size_t i = f; i < tok.size(); ++i) {
-                const std::string &t = tok[i].second;
+                const auto t = tok[i].second;
                 if (t.find(':') != std::string::npos
                         || (t.size() == 4 && t.find_first_not_of("0123456789") == std::string::npos)) {
                     stamp = i;
@@ -619,10 +566,10 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
         const size_t prev_end = tok[f - 1].first + tok[f - 1].second.size();
         if (prev_end + 1 > ls_line.size())
             continue;
-        const std::string rest = ls_line.substr(prev_end + 1);
+        const auto rest = row.substr(prev_end + 1);
 
-        std::string filename = rest;
-        std::string symlink_target;
+        auto filename = rest;
+        std::string_view symlink_target;
         bool is_symlink = (perms[0] == 'l');
         if (is_symlink) {
             auto pos = rest.find(" -> ");
@@ -632,24 +579,24 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
             }
         }
 
-        if (filename.empty() || filename == "." || filename == "..") continue;
-
-        PluginPanelItem item{};
-        item.FindData.lpwszFileName = AllocateItemString(filename);
-        item.FindData.dwUnixMode = ADBUtils::LsPermsToMode(perms);
-        item.FindData.dwFileAttributes = WINPORT(EvaluateAttributesA)(item.FindData.dwUnixMode, filename.c_str());
+        const auto exact = index.find(filename);
+        if (exact == index.end()) continue;
+        auto& item = files[exact->second];
+        if (item.NumberOfLinks) continue;
+        item.FindData.dwUnixMode = ADBUtils::LsPermsToMode(std::string(perms));
+        item.FindData.dwFileAttributes = WINPORT(EvaluateAttributesA)(item.FindData.dwUnixMode, names[exact->second].c_str());
         if (perms[0] == 'd') item.FindData.dwFileAttributes |= FILE_ATTRIBUTE_DIRECTORY;
 
         if (is_symlink) {
-            item.Description = AllocateItemString(symlink_target.empty() ? "Symlink (no target)" : symlink_target);
+            item.Description = AllocateItemString(symlink_target.empty() ? "Symlink (no target)" : std::string(symlink_target));
         }
 
-        try { item.FindData.nFileSize = item.FindData.nPhysicalSize = std::stoull(size); } catch (...) { item.FindData.nFileSize = item.FindData.nPhysicalSize = 0; }
-
-        item.Owner = AllocateItemString(owner);
-        item.Group = AllocateItemString(group);
-        
-        try { item.NumberOfLinks = std::stoi(links); } catch (...) { item.NumberOfLinks = 1; }
+        std::from_chars(size.data(), size.data() + size.size(), item.FindData.nFileSize);
+        item.FindData.nPhysicalSize = item.FindData.nFileSize;
+        item.Owner = AllocateItemString(std::string(owner));
+        item.Group = AllocateItemString(std::string(group));
+        item.NumberOfLinks = 1;
+        std::from_chars(links.data(), links.data() + links.size(), item.NumberOfLinks);
 
         // Rows for entries the shell may not stat carry no date at all. Leave their timestamps
         // zeroed rather than substituting "now", which made every SELinux-denied entry sort and
@@ -664,124 +611,100 @@ std::string ADBDevice::DirectoryEnum(const std::string &path, std::vector<Plugin
             }
         }
 
-        files.push_back(item);
     }
 
-    // Index by name once; both the fast overlay and the legacy symlink pass need it.
-    std::unordered_map<std::string, PluginPanelItem*> file_map;
-    for (auto& f : files) {
-        if (f.FindData.lpwszFileName) {
-            file_map[StrWide2MB(f.FindData.lpwszFileName)] = &f;
+    for (size_t i = 0; i < names.size(); ++i) {
+        auto& item = files[i];
+        const auto& name = names[i];
+        if (!item.NumberOfLinks) {
+            item.NumberOfLinks = 1;
+            item.FindData.dwFileAttributes = WINPORT(EvaluateAttributesA)(0, name.c_str());
         }
+        item.FindData.lpwszFileName = AllocateItemString(name);
     }
 
-    if (have_records) {
-        // One tagged stream: "B<size>\t<mtime@>\t<owner>\t<group>\t<target>" NUL "<name>" NUL for
-        // the metadata pass, "D<mode>" NUL "<name>" NUL for the dereferenced one. Entries absent
-        // from the metadata pass are the ones the shell may not stat; they keep the name and type
-        // ls gave them and are left without size or timestamp.
-        for (size_t i = 0; i < sec_records.size(); ) {
-            const size_t e1 = sec_records.find('\0', i);
-            if (e1 == std::string::npos) break;
-            const size_t e2 = sec_records.find('\0', e1 + 1);
-            if (e2 == std::string::npos) break;
-            const std::string field = sec_records.substr(i, e1 - i);
-            const std::string name = sec_records.substr(e1 + 1, e2 - e1 - 1);
-            i = e2 + 1;
+    for_each_record([&](std::string_view field, std::string_view name) {
+            if (field.empty() || field == "N") return;
+            const auto found = index.find(name);
+            if (found == index.end()) return;
+        auto* item = &files[found->second];
+        const char tag = field.front();
+        const auto body = field.substr(1);
 
-            if (field.empty()) continue;
-            const char tag = field[0];
-            const std::string body = field.substr(1);
-
-            auto it = file_map.find(name);
-            if (it == file_map.end()) continue;
-            PluginPanelItem *item = it->second;
-
-            if (tag == 'D') {
-                // `find -L` followed the link, so this mode describes the *target*: a leading 'd'
-                // means "symlink pointing at a directory", which is what makes it enterable.
-                // Broken links are reported as the link itself and correctly stay non-directories.
-                if (!body.empty() && body[0] == 'd') {
-                    item->FindData.dwFileAttributes |= FILE_ATTRIBUTE_DIRECTORY;
-                }
-                continue;
+        if (tag == 'D') {
+            // `find -L` followed the link, so this mode describes the *target*: a leading 'd'
+            // means "symlink pointing at a directory", which is what makes it enterable.
+            // Broken links are reported as the link itself and correctly stay non-directories.
+            if (!body.empty() && body[0] == 'd') {
+                item->FindData.dwFileAttributes |= FILE_ATTRIBUTE_DIRECTORY;
             }
-            if (tag != 'B') continue;
-
-            // Four tabs delimit five fields; whatever follows the fourth is %l verbatim.
-            std::string fld[4];
-            size_t fp = 0;
-            int n = 0;
-            for (; n < 4; ++n) {
-                const size_t tp = body.find('\t', fp);
-                if (tp == std::string::npos) break;
-                fld[n] = body.substr(fp, tp - fp);
-                fp = tp + 1;
-            }
-            if (n < 4) continue;
-            const std::string target = body.substr(fp);
-
-            try {
-                item->FindData.nFileSize = item->FindData.nPhysicalSize = std::stoull(fld[0]);
-            } catch (...) {
-            }
-
-            // %T@ is "<epoch>.<nanoseconds>". Apply it even when it is 0 - some pseudo-filesystem
-            // roots really do report epoch 0, and keeping ls's value for them would reintroduce
-            // the timezone error this pass exists to remove.
-            bool mtime_ok = false;
-            time_t mt = 0;
-            try {
-                mt = (time_t)std::stoll(fld[1].substr(0, fld[1].find('.')));
-                mtime_ok = true;
-            } catch (...) {
-                mtime_ok = false;
-            }
-            if (mtime_ok) {
-                FILETIME ft{};
-                ULARGE_INTEGER uli;
-                uli.QuadPart = ((unsigned long long)mt * 10000000ULL) + 116444736000000000ULL;
-                ft.dwLowDateTime = uli.LowPart;
-                ft.dwHighDateTime = uli.HighPart;
-                item->FindData.ftCreationTime = item->FindData.ftLastAccessTime =
-                    item->FindData.ftLastWriteTime = ft;
-            }
-
-            // Allocate first, then release the string the ls pass made: AllocateItemString may
-            // throw, and freeing up front would leave a dangling pointer for the unwind path.
-            if (!fld[2].empty()) {
-                wchar_t *owner = AllocateItemString(fld[2]);
-                free((void*)item->Owner);
-                item->Owner = owner;
-            }
-            if (!fld[3].empty()) {
-                wchar_t *group = AllocateItemString(fld[3]);
-                free((void*)item->Group);
-                item->Group = group;
-            }
-            if (!target.empty()) {
-                wchar_t *descr = AllocateItemString(target);
-                free((void*)item->Description);
-                item->Description = descr;
-            }
+            return;
         }
-    } else {
-        for (const auto& symlink_line : symlink_info) {
-            auto colon_pos = symlink_line.find(arrow);
-            if (colon_pos == std::string::npos) continue;
-            std::string filename = symlink_line.substr(0, colon_pos);
-            std::string type = symlink_line.substr(colon_pos + arrow.size());
+        if (tag != 'B') return;
 
-            auto it = file_map.find(filename);
-            if (it != file_map.end()) {
-                PluginPanelItem* file = it->second;
-                if (type == "D") file->FindData.dwFileAttributes |= FILE_ATTRIBUTE_DIRECTORY;
-                // F and B need no action
-            }
+        // The last field is the complete link target, including any tabs.
+        std::string fld[5];
+        size_t fp = 0;
+        int n = 0;
+        for (; n < 5; ++n) {
+            const size_t tp = body.find('\t', fp);
+            if (tp == std::string::npos) break;
+            fld[n] = body.substr(fp, tp - fp);
+            fp = tp + 1;
         }
-    }
+        if (n < 5) return;
+        const std::string target(body.substr(fp));
+        item->FindData.dwUnixMode = ADBUtils::LsPermsToMode(fld[0]);
+        item->FindData.dwFileAttributes =
+            WINPORT(EvaluateAttributesA)(item->FindData.dwUnixMode, names[found->second].c_str());
 
-    return current_path.empty() ? path : current_path;
+        try {
+            item->FindData.nFileSize = item->FindData.nPhysicalSize = std::stoull(fld[1]);
+        } catch (...) {
+        }
+
+        // %T@ is "<epoch>.<nanoseconds>". Apply it even when it is 0 - some pseudo-filesystem
+        // roots really do report epoch 0, and keeping ls's value for them would reintroduce
+        // the timezone error this pass exists to remove.
+        bool mtime_ok = false;
+        time_t mt = 0;
+        try {
+            mt = (time_t)std::stoll(fld[2].substr(0, fld[2].find('.')));
+            mtime_ok = true;
+        } catch (...) {
+            mtime_ok = false;
+        }
+        if (mtime_ok) {
+            FILETIME ft{};
+            ULARGE_INTEGER uli;
+            uli.QuadPart = ((unsigned long long)mt * 10000000ULL) + 116444736000000000ULL;
+            ft.dwLowDateTime = uli.LowPart;
+            ft.dwHighDateTime = uli.HighPart;
+            item->FindData.ftCreationTime = item->FindData.ftLastAccessTime =
+                item->FindData.ftLastWriteTime = ft;
+        }
+
+        // Allocate first, then release the string the ls pass made: AllocateItemString may
+        // throw, and freeing up front would leave a dangling pointer for the unwind path.
+        if (!fld[3].empty()) {
+            wchar_t *owner = AllocateItemString(fld[3]);
+            free((void*)item->Owner);
+            item->Owner = owner;
+        }
+        if (!fld[4].empty()) {
+            wchar_t *group = AllocateItemString(fld[4]);
+            free((void*)item->Group);
+            item->Group = group;
+        }
+        if (!target.empty()) {
+            wchar_t *descr = AllocateItemString(target);
+            free((void*)item->Description);
+            item->Description = descr;
+        }
+    });
+
+    _current_path = current_path;
+    return current_path;
 }
 
 std::string ADBDevice::ExtractPathFromPwd(const std::string &pwd_output)
@@ -854,33 +777,15 @@ bool ADBDevice::SetDirectory(const std::string &path) {
     }
     
     // Execute cd command and get new working directory (properly quote path for spaces)
-    std::string cd_command = "cd " + ADBUtils::ShellQuote(path) + " 2>/dev/null && pwd";
+    if (path.find('\0') != std::string::npos) return false;
+    std::string cd_command = "cd " + ADBUtils::ShellQuote(path)
+        + " 2>/dev/null && printf '%s\\000' \"$PWD\"";
     std::string result = RunShellCommand(cd_command);
-    
-    if (result.empty()) {
-        return false;
-    }
-    
-    // Extract the new path from pwd output
-    std::string new_path = ExtractPathFromPwd(result);
-    if (new_path.empty()) {
-        return false;
-    }
-    
-    // Update current path
-    _current_path = new_path;
+    if (result.size() < 2 || result.front() != '/' || result.find('\0') != result.size() - 1
+            || LastShellExitCode() != 0) return false;
+    result.pop_back();
+    _current_path = std::move(result);
     return true;
-}
-
-// Verdict for one `adb push`/`pull`. pty_exit is the child's exit code, or -1 when it died on a
-// signal / was killed by the idle bound, in which case there is no status to trust and the
-// trailer is the only evidence left.
-bool ADBDevice::TransferSucceeded(int pty_exit, const std::string& result, bool is_push) const
-{
-    if (pty_exit == 0) return true;
-    if (pty_exit > 0) return false;
-    if (pty_exit < -1) return false; // cancellation, launch or wait failure
-    return IsSuccessResult(result, is_push);
 }
 
 int ADBDevice::TransferItem(const std::string& src, const std::string& dst, bool is_push, bool recursive,
@@ -899,33 +804,33 @@ int ADBDevice::TransferItem(const std::string& src, const std::string& dst, bool
     args.push_back(src);
     args.push_back(dst);
 
-    std::string result;
-    if (on_progress) {
-        ProgressParser parser(on_progress);
-        parser.start();
-        result = RunAdbCommandWithProgress(args, std::ref(parser), abort_check,
-                                          ADBShell::kTransferIdleTimeoutMs);
-        parser.drain();
-        // Both branches now run under a pty, so the child's exit status is always available and
-        // is authoritative. Do NOT fall back to sniffing the trailer when it says failure: adb
-        // prints "1 file pushed, 0 skipped. ... (N bytes in Ts)" even for a push that failed
-        // (e.g. onto a read-only mount, where it also prints "remote couldn't create file"), so
-        // an OR here reports a completed copy that wrote nothing. The sniff stays only for the
-        // case where no status could be collected at all.
-        if (TransferSucceeded(ADBShell::lastPtyExit(), result, is_push)) {
-            parser.complete();
-            return 0;
+    // adb can skip special objects yet exit successfully. Scan incrementally so a
+    // skipped entry cannot be lost from the diagnostic tail of a long transfer.
+    constexpr std::string_view skip_message = "skipping special file";
+    constexpr size_t overlap = skip_message.size() - 1;
+    std::string boundary;
+    boundary.reserve(2 * overlap);
+    bool skipped = false;
+    ProgressParser parser(on_progress);
+    if (on_progress) parser.start();
+    const auto result = RunAdbCommandWithProgress(args, [&](const std::string& chunk) {
+        if (!skipped) {
+            boundary.append(chunk.data(), std::min(chunk.size(), overlap));
+            skipped = chunk.find(skip_message) != chunk.npos || boundary.find(skip_message) != boundary.npos;
+            if (chunk.size() >= overlap) boundary.assign(chunk, chunk.size() - overlap, overlap);
+            else if (boundary.size() > overlap) boundary.erase(0, boundary.size() - overlap);
         }
-    } else {
-        // No progress dialog (e.g. F3 view pulls the file to a temp dir), but still go through
-        // the pty runner: a plain pipe gives adb no tty, so -p prints nothing and a dead device
-        // would block this call - on far2l's main thread - forever.
-        result = RunAdbCommandWithProgress(args, [](const std::string&){}, {},
-                                           ADBShell::kTransferIdleTimeoutMs);
-        if (TransferSucceeded(ADBShell::lastPtyExit(), result, is_push)) return 0;
+        if (on_progress) parser(chunk);
+    }, abort_check, ADBShell::kTransferIdleTimeoutMs);
+    if (on_progress) parser.drain();
+    if (ADBShell::lastPtyExit() == 0 && !skipped) {
+        if (on_progress) parser.complete();
+        return 0;
     }
 
-    int errno_mapped = Str2Errno(result);
+    int errno_mapped = ADBShell::lastPtyExit() == ADBShell::kPtyExitKilled
+        && abort_check && abort_check() ? ECANCELED : Str2Errno(result);
+    if (errno_mapped == 0) errno_mapped = EIO;
 #if defined(DEBUG) || defined(_DEBUG)
     const size_t tail_len = std::min<size_t>(result.size(), 400);
     const char* tail = result.c_str() + (result.size() - tail_len);
@@ -936,12 +841,38 @@ int ADBDevice::TransferItem(const std::string& src, const std::string& dst, bool
     return errno_mapped;
 }
 
-int ADBDevice::PullFile(const std::string &devicePath, const std::string &localPath) {
-    return TransferItem(devicePath, localPath, false, false);
+int ADBDevice::PullItem(const std::string& devicePath, const std::string& localPath, bool recursive,
+                        const AdbProgressFn& on_progress, const std::function<bool()>& abort_check,
+                        bool replace)
+{
+    if (abort_check && abort_check()) return ECANCELED;
+    std::string target = localPath;
+    struct stat previous{};
+    if (replace && lstat(target.c_str(), &previous) == 0 && S_ISDIR(previous.st_mode)) {
+        // adb pull treats an existing directory as a container. Keep its other entries.
+        const auto start = devicePath.find_last_of('/') + 1;
+        const auto name = devicePath.substr(start);
+        if (!IsLocalFileName(name)) return EINVAL;
+        target = ADBUtils::JoinPath(target, name);
+        // An existing nested directory may contain unrelated files. Leave it for the user
+        // to resolve via a different destination.
+        if (lstat(target.c_str(), &previous) == 0 && S_ISDIR(previous.st_mode)) return EEXIST;
+    }
+    StagedFile stage(target, replace);
+    if (!stage) return errno ? errno : EIO;
+    if (int rc = TransferItem(devicePath, stage.Path(), false, recursive, on_progress, abort_check)) return rc;
+    if (abort_check && abort_check()) return ECANCELED;
+    struct stat st;
+    if (lstat(stage.Path().c_str(), &st) != 0) return errno;
+    if (recursive ? !S_ISDIR(st.st_mode) : !S_ISREG(st.st_mode)) return EIO;
+    return stage.Publish() ? 0 : errno;
 }
 
-int ADBDevice::PullFile(const std::string &devicePath, const std::string &localPath, const AdbProgressFn &on_progress, const std::function<bool()> &abort_check) {
-    return TransferItem(devicePath, localPath, false, false, on_progress, abort_check);
+int ADBDevice::PullFile(const std::string& devicePath, const std::string& localPath,
+                           const AdbProgressFn& on_progress, const std::function<bool()>& abort_check,
+                           bool replace)
+{
+    return PullItem(devicePath, localPath, false, on_progress, abort_check, replace);
 }
 
 int ADBDevice::PushFile(const std::string &localPath, const std::string &devicePath) {
@@ -952,12 +883,11 @@ int ADBDevice::PushFile(const std::string &localPath, const std::string &deviceP
     return TransferItem(localPath, devicePath, true, false, on_progress, abort_check);
 }
 
-int ADBDevice::PullDirectory(const std::string &devicePath, const std::string &localPath) {
-    return TransferItem(devicePath, localPath, false, true);
-}
-
-int ADBDevice::PullDirectory(const std::string &devicePath, const std::string &localPath, const AdbProgressFn &on_progress, const std::function<bool()> &abort_check) {
-    return TransferItem(devicePath, localPath, false, true, on_progress, abort_check);
+int ADBDevice::PullDirectory(const std::string& devicePath, const std::string& localPath,
+                           const AdbProgressFn& on_progress, const std::function<bool()>& abort_check,
+                           bool replace)
+{
+    return PullItem(devicePath, localPath, true, on_progress, abort_check, replace);
 }
 
 int ADBDevice::PushDirectory(const std::string &localPath, const std::string &devicePath) {
@@ -1025,14 +955,21 @@ int ADBDevice::MoveRemote(const std::string &srcDevicePath, const std::string &d
     return MutationResultToErrno(LastShellExitCode(), result);
 }
 
+static std::string RemoteAsCommand(const std::string& src, const std::string& dst, bool move) {
+    const auto source = ADBUtils::ShellQuote(src);
+    const auto destination = ADBUtils::ShellQuote(dst);
+    const auto absent = "[ ! -e " + destination + " ] && [ ! -L " + destination + " ]";
+    const auto pair = " -- " + source + " " + destination;
+    const auto command = move ? "mv" + pair
+        : "cp -a" + pair + " 2>/dev/null || { " + absent + " && cp -Rp" + pair + "; }";
+    return "if " + absent + "; then " + command + "; else echo 'File exists' >&2; false; fi";
+}
+
 int ADBDevice::CopyRemoteAs(const std::string &srcDevicePath, const std::string &dstDevicePath) {
     EnsureConnection();
     if (int err = ADBUtils::CheckConnection(_connected)) return err;
 
-    // cp -a → cp -r fallback; takes full dst path (basename may change). Caller pre-handles overwrite.
-    std::string command =
-        "cp -a -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDevicePath) +
-        " 2>/dev/null || cp -Rp -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDevicePath);
+    const auto command = RemoteAsCommand(srcDevicePath, dstDevicePath, false);
     std::string result = RunShellCommand(command);
     return MutationResultToErrno(LastShellExitCode(), result);
 }
@@ -1041,7 +978,7 @@ int ADBDevice::MoveRemoteAs(const std::string &srcDevicePath, const std::string 
     EnsureConnection();
     if (int err = ADBUtils::CheckConnection(_connected)) return err;
 
-    std::string command = "mv -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDevicePath);
+    const auto command = RemoteAsCommand(srcDevicePath, dstDevicePath, true);
     std::string result = RunShellCommand(command);
     return MutationResultToErrno(LastShellExitCode(), result);
 }
@@ -1050,10 +987,7 @@ int ADBDevice::CopyRemoteAs(const std::string &srcDevicePath, const std::string 
                             const std::function<bool()>& abort_check) {
     if (!abort_check) return CopyRemoteAs(srcDevicePath, dstDevicePath);
     if (int err = ADBUtils::CheckConnection(_connected)) return err;
-    // One-shot `adb shell -c` so the spawned process can be killed on abort.
-    std::string sh =
-        "cp -a -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDevicePath) +
-        " 2>/dev/null || cp -Rp -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDevicePath);
+    const auto sh = RemoteAsCommand(srcDevicePath, dstDevicePath, false);
     const std::string out = RunAdbCommandWithProgress({"shell", sh}, [](const std::string&){}, abort_check);
     if (abort_check()) return ECANCELED;
     return MutationResultToErrno(ADBShell::lastPtyExit(), out);
@@ -1063,7 +997,7 @@ int ADBDevice::MoveRemoteAs(const std::string &srcDevicePath, const std::string 
                             const std::function<bool()>& abort_check) {
     if (!abort_check) return MoveRemoteAs(srcDevicePath, dstDevicePath);
     if (int err = ADBUtils::CheckConnection(_connected)) return err;
-    std::string sh = "mv -- " + ADBUtils::ShellQuote(srcDevicePath) + " " + ADBUtils::ShellQuote(dstDevicePath);
+    const auto sh = RemoteAsCommand(srcDevicePath, dstDevicePath, true);
     const std::string out = RunAdbCommandWithProgress({"shell", sh}, [](const std::string&){}, abort_check);
     if (abort_check()) return ECANCELED;
     return MutationResultToErrno(ADBShell::lastPtyExit(), out);
@@ -1120,16 +1054,10 @@ bool ADBDevice::FileExists(const std::string &devicePath) {
     EnsureConnection();
     if (!_connected) return false;
 
-    std::string command = "test -e " + ADBUtils::ShellQuote(devicePath) + " && echo 1 || echo 0";
-    std::string result = RunShellCommand(command);
-
-    ADBUtils::TrimTrailingNewlines(result);
-    // Also trim spaces
-    while (!result.empty() && result.back() == ' ') {
-        result.pop_back();
-    }
-
-    return result == "1";
+    const auto quoted = ADBUtils::ShellQuote(devicePath);
+    const auto command = "[ -e " + quoted + " ] || [ -L " + quoted + " ]";
+    RunShellCommand(command);
+    return LastShellExitCode() == 0;
 }
 
 bool ADBDevice::IsDirectory(const std::string &devicePath) {
@@ -1145,16 +1073,15 @@ bool ADBDevice::IsDirectory(const std::string &devicePath) {
 void ADBDevice::ListDirNames(const std::string &devicePath, std::unordered_set<std::string>& out) {
     EnsureConnection();
     if (!_connected) return;
-    // -A includes dotfiles, -1 one-per-line; ignore stderr (missing dir → empty set).
-    std::string command = "ls -A1 -- " + ADBUtils::ShellQuote(devicePath) + " 2>/dev/null";
-    std::string result = RunShellCommand(command);
-    size_t pos = 0;
-    while (pos < result.size()) {
-        size_t eol = result.find('\n', pos);
-        std::string line = result.substr(pos, eol == std::string::npos ? std::string::npos : eol - pos);
-        pos = (eol == std::string::npos) ? result.size() : eol + 1;
-        while (!line.empty() && line.back() == '\r') line.pop_back();
-        if (!line.empty()) out.insert(std::move(line));
+    const std::string command = "if cd " + ADBUtils::ShellQuote(devicePath) + " 2>/dev/null; then "
+        + kDirectoryGlob + "printf '%s\\000' \"${f#./}\"; done; fi";
+    const auto result = RunShellCommand(command);
+    for (size_t pos = 0; pos < result.size();) {
+        const auto end = result.find('\0', pos);
+        if (end == result.npos) break;
+        const std::string_view name(result.data() + pos, end - pos);
+        if (IsLocalFileName(name)) out.emplace(name);
+        pos = end + 1;
     }
 }
 

@@ -29,28 +29,23 @@ int TestWaitpid(pid_t pid,int* status,int){
     ++waits;
     if(mode==2){errno=ECHILD;return -1;}
     if(mode==3 && waits==1){errno=EINTR;return -1;}
-    *status=0;return pid;
+    *status=mode==5 ? SIGTERM : 0;return pid;
 }
 #define forkpty TestForkpty
 #define waitpid TestWaitpid
 #define poll TestPoll
 std::string ADBShell::findAdbExecutable(){return mode==4?"":"/mock/adb";}
-void SetupChildEnv(){}
+std::vector<char*> PrepareEnv(std::vector<std::string>&){return {};}
 std::vector<char*> PrepareArgv(const std::string&,const std::string&,const std::vector<std::string>&,std::vector<std::string>&){return {};}
-struct ADBDevice {
- bool IsSuccessResult(const std::string&,bool) const {return true;} // Even success-looking output cannot override a launch/wait failure.
- bool TransferSucceeded(int,const std::string&,bool) const;
-};
 '''
 process = section('plugins/adb/src/ADBShell.cpp', 'std::string ADBShell::runAdbProcessWithPty(',
                   '// Instance version for device-specific ADB commands')
-verdict = section('plugins/adb/src/ADBDevice.cpp', 'bool ADBDevice::TransferSucceeded(',
-                  'int ADBDevice::TransferItem(')
-check('ADB launch, missing executable, wait failures, EINTR and parallel results', prefix + process + verdict + r'''
+check('ADB launch, signals, wait failures, EINTR and parallel results', prefix + process + r'''
 int main(){
  auto run=[](){waits=0;return ADBShell::adbExecWithProgress({},[](const std::string&){});};
  mode=1;run();assert(ADBShell::lastPtyExit()==0);
- mode=0;auto out=run();assert(out.empty() && !ADBDevice().TransferSucceeded(ADBShell::lastPtyExit(),out,true));
+ mode=0;auto out=run();assert(out.empty() && ADBShell::lastPtyExit()==ADBShell::kPtyExitFailed);
+ mode=5;run();assert(ADBShell::lastPtyExit()==ADBShell::kPtyExitFailed);
  mode=4;run();assert(ADBShell::lastPtyExit()==ADBShell::kPtyExitFailed);
  mode=2;run();assert(ADBShell::lastPtyExit()==ADBShell::kPtyExitFailed);
  mode=3;run();assert(waits==2 && ADBShell::lastPtyExit()==0);
