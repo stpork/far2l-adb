@@ -31,6 +31,11 @@ bool ImageView::IterateFile(bool forward)
 	return true;
 }
 
+static bool StatPreviewFile(const std::string& path, struct stat& st)
+{
+	return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0;
+}
+
 bool ImageView::PrepareImage()
 {
 	CancelAndJoinFullRes();
@@ -38,11 +43,7 @@ bool ImageView::PrepareImage()
 	_orig_image.Resize();
 
 	struct stat st {};
-	if (stat(_render_file.c_str(), &st) == -1) {
-		_all_files[_cur_file].second = false;
-		return false;
-	}
-	if (!S_ISREG(st.st_mode) || st.st_size == 0) {
+	if (!StatPreviewFile(_render_file, st)) {
 		_all_files[_cur_file].second = false;
 		return false;
 	}
@@ -228,7 +229,8 @@ void ImageView::StartPrefetch()
 		auto try_prefetch = [this, max_pixel_size](const std::string &file, PrefetchedImage &target) {
 			if (DecodeCancelled(&_prefetch_cancel) || DecodeCancelled(_cancel)) return;
 			auto decoder = DecoderFactory::FindDecoder(file);
-			if (!decoder) return;
+			struct stat st;
+			if (!decoder || !StatPreviewFile(file, st)) return;
 			int msize = decoder->SupportsDecodeScaling(file) ? max_pixel_size : 0;
 			Image img;
 			ImageDecodeInfo info;
@@ -286,7 +288,8 @@ void ImageView::RequestResolution(double target_scale, int max_pixel_size)
 		try {
 		Image tmp;
 		ImageDecodeInfo info;
-		if (!DecodeCancelled(&_fullres_cancel) &&
+		struct stat st;
+		if (!DecodeCancelled(&_fullres_cancel) && StatPreviewFile(file, st) &&
 		    decoder->Decode(file, tmp, info, max_pixel_size, &_fullres_cancel) &&
 		    !DecodeCancelled(&_fullres_cancel)) {
 			_fullres_img = std::move(tmp);
@@ -862,15 +865,7 @@ SMALL_RECT ImageView::GetPreferredRect(const SMALL_RECT &screen_rect) const
 
 bool ImageView::Preload()
 {
-	// Just load the image without setting up for display
-	if (!RefreshWGI()) {
-		return false;
-	}
-	_render_file = CurFile();
-	if (!ReadImage()) {
-		return false;
-	}
-	return true;
+	return RefreshWGI() && PrepareImage();
 }
 
 bool ImageView::Reload()

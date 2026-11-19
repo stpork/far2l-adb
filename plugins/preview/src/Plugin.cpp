@@ -239,12 +239,11 @@ SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int OpenFrom, INT_PTR Item)
 			}
 		}
 
-	} else if (Item > 0xfff) {
+	} else if (OpenFrom == OPEN_COMMANDLINE && Item > 0xfff) {
 		std::string path = Wide2MB((const wchar_t *)Item);
-		// Strip leading spaces, backslashes, and leading "./" components
+		// Trim command whitespace and keep literal POSIX filename characters.
 		auto first_non_space = path.find_first_not_of(' ');
 		path.erase(0, first_non_space == std::string::npos ? path.size() : first_non_space);
-		path.erase(std::remove(path.begin(), path.end(), '\\'), path.end());
 		while (path.size() >= 2 && path[0] == '.' && path[1] == '/') {
 			path.erase(0, 2);
 		}

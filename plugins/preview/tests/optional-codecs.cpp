@@ -44,8 +44,12 @@ static int TestSpawn(pid_t* pid, const char* path, const posix_spawn_file_action
         char* sleepArgs[] = {const_cast<char*>("/bin/sleep"), const_cast<char*>("30"), nullptr};
         char* shellArgs[] = {const_cast<char*>("/bin/sh"), const_cast<char*>("-c"),
                             const_cast<char*>("exec 1>&-; exec /bin/sleep 30"), nullptr};
-        int result = posix_spawn(pid, blockedFFmpeg == 1 ? "/bin/sleep" : "/bin/sh",
-                                 actions, attrs, blockedFFmpeg == 1 ? sleepArgs : shellArgs, env);
+        char* oversizedArgs[] = {const_cast<char*>("/bin/dd"), const_cast<char*>("if=/dev/zero"),
+                                 const_cast<char*>("bs=65536"), nullptr};
+        const char* program = blockedFFmpeg == 1 ? "/bin/sleep"
+                            : blockedFFmpeg == 2 ? "/bin/sh" : "/bin/dd";
+        auto childArgs = blockedFFmpeg == 1 ? sleepArgs : blockedFFmpeg == 2 ? shellArgs : oversizedArgs;
+        int result = posix_spawn(pid, program, actions, attrs, childArgs, env);
         if (result == 0) blockedPid.store(*pid);
         return result;
     }
@@ -144,8 +148,16 @@ int main(int argc, char** argv)
         assert(child > 0 && promptCancellation && !decoded);
         assert(waitpid(child, nullptr, WNOHANG) == -1 && errno == ECHILD);
     }
-    blockedFFmpeg = 0;
     puts("FFmpeg cancellation before output and after stdout closes: passed");
+    blockedFFmpeg = 3;
+    const auto started = std::chrono::steady_clock::now();
+    const auto previousWidth = image.Width();
+    assert(!video.Decode(argv[3], image, info, 64, nullptr));
+    assert(std::chrono::steady_clock::now() - started < std::chrono::seconds(5));
+    assert(image.Width() == previousWidth);
+    assert(waitpid(blockedPid.load(), nullptr, WNOHANG) == -1 && errno == ECHILD);
+    blockedFFmpeg = 0;
+    puts("FFmpeg output budget and recovery: passed");
 #if PREVIEW_HAS_NATIVE
     hideHeif = hideFFmpeg = true;
     heifAttempts = ffmpegAttempts = 0;

@@ -16,6 +16,7 @@
 #include <signal.h>
 #include <cerrno>
 #include <poll.h>
+#include <chrono>
 
 extern char **environ;
 
@@ -31,6 +32,14 @@ extern "C" {
 
 namespace {
 
+using Clock = std::chrono::steady_clock;
+
+struct DecodeBudget {
+	Clock::time_point deadline;
+	const DecodeCancelFlag* cancel;
+
+	bool Expired() const { return DecodeCancelled(cancel) || Clock::now() >= deadline; }
+};
 class CrossPlatformVideoDecoder final : public ImageDecoder {
 public:
 	bool Decode(const std::string& path, Image& out, ImageDecodeInfo& info,
@@ -41,10 +50,10 @@ public:
 private:
 #ifdef HAVE_FFMPEG
 	bool DecodeViaLibAV(const std::string& path, Image& out, ImageDecodeInfo& info,
-	                    int maxPixelSize, const DecodeCancelFlag* cancel);
+	                    int maxPixelSize, const DecodeBudget& budget);
 #endif
 	bool DecodeViaFFmpegCLI(const std::string& path, Image& out, ImageDecodeInfo& info,
-	                        int maxPixelSize, const DecodeCancelFlag* cancel);
+	                        int maxPixelSize, const DecodeBudget& budget);
 };
 
 bool CrossPlatformVideoDecoder::CanHandle(const char* ext) const
@@ -54,9 +63,13 @@ bool CrossPlatformVideoDecoder::CanHandle(const char* ext) const
 
 #ifdef HAVE_FFMPEG
 bool CrossPlatformVideoDecoder::DecodeViaLibAV(const std::string& path, Image& out, ImageDecodeInfo& info,
-                                              int maxPixelSize, const DecodeCancelFlag* cancel)
+                                              int maxPixelSize, const DecodeBudget& budget)
 {
-	AVFormatContext* fmtCtx = nullptr;
+	AVFormatContext* fmtCtx = avformat_alloc_context();
+	if (!fmtCtx) return false;
+	fmtCtx->interrupt_callback = {[](void* opaque) -> int {
+		return static_cast<const DecodeBudget*>(opaque)->Expired();
+	}, const_cast<DecodeBudget*>(&budget)};
 	if (avformat_open_input(&fmtCtx, path.c_str(), nullptr, nullptr) != 0) {
 		return false;
 	}
@@ -85,6 +98,7 @@ bool CrossPlatformVideoDecoder::DecodeViaLibAV(const std::string& path, Image& o
 		~CodecGuard() { if (ctx) avcodec_free_context(&ctx); }
 	} codecGuard{codecCtx};
 
+	codecCtx->max_pixels = kMaxImagePixels;
 	if (avcodec_parameters_to_context(codecCtx, codecPar) < 0 ||
 	    avcodec_open2(codecCtx, codec, nullptr) < 0) {
 		return false;
@@ -143,7 +157,7 @@ bool CrossPlatformVideoDecoder::DecodeViaLibAV(const std::string& path, Image& o
 	timecodes.reserve(numFrames);
 
 	for (int i = 0; i < numFrames; ++i) {
-		if (DecodeCancelled(cancel)) return false;
+		if (budget.Expired()) return false;
 
 		double targetSec = durationSec * (static_cast<double>(i + 1) / (numFrames + 1));
 		int64_t targetTs = static_cast<int64_t>(targetSec * AV_TIME_BASE);
@@ -152,7 +166,7 @@ bool CrossPlatformVideoDecoder::DecodeViaLibAV(const std::string& path, Image& o
 
 		bool gotFrame = false;
 		while (!gotFrame && av_read_frame(fmtCtx, packet) >= 0) {
-			if (DecodeCancelled(cancel)) return false;
+			if (budget.Expired()) return false;
 
 			if (packet->stream_index == videoStreamIdx) {
 				if (avcodec_send_packet(codecCtx, packet) >= 0) {
@@ -199,8 +213,9 @@ bool CrossPlatformVideoDecoder::DecodeViaLibAV(const std::string& path, Image& o
 #endif
 
 bool CrossPlatformVideoDecoder::DecodeViaFFmpegCLI(const std::string& path, Image& out, ImageDecodeInfo& info,
-                                                   int maxPixelSize, const DecodeCancelFlag* cancel)
+                                                   int maxPixelSize, const DecodeBudget& budget)
 {
+	if (budget.Expired()) return false;
 	int pipefd[2];
 	if (pipe(pipefd) != 0) return false;
 
@@ -212,7 +227,10 @@ bool CrossPlatformVideoDecoder::DecodeViaFFmpegCLI(const std::string& path, Imag
 	posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
 	posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
 
-	const char* filter = "thumbnail=30,scale='if(gt(iw,ih),360,-2)':'if(gt(iw,ih),-2,360)',tile=3x3";
+	// Scale before buffering the 30-frame thumbnail window.
+	const char* filter = "scale=360:360:flags=fast_bilinear:force_original_aspect_ratio=decrease:force_divisible_by=2,thumbnail=30,tile=3x3";
+	constexpr size_t maxOutput = 8 * 1024 * 1024;
+	constexpr int maxSide = 3 * 360;
 	const char* argv[] = {
 		"ffmpeg",
 		"-v", "error",
@@ -265,13 +283,14 @@ bool CrossPlatformVideoDecoder::DecodeViaFFmpegCLI(const std::string& path, Imag
 	buffer.reserve(256 * 1024);
 	std::array<uint8_t, 65536> chunk;
 	while (true) {
-		if (DecodeCancelled(cancel)) return false;
+		if (budget.Expired()) return false;
 		struct pollfd ready{child.fd, POLLIN, 0};
 		int polled = poll(&ready, 1, 50);
 		if (polled == 0 || (polled < 0 && errno == EINTR)) continue;
 		if (polled < 0 || (ready.revents & (POLLERR | POLLNVAL))) return false;
-		ssize_t bytesRead = read(pipefd[0], chunk.data(), chunk.size());
+		ssize_t bytesRead = read(child.fd, chunk.data(), chunk.size());
 		if (bytesRead > 0) {
+			if (size_t(bytesRead) > maxOutput - buffer.size()) return false;
 			buffer.insert(buffer.end(), chunk.data(), chunk.data() + bytesRead);
 		} else if (bytesRead == 0) {
 			break; // EOF
@@ -285,7 +304,7 @@ bool CrossPlatformVideoDecoder::DecodeViaFFmpegCLI(const std::string& path, Imag
 
 	int status = 0;
 	for (;;) {
-		if (DecodeCancelled(cancel)) return false;
+		if (budget.Expired()) return false;
 		pid_t result = waitpid(pid, &status, WNOHANG);
 		if (result == pid) {
 			child.pid = 0;
@@ -302,6 +321,8 @@ bool CrossPlatformVideoDecoder::DecodeViaFFmpegCLI(const std::string& path, Imag
 	if (buffer.empty()) return false;
 
 	int w = 0, h = 0, comp = 0;
+	if (!stbi_info_from_memory(buffer.data(), static_cast<int>(buffer.size()), &w, &h, &comp)
+			|| w < 1 || h < 1 || w > maxSide || h > maxSide) return false;
 	stbi_uc* rgb = stbi_load_from_memory(buffer.data(), static_cast<int>(buffer.size()), &w, &h, &comp, 3);
 	if (!rgb || w <= 0 || h <= 0) {
 		if (rgb) stbi_image_free(rgb);
@@ -322,12 +343,14 @@ bool CrossPlatformVideoDecoder::DecodeViaFFmpegCLI(const std::string& path, Imag
 bool CrossPlatformVideoDecoder::Decode(const std::string& path, Image& out, ImageDecodeInfo& info,
                                        int maxPixelSize, const DecodeCancelFlag* cancel)
 {
+	const DecodeBudget budget{Clock::now() + std::chrono::seconds(15), cancel};
+	if (budget.Expired()) return false;
 #ifdef HAVE_FFMPEG
-	if (DecodeViaLibAV(path, out, info, maxPixelSize, cancel)) {
+	if (DecodeViaLibAV(path, out, info, maxPixelSize, budget)) {
 		return true;
 	}
 #endif
-	return DecodeViaFFmpegCLI(path, out, info, maxPixelSize, cancel);
+	return DecodeViaFFmpegCLI(path, out, info, maxPixelSize, budget);
 }
 
 } // namespace

@@ -11,8 +11,45 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
+#include <array>
+#include <chrono>
+#include <condition_variable>
 
 namespace {
+
+using Clock = std::chrono::steady_clock;
+
+struct LoadState {
+	std::mutex mutex;
+	std::condition_variable changed;
+	size_t completed = 0;
+
+	bool Wait(size_t count, Clock::time_point deadline, const DecodeCancelFlag* cancel)
+	{
+		std::unique_lock<std::mutex> lock(mutex);
+		while (completed < count) {
+			if (DecodeCancelled(cancel) || Clock::now() >= deadline) return false;
+			changed.wait_until(lock, std::min(deadline, Clock::now() + std::chrono::milliseconds(50)));
+		}
+		return !DecodeCancelled(cancel);
+	}
+};
+
+static bool LoadKeys(id<AVAsynchronousKeyValueLoading> object, NSArray<NSString*>* keys,
+                     Clock::time_point deadline, const DecodeCancelFlag* cancel)
+{
+	auto state = std::make_shared<LoadState>();
+	[object loadValuesAsynchronouslyForKeys:keys completionHandler:^{
+		std::lock_guard<std::mutex> lock(state->mutex);
+		state->completed = 1;
+		state->changed.notify_one();
+	}];
+	if (!state->Wait(1, deadline, cancel)) return false;
+	for (NSString* key in keys) {
+		if ([object statusOfValueForKey:key error:nullptr] != AVKeyValueStatusLoaded) return false;
+	}
+	return true;
+}
 
 class MacVideoStoryboardDecoder final : public ImageDecoder {
 public:
@@ -76,6 +113,8 @@ bool MacVideoStoryboardDecoder::ExtractRGBFromCGImage(CGImageRef cgImage, int ta
 bool MacVideoStoryboardDecoder::Decode(const std::string& path, Image& out, ImageDecodeInfo& info,
                                        int maxPixelSize, const DecodeCancelFlag* cancel)
 {
+	const auto deadline = Clock::now() + std::chrono::seconds(15);
+	if (DecodeCancelled(cancel)) return false;
 	@autoreleasepool {
 		NSString* nsPath = [NSString stringWithUTF8String:path.c_str()];
 		if (!nsPath) return false;
@@ -84,7 +123,10 @@ bool MacVideoStoryboardDecoder::Decode(const std::string& path, Image& out, Imag
 		if (!url) return false;
 
 		AVURLAsset* asset = [AVURLAsset URLAssetWithURL:url options:@{AVURLAssetPreferPreciseDurationAndTimingKey: @NO}];
-		if (!asset) return false;
+		if (!asset || !LoadKeys(asset, @[@"tracks", @"duration"], deadline, cancel)) {
+			[asset cancelLoading];
+			return false;
+		}
 
 		NSArray<AVAssetTrack*>* tracks = [asset tracksWithMediaType:AVMediaTypeVideo];
 		if (!tracks || tracks.count == 0) {
@@ -93,6 +135,10 @@ bool MacVideoStoryboardDecoder::Decode(const std::string& path, Image& out, Imag
 		}
 
 		AVAssetTrack* videoTrack = tracks[0];
+		if (!LoadKeys(videoTrack, @[@"naturalSize", @"preferredTransform"], deadline, cancel)) {
+			[asset cancelLoading];
+			return false;
+		}
 		CGSize naturalSize = videoTrack.naturalSize;
 		CGAffineTransform transform = videoTrack.preferredTransform;
 		CGRect transformedRect = CGRectApplyAffineTransform(CGRectMake(0, 0, naturalSize.width, naturalSize.height), transform);
@@ -139,33 +185,49 @@ bool MacVideoStoryboardDecoder::Decode(const std::string& path, Image& out, Imag
 		frames.reserve(numFrames);
 		timecodes.reserve(numFrames);
 
+		struct FrameBatch : LoadState {
+			std::array<CGImageRef, numFrames> images{};
+			std::array<CMTime, numFrames> requested{}, actual{};
+			std::array<bool, numFrames> done{};
+			~FrameBatch() { for (auto image : images) if (image) CGImageRelease(image); }
+		};
+		auto batch = std::make_shared<FrameBatch>();
+		NSMutableArray<NSValue*>* times = [NSMutableArray arrayWithCapacity:numFrames];
 		for (int i = 0; i < numFrames; ++i) {
-			if (DecodeCancelled(cancel)) return false;
-
-			double targetSec = durationSec * (static_cast<double>(i + 1) / (numFrames + 1));
-			CMTime reqTime = CMTimeMakeWithSeconds(targetSec, 600);
-			CMTime actualTime = kCMTimeZero;
-			NSError* err = nil;
-			CGImageRef cgImage = [gen copyCGImageAtTime:reqTime actualTime:&actualTime error:&err];
-
-			if (cgImage) {
-				struct ImageRelease {
-					CGImageRef image;
-					~ImageRelease() { CGImageRelease(image); }
-				} release{cgImage};
-				Image frame;
-				if (ExtractRGBFromCGImage(cgImage, cellW, cellH, frame)) {
-					frames.push_back(std::move(frame));
-					double actualSec = CMTimeGetSeconds(actualTime);
-					if (std::isnan(actualSec) || actualSec < 0.0) actualSec = targetSec;
-					timecodes.push_back(VideoHelpers::FormatTimecode(actualSec));
+			batch->requested[i] = CMTimeMakeWithSeconds(durationSec * (i + 1) / (numFrames + 1), 600);
+			[times addObject:[NSValue valueWithCMTime:batch->requested[i]]];
+		}
+		[gen generateCGImagesAsynchronouslyForTimes:times
+		                           completionHandler:^(CMTime request, CGImageRef image, CMTime actual,
+		                                               AVAssetImageGeneratorResult result, NSError* error) {
+			(void)error;
+			std::lock_guard<std::mutex> lock(batch->mutex);
+			for (int i = 0; i < numFrames; ++i) {
+				if (batch->done[i] || CMTimeCompare(batch->requested[i], request) != 0) continue;
+				batch->done[i] = true;
+				if (result == AVAssetImageGeneratorSucceeded && image) {
+					batch->images[i] = CGImageRetain(image);
+					batch->actual[i] = actual;
 				}
-			} else {
-				// Duplicate previous frame or empty if decoding failed
-				if (!frames.empty()) {
-					frames.push_back(frames.back());
-					timecodes.push_back(timecodes.back());
-				}
+				++batch->completed;
+				batch->changed.notify_one();
+				break;
+			}
+		}];
+		if (!batch->Wait(numFrames, deadline, cancel)) {
+			[gen cancelAllCGImageGeneration];
+			return false;
+		}
+		for (int i = 0; i < numFrames; ++i) {
+			Image frame;
+			if (ExtractRGBFromCGImage(batch->images[i], cellW, cellH, frame)) {
+				frames.push_back(std::move(frame));
+				double actual = CMTimeGetSeconds(batch->actual[i]);
+				if (!std::isfinite(actual) || actual < 0.0) actual = CMTimeGetSeconds(batch->requested[i]);
+				timecodes.push_back(VideoHelpers::FormatTimecode(actual));
+			} else if (!frames.empty()) {
+				frames.push_back(frames.back());
+				timecodes.push_back(timecodes.back());
 			}
 		}
 
