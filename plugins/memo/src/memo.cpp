@@ -3,6 +3,10 @@
 #include <WinCompat.h>
 #include <WinPort.h>
 #include <utils.h>
+#include <StagedFile.h>
+#include <farcolor.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <farkeys.h>
 #include <farplug-wide.h>
 #include <cstdarg>
@@ -69,7 +73,7 @@ static void DebugLog(const char *fmt, ...) {
 
 enum MsgId {
   MMemo = 0, MOk, MCancel, MConfigTitle, MEnablePlugin, MUseHotkey, MSaveAs, MConfig,
-  MSaveMemo, MPath, MMemoTitle, MUseHotkeyHint, MSaveError
+  MSaveMemo, MPath, MMemoTitle, MUseHotkeyHint, MSaveError, MReplaceFile
 };
 
 enum DialogItems {
@@ -84,6 +88,7 @@ static bool g_enabled = true;
 static bool g_useHotkey = true;
 
 static std::wstring NormalizeMemoContent(const std::wstring &input);
+static void ShowSaveError(const wchar_t *path, int err);
 
 static inline const wchar_t *GetMsg(int msgId) {
   return g_far.GetMsg(g_far.ModuleNumber, msgId);
@@ -108,7 +113,7 @@ static int GetLastMemo() {
   KeyFileHelper kf(InMyConfig(INI_PATH, false));
   int res = kf.GetInt(INI_S_SETTINGS, INI_K_LAST, 0);
   DBG("GetLastMemo: %d", res);
-  return res;
+  return res >= 0 && res < MEMO_COUNT ? res : 0;
 }
 
 static void SaveLastMemo(int v) {
@@ -129,134 +134,114 @@ static bool IsMacroOurs(KeyFileHelper &kfh, const char *section) {
   if (!kfh.HasSection(section)) return false;
   char ours[32];
   snprintf(ours, sizeof(ours), "callplugin(0x%08X)", SYSID_MEMO);
-  return kfh.GetString(section, MACRO_K_SEQ, "").find(ours) != std::string::npos;
+  return kfh.GetString(section, MACRO_K_SEQ, "") == ours
+      && kfh.GetString(section, MACRO_K_DESC, "") == "Memo Plugin";
 }
 
 static bool IsCurrentMacroOurs(KeyFileHelper &kfh) {
   return IsMacroOurs(kfh, MACRO_SECTION);
 }
 
-// Backs up the macros INI before overwriting a foreign CtrlAltS binding.
-// Tries key_macros.bak, then key_macros-1.bak, key_macros-2.bak, ... until a free slot is found.
-static void BackupMacrosFile() {
-  std::string src = InMyConfig(MACROS_INI, false);
-  std::string base = src;
-  size_t dot = base.rfind('.');
-  if (dot != std::string::npos) base.resize(dot);
-  std::string dst = base + ".bak";
-  for (int n = 1; n <= 999; ++n) {
-    FILE *probe = fopen(dst.c_str(), "rb");
-    if (!probe) break;  // slot is free
-    fclose(probe);
-    if (n == 999) { DBG("BackupMacrosFile: no free slot"); return; }
-    char sfx[24];
-    snprintf(sfx, sizeof(sfx), "-%d.bak", n);
-    dst = base + sfx;
-  }
-  FILE *in = fopen(src.c_str(), "rb");
-  if (!in) { DBG("BackupMacrosFile: cannot open src"); return; }
-  FILE *out = fopen(dst.c_str(), "wb");
-  if (!out) { fclose(in); DBG("BackupMacrosFile: cannot create dst"); return; }
-  char buf[4096]; size_t rd;
-  bool ok = true;
-  while (ok && (rd = fread(buf, 1, sizeof(buf), in)) > 0)
-    if (fwrite(buf, 1, rd, out) != rd) { DBG("BackupMacrosFile: write error"); ok = false; }
-  fclose(in); fclose(out);
-  if (!ok) { remove(dst.c_str()); return; }  // remove partial backup on write failure
-  DBG("BackupMacrosFile: saved to %s", dst.c_str());
+static bool ReadTextFile(const std::string& path, std::string& content, bool allowMissing) {
+  FILE* file = fopen(path.c_str(), "rb");
+  if (!file) return allowMissing && errno == ENOENT;
+  char buffer[4096];
+  size_t read = 0;
+  while ((read = fread(buffer, 1, sizeof(buffer), file)) != 0) content.append(buffer, read);
+  const int error = ferror(file) ? (errno ? errno : EIO) : 0;
+  if (fclose(file) != 0 && !error) return false;
+  if (error) errno = error;
+  return !error;
 }
 
-static void UpdateGlobalMacro(bool enabled) {
-  DBG("UpdateGlobalMacro: %d", (int)enabled);
-  KeyFileHelper kfh(InMyConfig(MACROS_INI));
+// Backs up the macros INI before overwriting a foreign CtrlAltS binding.
+// Tries key_macros.bak, then key_macros-1.bak, key_macros-2.bak, ... until a free slot is found.
+static bool BackupMacrosFile(const std::string &source) {
+  std::string content;
+  if (!ReadTextFile(source, content, false)) return false;
+  const auto base = source.substr(0, source.rfind('.'));
+  for (int n = 0; n < 1000; ++n) {
+    const auto path = base + (n ? "-" + std::to_string(n) : "") + ".bak";
+    struct stat info{};
+    if (lstat(path.c_str(), &info) == 0) continue;
+    if (errno != ENOENT) return false;
+    if (WriteFileAtomically(path, content, false)) return true;
+    if (errno != EEXIST) return false;
+  }
+  errno = EEXIST;
+  return false;
+}
+
+static bool UpdateGlobalMacro(bool enabled) {
+  const auto path = InMyConfig(MACROS_INI);
+  KeyFileHelper kfh(path);
+  // Back up before changing the helper. Its destructor saves any dirty sections.
+  if (enabled && kfh.HasSection(MACRO_SECTION) && !IsCurrentMacroOurs(kfh)
+      && !BackupMacrosFile(path)) {
+    ShowSaveError(MB2Wide(path.c_str()).c_str(), errno ? errno : EIO);
+    return false;
+  }
   bool changed = false;
-  if (enabled) {
-    // Remove plugin-owned legacy bindings so only CtrlAltS remains active.
-    if (IsMacroOurs(kfh, MACRO_SECTION_OLD_CTRL_S)) {
-      kfh.RemoveSection(MACRO_SECTION_OLD_CTRL_S);
+  for (const char* legacy : {MACRO_SECTION_OLD_CTRL_S, MACRO_SECTION_OLD_CTRL_SHIFT_S}) {
+    if (IsMacroOurs(kfh, legacy)) {
+      kfh.RemoveSection(legacy);
       changed = true;
-    }
-    if (IsMacroOurs(kfh, MACRO_SECTION_OLD_CTRL_SHIFT_S)) {
-      kfh.RemoveSection(MACRO_SECTION_OLD_CTRL_SHIFT_S);
-      changed = true;
-    }
-
-    if (!kfh.HasSection(MACRO_SECTION) || !IsCurrentMacroOurs(kfh)) {  // explicit user action may overwrite foreign
-      if (kfh.HasSection(MACRO_SECTION))  // about to overwrite a foreign binding — back it up first
-        BackupMacrosFile();
-      char seq[64];
-      snprintf(seq, sizeof(seq), "callplugin(0x%08X)", SYSID_MEMO);
-      kfh.SetString(MACRO_SECTION, MACRO_K_SEQ, seq);
-      kfh.SetString(MACRO_SECTION, MACRO_K_DESC, "Memo Plugin");
-      kfh.SetString(MACRO_SECTION, MACRO_K_DISOUT, "1");
-      changed = true;
-    }
-
-    if (changed) {
-      kfh.Save();
-
-      ActlKeyMacro akm = {MCMD_LOADALL};
-      g_far.AdvControl(g_far.ModuleNumber, ACTL_KEYMACRO, &akm, NULL);
-    }
-  } else {
-    if (IsCurrentMacroOurs(kfh)) {  // never touch a macro we didn't write
-      kfh.RemoveSection(MACRO_SECTION);
-      changed = true;
-    }
-    if (IsMacroOurs(kfh, MACRO_SECTION_OLD_CTRL_S)) {
-      kfh.RemoveSection(MACRO_SECTION_OLD_CTRL_S);
-      changed = true;
-    }
-    if (IsMacroOurs(kfh, MACRO_SECTION_OLD_CTRL_SHIFT_S)) {
-      kfh.RemoveSection(MACRO_SECTION_OLD_CTRL_SHIFT_S);
-      changed = true;
-    }
-
-    if (changed) {
-      kfh.Save();
-
-      ActlKeyMacro akm = {MCMD_LOADALL};
-      g_far.AdvControl(g_far.ModuleNumber, ACTL_KEYMACRO, &akm, NULL);
     }
   }
+  if (enabled && !IsCurrentMacroOurs(kfh)) {
+    char seq[32];
+    snprintf(seq, sizeof(seq), "callplugin(0x%08X)", SYSID_MEMO);
+    kfh.SetString(MACRO_SECTION, MACRO_K_SEQ, seq);
+    kfh.SetString(MACRO_SECTION, MACRO_K_DESC, "Memo Plugin");
+    kfh.SetString(MACRO_SECTION, MACRO_K_DISOUT, "1");
+    changed = true;
+  } else if (!enabled && IsCurrentMacroOurs(kfh)) {
+    kfh.RemoveSection(MACRO_SECTION);
+    changed = true;
+  }
+  if (changed) {
+    if (!kfh.Save()) {
+      const int error = errno;
+      kfh.DiscardChanges();
+      ShowSaveError(MB2Wide(path.c_str()).c_str(), error ? error : EIO);
+      return false;
+    }
+    ActlKeyMacro akm = {MCMD_LOADALL};
+    g_far.AdvControl(g_far.ModuleNumber, ACTL_KEYMACRO, &akm, NULL);
+  }
+  return true;
 }
 
 static bool GetUseHotkey() { return g_useHotkey; }
 static void SetUseHotkey(bool v) {
-  if (g_useHotkey == v)
+  if (g_useHotkey == v || !UpdateGlobalMacro(v))
     return;
   g_useHotkey = v;
   SaveState();
-  UpdateGlobalMacro(v);
 }
 
-static std::wstring LoadFile(int idx) {
-  std::wstring path = GetMemoFilePath(idx);
+static bool LoadFile(int idx, std::wstring& result) {
+  const auto path = GetMemoFilePath(idx);
   DBG("LoadFile(%d): %ls", idx, path.c_str());
-  FILE *f = fopen(Wide2MB(path.c_str()).c_str(), "r");
-  if (!f) return L"";
-  char buf[4096];
-  std::string mb;
-  while (fgets(buf, sizeof(buf), f)) mb += buf;
-  fclose(f);
-  return NormalizeMemoContent(MB2Wide(mb.c_str()));
+  std::string content;
+  if (!ReadTextFile(Wide2MB(path.c_str()), content, true)) {
+    ShowSaveError(path.c_str(), errno ? errno : EIO);
+    return false;
+  }
+  result = NormalizeMemoContent(MB2Wide(content.c_str()));
+  return true;
 }
 
-static void SaveFile(int idx, const std::wstring &content) {
-  std::wstring path = GetMemoFilePath(idx);
-  DBG("SaveFile(%d, len=%d): %ls", idx, (int)content.length(), path.c_str());
-  std::string mbP = Wide2MB(path.c_str());
+static bool SaveFile(int idx, const std::wstring &content) {
+  const auto path = GetMemoFilePath(idx);
+  const auto local_path = Wide2MB(path.c_str());
   if (content.empty()) {
-    remove(mbP.c_str());
-    return;
+    if (unlink(local_path.c_str()) == 0 || errno == ENOENT) return true;
+  } else if (WriteFileAtomically(local_path, Wide2MB(content.c_str()), true)) {
+    return true;
   }
-  FILE *f = fopen(mbP.c_str(), "w");
-  if (f) {
-    fputs(Wide2MB(content.c_str()).c_str(), f);
-    fclose(f);
-  } else {
-    DBG("SaveFile(%d): write failed: %ls", idx, path.c_str());
-  }
+  ShowSaveError(path.c_str(), errno ? errno : EIO);
+  return false;
 }
 
 static std::wstring NormalizeMemoContent(const std::wstring &input) {
@@ -314,10 +299,12 @@ static void SwitchToMemo(HANDLE hDlg, int newMemo) {
   if (newMemo < 0 || newMemo >= MEMO_COUNT || newMemo == g_currentMemo)
     return;
   DBG("SwitchToMemo: %d -> %d", g_currentMemo, newMemo);
+  std::wstring next;
+  if (!LoadFile(newMemo, next)) return;
   std::wstring content = GetMemoText(hDlg);
-  if (content != g_loadedContent) SaveFile(g_currentMemo, content);
+  if (content != g_loadedContent && !SaveFile(g_currentMemo, content)) return;
   g_currentMemo = newMemo;
-  g_loadedContent = LoadFile(g_currentMemo);
+  g_loadedContent = std::move(next);
   g_far.SendDlgMessage(hDlg, DM_SETTEXTPTR, DI_MEMO, (LONG_PTR)g_loadedContent.c_str());
   SetMemoTitle(hDlg);
   for (int i = 0; i < MEMO_COUNT; i++) {
@@ -354,22 +341,23 @@ static void SaveAs(HANDLE hDlg) {
     return;
   DBG("SaveAs: %ls", path);
   std::string mbPath = ExpandTilde(Wide2MB(path));
-  FILE *f = fopen(mbPath.c_str(), "w");
-  if (!f) {
-    int err = errno;
-    DBG("SaveAs: open failed: %ls (%s)", path, strerror(err));
-    ShowSaveError(path, err);
+  struct stat info{};
+  const bool replace = lstat(mbPath.c_str(), &info) == 0;
+  if (!replace && errno != ENOENT) {
+    ShowSaveError(path, errno);
     return;
   }
-  std::string mbContent = Wide2MB(content.c_str());
-  size_t wrote = fwrite(mbContent.data(), 1, mbContent.size(), f);
-  int werr = (wrote == mbContent.size()) ? 0 : errno;
-  int cerr = (fclose(f) == 0) ? 0 : errno;
-  if (werr || cerr) {
-    int err = werr ? werr : cerr;
-    DBG("SaveAs: write failed: %ls (%s)", path, strerror(err));
-    ShowSaveError(path, err);
+  if (replace) {
+    if (S_ISDIR(info.st_mode)) {
+      ShowSaveError(path, EISDIR);
+      return;
+    }
+    const wchar_t *items[] = {GetMsg(MSaveMemo), GetMsg(MReplaceFile), path};
+    if (g_far.Message(g_far.ModuleNumber, FMSG_WARNING | FMSG_MB_YESNO,
+          nullptr, items, sizeof(items) / sizeof(items[0]), 0) != 0) return;
   }
+  if (!WriteFileAtomically(mbPath, Wide2MB(content.c_str()), replace))
+    ShowSaveError(path, errno ? errno : EIO);
 }
 
 SHAREDSYMBOL int WINAPI ConfigureW(int ItemNumber) {
@@ -452,7 +440,8 @@ static LONG_PTR WINAPI MemoDlgProc(HANDLE hDlg, int Msg, int Param1, LONG_PTR Pa
   if (Msg == DN_CTLCOLORDLGITEM && Param1 >= DI_BTN1 && Param1 <= DI_BTN0) {
     if (static_cast<int>(Param1 - DI_BTN1) == g_currentMemo) {
       uint64_t *colors = reinterpret_cast<uint64_t *>(Param2);
-      colors[0] = colors[4];
+      g_far.AdvControl(g_far.ModuleNumber, ACTL_GETCOLOR,
+          reinterpret_cast<void *>(COL_DIALOGSELECTEDBUTTON), &colors[0]);
     }
     return g_far.DefDlgProc(hDlg, Msg, Param1, Param2);
   }
@@ -472,8 +461,8 @@ static LONG_PTR WINAPI MemoDlgProc(HANDLE hDlg, int Msg, int Param1, LONG_PTR Pa
   }
   if (Msg == DN_CLOSE) {
     std::wstring content = GetMemoText(hDlg);
-    if (content != g_loadedContent)
-      SaveFile(g_currentMemo, content);
+    if (content != g_loadedContent && !SaveFile(g_currentMemo, content))
+      return FALSE;
     SaveLastMemo(g_currentMemo);
   }
   return g_far.DefDlgProc(hDlg, Msg, Param1, Param2);
@@ -481,7 +470,7 @@ static LONG_PTR WINAPI MemoDlgProc(HANDLE hDlg, int Msg, int Param1, LONG_PTR Pa
 
 static void OpenMemo() {
   g_currentMemo = GetLastMemo();
-  g_loadedContent = LoadFile(g_currentMemo);
+  if (!LoadFile(g_currentMemo, g_loadedContent)) return;
   DBG("OpenMemo: cur=%d, len=%d", g_currentMemo, (int)g_loadedContent.length());
   std::wstring title = BuildMemoTitle();
 
@@ -550,6 +539,13 @@ SHAREDSYMBOL void WINAPI GetPluginInfoW(struct PluginInfo *Info) {
 }
 
 SHAREDSYMBOL HANDLE WINAPI OpenPluginW(int, INT_PTR) {
+  static bool opened = false;
+  if (!GetEnabled() || opened) return INVALID_HANDLE_VALUE;
+  struct OpenGuard {
+    bool &state;
+    ~OpenGuard() { state = false; }
+  } guard{opened};
+  opened = true;
   OpenMemo();
   return (HANDLE)-1;
 }

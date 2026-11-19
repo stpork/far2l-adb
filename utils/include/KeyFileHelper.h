@@ -109,6 +109,7 @@ public:
 	~KeyFileHelper();
 
 	bool Save(bool only_if_dirty = true);
+	void DiscardChanges() { _dirty = false; }
 
 	void SetString(const std::string &section, const std::string &name, const std::string &value);
 	void SetString(const std::string &section, const std::string &name, const char *value);

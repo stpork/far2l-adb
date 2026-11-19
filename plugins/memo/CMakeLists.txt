@@ -8,6 +8,11 @@ add_library (${PROJECT_NAME} MODULE ${SOURCES})
 
 target_link_libraries(${PROJECT_NAME} utils far2l)
 
+# Keep the UI and transfer orchestration small. The linked transfer libraries have their own settings.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Release>:-Os>)
+endif()
+
 target_compile_definitions(${PROJECT_NAME} PRIVATE UNICODE _UNICODE FAR_USE_INTERNALS)
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/WinPort)
