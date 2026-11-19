@@ -4,6 +4,15 @@ profile=mydir + "/profile"
 left=mydir + "/left-fgdfgfd"
 right=mydir + "/right"
 MkdirsAll([profile, left, right], 0700)
+
+function interruptJob(name) {
+	ToggleLCtrl(true)
+	TypeText("C")
+	ToggleLCtrl(false)
+	ExpectString("VT " + name + " interrupted")
+	ExpectString("↑", -1, -2, 1, 1)
+}
+
 for (testrun = 1; testrun <= 2; testrun++) {
 	StartApp(["--tty", "--nodetect", "--mortal", "-u", profile, "-cd", left, "-cd", right]);
 	ExpectString("left-fgdfgfd");
@@ -37,10 +46,13 @@ for (testrun = 1; testrun <= 2; testrun++) {
 	ToggleLCtrl(false)
 	ExpectNoString("══╝╚══")
 
-	TypeText("ping localhost")
+	TypeText("sh ../vt-job.sh background")
 	TypeEnter()
 	ExpectNoString("1Help", 0, -1, 0, 1)
-	ExpectString("localhost", 0, -2, 0, 0) // expecting ping output filling screen from bottom
+	ExpectString("VT background ready")
+	TypeText("before")
+	TypeEnter()
+	ExpectString("VT background reply 1: before")
 	ToggleLCtrl(true)
 	ToggleLAlt(true)
 	TypeText("Z")
@@ -49,24 +61,21 @@ for (testrun = 1; testrun <= 2; testrun++) {
 	ExpectString("*** Command put to background")
 
 	ExpectString("↑", -1, -2, 1, 1) // wait when command line input edit will be activated again
-	TypeText("while sleep 1; do echo 'Test' 'Loop' 'Iteration'; done")
+	TypeText("sh ../vt-job.sh foreground")
 	TypeEnter()
-	ExpectString("Test Loop Iteration")
-	ToggleLCtrl(true)
-	TypeText("C")
-	ToggleLCtrl(false)
-	ExpectString("^C")
-	ExpectString("↑", -1, -2, 1, 1) // wait when command line input edit will be activated again
+	ExpectString("VT foreground ready")
+	interruptJob("foreground")
 
 	TypeFKey(12)
-	ExpectString("1 ping@")
+	ExpectString("1 sh@")
 
 	TypeText("1")
-	ExpectString("localhost", 0, -2, 0, 0) // expecting ping output filling screen from bottom
-	ToggleLCtrl(true)
-	TypeText("C")
-	ToggleLCtrl(false)
-	ExpectString("↑", -1, -2, 1, 1) // wait when command line input edit will be activated again
+	ExpectNoString("1 sh@")
+	TypeText("after")
+	TypeEnter()
+	// The second reply proves that F12 restored the same running command.
+	ExpectString("VT background reply 2: after")
+	interruptJob("background")
 
 	////////////////
 
