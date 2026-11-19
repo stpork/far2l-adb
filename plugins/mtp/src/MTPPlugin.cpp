@@ -8,6 +8,9 @@
 #include <IntStrConv.h>
 #include <WideMB.h>
 #include <utils.h>
+#include <StagedFile.h>
+#include <unordered_set>
+#include <set>
 
 #include <atomic>
 #include <cerrno>
@@ -60,7 +63,7 @@ static std::string CleanErrorMessage(const std::string& s) {
 
 std::string JoinPath(const std::string& base, const std::string& name) {
     if (base.empty()) return name;
-    if (base.back() == '/' || base.back() == '\\') {
+    if (base.back() == '/') {
         return base + name;
     }
     return base + "/" + name;
@@ -900,6 +903,10 @@ int MTPPlugin::GetFiles(PluginPanelItem* panel_item, int items_number, int move,
             SetErrorFromStatus(proto::Status::Failure(st.code, st.message));
             return FALSE;
         }
+        if (!IsLocalFileName(st.value.name)) {
+            WINPORT(SetLastError)(EINVAL);
+            return FALSE;
+        }
         std::string localPath = JoinPath(baseDest, st.value.name);
         auto op = _backend->Download(st.value.handle, localPath,
                                      [](uint64_t, uint64_t) {}, cancelSrc.Token());
@@ -1000,6 +1007,10 @@ int MTPPlugin::GetFiles(PluginPanelItem* panel_item, int items_number, int move,
         if (!ParseObjectToken(token, handle)) continue;
         auto stat_r = _backend->Stat(handle);
         if (!stat_r.ok) { lastErr = MapErrorToErrno(stat_r.code); continue; }
+        if (!IsLocalFileName(stat_r.value.name)) {
+            WINPORT(SetLastError)(EINVAL);
+            return FALSE;
+        }
         Pre pi;
         pi.sv = stat_r.value;
         pi.stats = pi.sv.is_dir
@@ -1010,7 +1021,10 @@ int MTPPlugin::GetFiles(PluginPanelItem* panel_item, int items_number, int move,
     }
 
     // Lowest-N suffix not already on disk under baseDest. "a.txt" → "a(2).txt".
-    auto find_free_local = [&baseDest](const std::string& base) -> std::string {
+    std::unordered_set<std::string> planned;
+    planned.reserve(pre.size());
+    for (const auto& pi : pre) planned.insert(pi.sv.name);
+    auto find_free_local = [&baseDest, &planned](const std::string& base) -> std::string {
         std::string stem = base, ext;
         auto dot = base.rfind('.');
         if (dot != std::string::npos && dot != 0) {
@@ -1020,18 +1034,27 @@ int MTPPlugin::GetFiles(PluginPanelItem* panel_item, int items_number, int move,
         for (int n = 2; n < 1000; ++n) {
             std::string candidate = stem + "(" + std::to_string(n) + ")" + ext;
             struct stat fs{};
-            if (::stat(JoinPath(baseDest, candidate).c_str(), &fs) != 0) return candidate;
+            if (!planned.count(candidate) && ::lstat(JoinPath(baseDest, candidate).c_str(), &fs) != 0) {
+                if (errno != ENOENT) break;
+                planned.insert(candidate);
+                return candidate;
+            }
         }
-        return base + "_renamed";
+        return {};
     };
 
     // Host-fs pre-flight collision (mirrors native WarnCopyDlg).
     if (!(op_mode & OPM_SILENT)) {
         bool overwrite_all = false, skip_all = false, newer_all = false, rename_all = false;
+        std::set<std::pair<dev_t, ino_t>> original_destinations;
         for (auto& pi : pre) {
             std::string localPath = JoinPath(baseDest, pi.sv.name);
             struct stat fs{};
-            if (::stat(localPath.c_str(), &fs) != 0) continue;  // no collision
+            if (::lstat(localPath.c_str(), &fs) != 0) {
+                if (errno == ENOENT) continue;
+                WINPORT(SetLastError)(errno);
+                return FALSE;
+            }
             uint64_t dst_show = S_ISDIR(fs.st_mode)
                 ? LocalRecursiveSize(localPath)
                 : static_cast<uint64_t>(fs.st_size);
@@ -1048,8 +1071,16 @@ int MTPPlugin::GetFiles(PluginPanelItem* panel_item, int items_number, int move,
             if (d == OverwriteDialog::D_RENAME) {
                 pi.decision = DL_RENAME;
                 pi.rename_to = find_free_local(pi.sv.name);
+                if (pi.rename_to.empty()) {
+                    WINPORT(SetLastError)(EEXIST);
+                    return FALSE;
+                }
             } else {
                 pi.decision = (d == OverwriteDialog::D_OVERWRITE) ? DL_OVERWRITE : DL_SKIP;
+                if (pi.decision == DL_OVERWRITE && !original_destinations.emplace(fs.st_dev, fs.st_ino).second) {
+                    WINPORT(SetLastError)(EEXIST);
+                    return FALSE;
+                }
             }
         }
     }
@@ -1061,6 +1092,7 @@ int MTPPlugin::GetFiles(PluginPanelItem* panel_item, int items_number, int move,
     // WorkUnit per top-level item with accurate total_bytes/total_files — dialog totals stable from start (no growing-during-walk).
     std::vector<WorkUnit> units;
     units.reserve(pre.size());
+    std::unordered_set<std::string> destinations;
     for (auto& pi : pre) {
         if (pi.decision == DL_SKIP) continue;
         const auto& sv = pi.sv;
@@ -1071,27 +1103,24 @@ int MTPPlugin::GetFiles(PluginPanelItem* panel_item, int items_number, int move,
         u.is_directory = sv.is_dir;
         u.total_bytes = stats.size;
         u.total_files = std::max<uint64_t>(stats.count, 1);
-        const bool needWipe = (pi.decision == DL_OVERWRITE) && sv.is_dir;
+        const bool replace = pi.decision == DL_OVERWRITE;
         const std::string& effective_name = pi.rename_to.empty() ? sv.name : pi.rename_to;
         const std::string localPath = JoinPath(baseDest, effective_name);
+        if (!destinations.insert(localPath).second) {
+            WINPORT(SetLastError)(EEXIST);
+            return FALSE;
+        }
         auto* cs = &cancelSrc;
-        u.execute = [this, sv, localPath, needWipe, move, cancel_tok, cs, p_lastErr]
+        u.execute = [this, sv, localPath, replace, move, cancel_tok, cs, p_lastErr]
                     (ProgressTracker& tr) -> int {
-            if (needWipe) {
-                struct stat probe{};
-                if (::stat(localPath.c_str(), &probe) == 0
-                        && S_ISDIR(probe.st_mode)
-                        && !RemoveLocalPathRecursively(localPath)) {
-                    DBG("Folder Overwrite: wipe of %s failed (errno=%d)\n",
-                        localPath.c_str(), errno);
-                    return errno ? errno : EIO;
-                }
-            }
+            if (cancel_tok.IsCancelled()) return ECANCELED;
+            StagedFile stage(localPath, replace);
+            if (stage.Path().empty()) return *p_lastErr = errno ? errno : EIO;
             proto::Status op;
             if (sv.is_dir) {
-                op = DownloadRecursive(sv.storage_id, sv.handle, localPath, cancel_tok, &tr);
+                op = DownloadRecursive(sv.storage_id, sv.handle, stage.Path(), cancel_tok, &tr);
             } else {
-                op = _backend->Download(sv.handle, localPath,
+                op = _backend->Download(sv.handle, stage.Path(),
                     [&tr, cs, name = sv.name](uint64_t sent, uint64_t total) {
                         if (tr.Aborted()) cs->Cancel();
                         tr.Tick(sent, total, name);
@@ -1102,9 +1131,11 @@ int MTPPlugin::GetFiles(PluginPanelItem* panel_item, int items_number, int move,
                 if (op.code != proto::ErrorCode::Cancelled) *p_lastErr = MapErrorToErrno(op);
                 return op.code == proto::ErrorCode::Cancelled ? ECANCELED : MapErrorToErrno(op);
             }
+            if (cancel_tok.IsCancelled()) return ECANCELED;
+            if (!stage.Publish()) return *p_lastErr = errno ? errno : EIO;
             if (move) {
                 auto del = _backend->Delete(sv.handle, true);
-                if (!del.ok) DBG("F6 move: delete-after-copy failed: %s\n", del.message.c_str());
+                if (!del.ok) return *p_lastErr = MapErrorToErrno(del);
             }
             return 0;
         };
@@ -1937,15 +1968,13 @@ std::function<void()> MTPPlugin::ViewHostFileCallback(const std::string& path) c
 std::function<void()> MTPPlugin::ViewDeviceFileCallback(uint32_t handle, const std::string& display_name) {
     auto backend = _backend;  // shared_ptr keeps backend alive for the closure
     return [backend, handle, display_name]() {
-        if (!backend) return;
+        if (!backend || !IsLocalFileName(display_name)) return;
         static std::atomic<uint64_t> seq{0};
-        std::string safe = display_name;
-        for (char& c : safe) if (c == '/' || c == '\\') c = '_';
         char prefix[64];
         snprintf(prefix, sizeof(prefix), "mtp_overw_%d_%llu_",
                  static_cast<int>(getpid()),
                  static_cast<unsigned long long>(seq.fetch_add(1)));
-        const std::string tmp = InMyTemp((std::string(prefix) + safe).c_str());
+        const std::string tmp = InMyTemp((std::string(prefix) + display_name).c_str());
         proto::CancellationSource cs;
         auto dl = backend->Download(handle, tmp,
                                     [](uint64_t, uint64_t) {}, cs.Token());
@@ -3065,8 +3094,10 @@ proto::Status MTPPlugin::DownloadRecursive(uint32_t storage_id,
                                            uint32_t handle,
                                            const std::string& local_root,
                                            proto::CancellationToken token,
-                                           ProgressTracker* tr) {
-    if (mkdir(local_root.c_str(), 0755) != 0 && errno != EEXIST) {
+                                           ProgressTracker* tr, unsigned depth) {
+    if (token.IsCancelled()) return proto::Status::Failure(proto::ErrorCode::Cancelled, "Cancelled by user");
+    if (depth > 128) return proto::Status::Failure(proto::ErrorCode::InvalidArgument, "Directory tree is too deep");
+    if (mkdir(local_root.c_str(), 0755) != 0) {
         return proto::Status::Failure(proto::ErrorCode::Io, "mkdir failed");
     }
 
@@ -3080,9 +3111,12 @@ proto::Status MTPPlugin::DownloadRecursive(uint32_t storage_id,
             return proto::Status::Failure(proto::ErrorCode::Cancelled, "Cancelled by user");
         }
 
+        if (!IsLocalFileName(child.name)) {
+            return proto::Status::Failure(proto::ErrorCode::InvalidArgument, "Invalid file name on device");
+        }
         const std::string target = JoinPath(local_root, child.name);
         if (child.is_dir) {
-            auto st = DownloadRecursive(child.storage_id, child.handle, target, token, tr);
+            auto st = DownloadRecursive(child.storage_id, child.handle, target, token, tr, depth + 1);
             if (!st.ok) return st;
         } else {
             auto st = _backend->Download(child.handle, target,
@@ -3180,22 +3214,14 @@ proto::Status MTPPlugin::ManualCopyViaHostInline(uint32_t src_handle,
     if (token.IsCancelled()) {
         return proto::Status::Failure(proto::ErrorCode::Cancelled, "Cancelled by user");
     }
-    const char* tmpenv = std::getenv("TMPDIR");
-    std::string tmp_template = (tmpenv && *tmpenv) ? tmpenv : "/tmp";
-    if (tmp_template.back() != '/') tmp_template += '/';
-    tmp_template += "far2l-mtp-copy.XXXXXX";
-    std::vector<char> tmpbuf(tmp_template.begin(), tmp_template.end());
-    tmpbuf.push_back(0);
-    if (!mkdtemp(tmpbuf.data())) {
-        return proto::Status::Failure(proto::ErrorCode::Io,
-            std::string("mkdtemp failed: ") + std::strerror(errno));
+    if (!IsLocalFileName(src_stat.name)) {
+        return proto::Status::Failure(proto::ErrorCode::InvalidArgument, "Invalid file name on device");
     }
-    const std::string tmp_root(tmpbuf.data());
-    DBG("ManualCopyViaHost(inline): tmp_root=%s src=%s is_dir=%d new_name=%s\n",
-        tmp_root.c_str(), src_stat.name.c_str(),
-        src_stat.is_dir ? 1 : 0, new_name.c_str());
-
-    const std::string staging = tmp_root + "/" + src_stat.name;
+    StagedFile stage(InMyTemp("mtp-copy"));
+    if (stage.Path().empty()) {
+        return proto::Status::Failure(proto::ErrorCode::Io, std::strerror(errno));
+    }
+    const std::string staging = JoinPath(stage.Directory(), src_stat.name);
     tr.SetDisplayOnly(true);
     auto status = src_stat.is_dir
         ? DownloadRecursive(src_stat.storage_id, src_handle, staging, token, &tr)
@@ -3234,7 +3260,6 @@ proto::Status MTPPlugin::ManualCopyViaHostInline(uint32_t src_handle,
         }
     }
 
-    RemoveLocalPathRecursively(tmp_root);
     DBG("ManualCopyViaHost(inline): done ok=%d code=%d msg=%s\n",
         status.ok ? 1 : 0,
         static_cast<int>(status.code),

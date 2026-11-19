@@ -15,6 +15,11 @@ set(SOURCES
 
 add_library(mtp MODULE ${SOURCES})
 
+# Keep the UI and transfer orchestration small. The linked transfer libraries have their own settings.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(mtp PRIVATE $<$<CONFIG:Release>:-Os>)
+endif()
+
 # libusb_static is also pulled transitively via vendored libmtp_static, but link it explicitly so
 # the plugin (which uses libusb directly — see ReadDeviceSerialViaLibusb, SharedLibusbContext) still
 # resolves when libmtp_static is an INTERFACE wrapper around system libmtp.

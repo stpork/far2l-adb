@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <mutex>
 #include <optional>
 #include <signal.h>
@@ -899,15 +900,21 @@ Status LibMtpBackend::Download(ObjectHandle handle,
     if (!_device) {
         return Status::Failure(ErrorCode::Disconnected, "no device");
     }
+    if (cancel.IsCancelled()) return Status::Failure(ErrorCode::Cancelled, "download cancelled");
+    const int fd = open(local_path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (fd < 0) return Status::Failure(ErrorCode::Io, std::strerror(errno));
     ClearErrors();
     ProgressCtx ctx{std::move(progress), &cancel};
-    int rc = LIBMTP_Get_File_To_File(_device, handle, local_path.c_str(), ProgressTrampoline, &ctx);
-    if (rc != 0) {
+    const int rc = LIBMTP_Get_File_To_File_Descriptor(_device, handle, fd, ProgressTrampoline, &ctx);
+    const int close_error = close(fd) == 0 ? 0 : errno;
+    if (rc != 0 || close_error || cancel.IsCancelled()) {
+        unlink(local_path.c_str());
         if (cancel.IsCancelled()) {
             ReopenAfterCancelLocked();
             return Status::Failure(ErrorCode::Cancelled, "download cancelled");
         }
-        return DrainErrors("Get_File_To_File");
+        if (rc) return DrainErrors("Get_File_To_File_Descriptor");
+        return Status::Failure(ErrorCode::Io, std::strerror(close_error));
     }
     return OkStatus();
 }

@@ -172,7 +172,7 @@ private:
                                     uint32_t handle,
                                     const std::string& local_root,
                                     proto::CancellationToken token,
-                                    class ProgressTracker* tr);
+                                    class ProgressTracker* tr, unsigned depth = 0);
 
     proto::Status UploadRecursive(const std::string& local_dir,
                                   const std::string& remote_name,
